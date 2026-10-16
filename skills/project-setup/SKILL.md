@@ -1,6 +1,6 @@
 ---
 name: project-setup
-description: Set up, initialise or onboard the current git repo for project-dev-orchestration (the orchestration / agent workflow) - detect the layout, origin, stack and its build/typecheck/test commands, draft .agents/project-profile.md, add the "How work flows here" section to AGENTS.md, create the missing GitHub labels, record the QC fixture format, and in full mode register the repo with the engine (projects/<name>.env, optional project board), then deliver the repo files as a PR on chore/agent-workflow-setup. Idempotent - a re-run reports what is present and what has drifted, and only fills gaps. Use when asked to set up, initialise, onboard or bootstrap a repo for the orchestration or agent workflow, or to check or repair an existing setup.
+description: Set up, initialise or onboard the current git repo for project-dev-orchestration (the orchestration / agent workflow) - detect the layout, origin, stack and its build/typecheck/test commands, draft .agents/project-profile.md, add the "How work flows here" section to AGENTS.md, create the missing GitHub labels, record the QC fixture format, generate the human guide docs/agent-workflow.md and gitignore .agents/local/, and in full mode register the repo with the engine (projects/<name>.env, optional project board), then deliver the repo files as a PR on chore/agent-workflow-setup. Idempotent - a re-run reports what is present and what has drifted, and only fills gaps. Use when asked to set up, initialise, onboard or bootstrap a repo for the orchestration or agent workflow, or to check or repair an existing setup.
 argument-hint: "[collaborator|full]"
 ---
 
@@ -9,7 +9,7 @@ argument-hint: "[collaborator|full]"
 > Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path. Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
 
 Initialise the **current working repo** to use project-dev-orchestration: the repo files every agent reads (the
-profile and `AGENTS.md`), the GitHub labels the pipeline relies on, and, in full mode, the engine's registration of
+profile and `AGENTS.md`), the guide its humans read (`docs/agent-workflow.md`), the GitHub labels the pipeline relies on, and, in full mode, the engine's registration of
 the repo.
 
 **Idempotent.** Every step first checks what is already there. A re-run prints what is present, what has drifted
@@ -55,7 +55,8 @@ Recipes for each item: `references/detection.md`. Find:
    `package.json` scripts, `*.sln`/`*.csproj`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Makefile`. Record only
    commands that exist. Dev servers and their ports where obvious.
 4. **Existing files:** `AGENTS.md` (and whether it already has `## How work flows here`), `CLAUDE.md`,
-   `.agents/project-profile.md` (worktree and default branch), changesets or a CHANGELOG, docs dirs, issue and PR
+   `.agents/project-profile.md` (worktree and default branch), the human guide (`docs/agent-workflow.md`, or the
+   profile §Docs location; its `guide-version:`), whether `.gitignore` covers `.agents/local/`, changesets or a CHANGELOG, docs dirs, issue and PR
    templates, and the repo's labels.
 5. **Full mode:** whether the repo is already registered (`pdo project-env` run from the repo resolves a project),
    the config dirs, and the gh logins on the machine.
@@ -88,6 +89,8 @@ guidance paragraph with facts.
   - **§Dev servers:** the ports reserved for the human's QC servers and the port scheme agents use instead; the
     database rules;
   - **§Conventions** and **§Do not:** anything the human wants stated now (both may start short).
+  - **For the human guide (step 7):** who the manager is (the person who runs the team, sets priorities and
+    merges) and how to reach them, and where collaborators ask questions. Ask these in the same batch.
 - Write answers in; unanswered items stay `TODO(setup): <question>` under their heading.
 - **Profile already present:** don't rewrite it. Report missing or renamed headings, `TODO(setup)` markers, template
   text left in, and facts that disagree with detection (a base branch that changed, a build script that no longer
@@ -97,7 +100,8 @@ guidance paragraph with facts.
 
 Fill this plugin's `templates/AGENTS-workflow-section.md` (`../../templates/AGENTS-workflow-section.md`): drop its
 leading comment, replace every `<placeholder>` (`<org>/<repo>`, `<project#>`, `<base>`) and use the project's label
-names where its env renames them. With no board, replace the "on org Project `<project#>`" clause with "with no
+names where its env renames them. `<guide path>` is where step 7 writes the human guide (default
+`docs/agent-workflow.md`). With no board, replace the "on org Project `<project#>`" clause with "with no
 project board (a maintainer dispatches agents by hand)". Leave `<engine checkout>` as written: a dispatch brief fills
 it in.
 
@@ -197,7 +201,37 @@ recommend skipping it.
 - `pdo queue --project <name>`: a dry read (it ranks; it doesn't claim or move anything). With a board it lists the
   eligible issues; without one it stops with "has no PROJECT_NUMBER", which is expected.
 
-## 7. Deliver
+## 7. The human guide: `docs/agent-workflow.md`
+
+The page the repo's collaborating humans read: which labels and routes to use, how to request work, how QC works
+here (comment triggers, preview login, fixtures), the changelog rule, who the manager is and where to ask. Agents
+check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and stay current.
+
+- **Location:** `docs/agent-workflow.md`, unless the profile's §Docs names another docs dir; then
+  `<that dir>/agent-workflow.md`. Record the path in §Docs ("Human guide: `<path>`") and use it for `AGENTS.md`'s
+  `<guide path>`.
+- **Fill** this plugin's `templates/agent-workflow-guide.md` (`../../templates/agent-workflow-guide.md`) from the
+  profile as written in steps 2 and 5, and in full mode from the env file of step 6 (renamed labels, the queue
+  column, the board). Each placeholder names its source. Keep the `[if …]` blocks whose condition holds and delete
+  the rest; drop the leading guidance comment; keep `<!-- guide-version: 1 -->` as the first line. Facts neither the
+  profile nor the human gives stay `TODO(setup): <question>`, as in the profile. Plain words for people: no engine
+  internals, no host paths, no ports or ids beyond what the profile already states for humans.
+- **Already present (a re-run): drift detection.** Fill the template afresh in the scratchpad from the current
+  profile and env, and compare everything above `## Local notes` with the committed file (ignore the
+  `guide-version:` line). Report each difference as drifted, with the reason where it shows (a renamed label, a new
+  QC preview, a changed base branch, a template rule the file lacks). Show the diff, apply on the human's yes, and
+  when anything above `## Local notes` changes, add 1 to `guide-version` (that makes agents ask collaborators to
+  re-read it once). Never touch `## Local notes` or what's under it, and never drop text the human added elsewhere
+  without showing it in the diff.
+- **README link:** if the product repo's `README.md` doesn't link the guide, offer one line (in its contributing
+  section, else at the end), with `<guide path>` filled in: `Working on this repo with an agent? Read
+  [<guide path>](<guide path>) first (general guide: https://binerbuddy.github.io/project-dev-orchestration/).`
+  Add it only on the human's yes.
+- **`.gitignore`:** make sure it ignores `.agents/local/` (per-clone agent state, such as `guide-ack`). Missing:
+  append the line `.agents/local/` (create `.gitignore` if there is none). Never reorder or rewrite existing lines.
+  If a rule already ignores all of `.agents/`, report that it would also hide the profile, and ask.
+
+## 8. Deliver
 
 1. **Branch.** If nothing in the repo files changed, skip to the summary. Otherwise put the changes on
    `chore/agent-workflow-setup` from `origin/<base>`:
@@ -205,16 +239,17 @@ recommend skipping it.
    - plain clone: `git switch -c chore/agent-workflow-setup origin/<base>` when the working tree is clean; when it
      isn't, use a separate worktree (`git worktree add`) and leave the human's checkout alone;
    - the branch or its PR already exists (a re-run): reuse it and add a commit; never open a second PR.
-2. **Commit** the profile, `AGENTS.md` and (if moved) `CLAUDE.md`, with the attribution line your tool or session
-   prescribes, if any. Push the branch (never the default branch) and open the PR against `<base>`:
-   `gh pr create -R <org>/<repo> --base <base> --head chore/agent-workflow-setup`. Body: what was added, what was
-   detected and from where, the `TODO(setup)` items left, and that the profile takes effect for agents once merged
-   (skills read the default branch's copy).
+2. **Commit** the profile, `AGENTS.md`, the human guide, `.gitignore`, and (if changed) `CLAUDE.md` and
+   `README.md`, with the attribution line your tool or session prescribes, if any. Push the branch (never the
+   default branch) and open the PR against `<base>`:
+   `gh pr create -R <org>/<repo> --base <base> --head chore/agent-workflow-setup`. Body: what was added (name the
+   human guide's path, so reviewers read it), what was detected and from where, the `TODO(setup)` items left, and
+   that the profile takes effect for agents once merged (skills read the default branch's copy).
 3. **Summary** to the human:
    - **Created:** files (with the PR link), labels, the env file and its path, the board.
    - **Present / unchanged:** what was already right.
    - **Drifted:** what was fixed on their yes, and what they chose to keep.
    - **Skipped:** declined items, labels that need a maintainer, `TODO(setup)` questions still open.
-   - **Next steps:** merge the PR; collaborators install the plugin (see the plugin's `docs/collaborators.md`) and
-     load `project-how-it-works`; in full mode, write any hooks the project needs, then start the team with
-     `pdo team-up --project <name>`.
+   - **Next steps:** merge the PR; point collaborators at the human guide, which links the general guide
+     (https://binerbuddy.github.io/project-dev-orchestration/) for installing the plugin; in full mode, write any
+     hooks the project needs, then start the team with `pdo team-up --project <name>`.

@@ -162,6 +162,8 @@ w="$(cd "$T" && bash -c "source '$BIN/lib.sh'; PROJECT=acme; pdo_resolve_project
 eq "identity: no GH_USER, no hook output = no wrapper" "$w" ""
 w="$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; GH_USER=octo; pdo_finalize; identity_wrapper '$T/repos/docs'")"
 eq "identity: GH_USER pin + hook word" "$w" "$BIN/with-gh-user --user octo extra-identity"
+c="$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; GH_USER=octo; pdo_finalize; agent_command '$T/repos/widget.git' 'Acme-12 x' opus 'do it' --resume s1")"
+has "launch command marks the agent dispatched" "$c" "env PDO_DISPATCHED=1 $BIN/with-gh-user --user octo claude --resume s1 --remote-control"
 eq "with-gh-user without a login just runs" "$("$BIN/with-gh-user" printenv GH_TOKEN || echo unset)" unset
 eq "with-gh-user --user pins GH_TOKEN" "$("$BIN/with-gh-user" --user octo printenv GH_TOKEN)" token-for-octo
 

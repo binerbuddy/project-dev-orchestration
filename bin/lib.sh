@@ -242,10 +242,7 @@ launch_agent() {
     claude) ;;
     *) echo "launch_agent: AGENT_CLI '${AGENT_CLI}' is not supported yet (only claude)" >&2; return 1 ;;
   esac
-  # No -n: a session name draws a labelled rule under question menus, which hides them from
-  # herdr's blocked detection (it only reads text after the last horizontal rule).
-  # shellcheck disable=SC2046
-  printf -v cmd '%q ' $(identity_wrapper "$dir") claude "$@" --remote-control "$name" --model "$model" "$prompt"
+  cmd="$(agent_command "$dir" "$name" "$model" "$prompt" "$@")"
   herdr pane run "$pane" "$cmd" >/dev/null
   for _ in $(seq 1 60); do
     sleep 1
@@ -264,6 +261,19 @@ launch_agent() {
   return 1
 }
 launch_claude() { launch_agent "$@"; }  # old name, kept for hooks and overlays that call it
+
+# agent_command <trusted_dir> <name> <model> <prompt> [extra agent args...]: the shell command
+# launch_agent runs in the pane. PDO_DISPATCHED=1 tells the agent it was started by the engine,
+# not by a collaborator (it skips the one-time human-guide check in AGENTS.md).
+# No -n: a session name draws a labelled rule under question menus, which hides them from
+# herdr's blocked detection (it only reads text after the last horizontal rule).
+agent_command() {
+  local dir="$1" name="$2" model="$3" prompt="$4" cmd
+  shift 4
+  # shellcheck disable=SC2046
+  printf -v cmd '%q ' env PDO_DISPATCHED=1 $(identity_wrapper "$dir") claude "$@" --remote-control "$name" --model "$model" "$prompt"
+  printf '%s' "$cmd"
+}
 
 # write_meta <repo> <num> <json-fields>: merge fields into the agent's metadata file, which
 # the watcher, qc-review and resume-agent read (route, branch, worktree, cwd, session_id, …).

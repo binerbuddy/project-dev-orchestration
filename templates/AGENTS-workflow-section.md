@@ -1,6 +1,7 @@
 <!--
 Paste this section into the product repo's AGENTS.md (CLAUDE.md then becomes `@AGENTS.md` plus any Claude-only notes).
-Replace every <placeholder>. Keep it short: the details live in the profile and the skills.
+Replace every <placeholder> (`<guide path>` is where /project-setup wrote the human guide, default
+`docs/agent-workflow.md`). Keep it short: the details live in the profile and the skills.
 -->
 
 ## How work flows here
@@ -10,6 +11,17 @@ project-dev-orchestration skills. Project facts (build commands, ports, QC data,
 `.agents/project-profile.md`; read it before you start. To learn the whole pipeline, load the `project-how-it-works`
 skill. Engine commands are written `pdo <name>`; if `pdo` isn't on PATH, use `<engine checkout>/bin/<name>` (a
 dispatch brief gives the absolute path).
+
+**First session in a clone: the human guide (once).** Skip this if you were dispatched rather than started by a
+person: `PDO_DISPATCHED=1` is set in your environment, or your first prompt is a dispatch brief from an orchestrator.
+Otherwise, at the start of work, check for `.agents/local/guide-ack` (per clone, gitignored).
+- Missing: ask the human once whether they've read the human guide, `<guide path>` (this repo's labels, routes, QC
+  and who to ask), and the general guide at https://binerbuddy.github.io/project-dev-orchestration/. Offer a 3-line
+  summary of `<guide path>`. When they confirm, create the file with two lines: `date: <YYYY-MM-DD>` and
+  `guide: <version>`, where the version is the `guide-version:` value at the top of `<guide path>` (no such line: the
+  output of `git hash-object <guide path>`). If they decline or skip, carry on and don't ask again this session.
+- Present: never ask again, unless its `guide:` differs from the guide's current version; then ask once more and
+  rewrite the file on confirmation.
 
 **Labels and routes**
 - `P1-urgent` … `P4-low`: priority, on issues and PRs. A PR takes the highest P-label of the issues it closes

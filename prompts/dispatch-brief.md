@@ -7,6 +7,7 @@ Your herdr workspace is named `{{NAME}}`.
 - Worktree: `{{WORKTREE}}` on branch `{{BRANCH}}`, based on `{{BASE}}`. It is also your current working directory.
   When your lifecycle skill says to create a worktree, **use this one instead**. Don't create another.
 - Route: **{{ROUTE}}**, running `{{SKILL}}`. If exploration shows this route is wrong, stop and tell the human here in plain words, then wait for their decision. For example, a "small" fix that turns out to need a schema migration, a cross-cutting UX decision, or a design doc.
+- You were dispatched, not started by a collaborator: skip the one-time human-guide check in `AGENTS.md`.
 - Project knowledge (build and check commands, dev servers and ports, QC data, conventions) is in the repo's `.agents/project-profile.md`. Read it before you build or run anything.
 
 ## First: is it already done?

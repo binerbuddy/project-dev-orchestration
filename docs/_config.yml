@@ -1,0 +1,4 @@
+# GitHub Pages (built from main, folder /docs, with GitHub's default Jekyll; no workflow needed).
+title: project-dev-orchestration
+description: How a GitHub repo is worked by a team of coding agents, and what the humans around it do.
+theme: jekyll-theme-primer

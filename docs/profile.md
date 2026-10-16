@@ -1,7 +1,7 @@
 # The project profile
 
 Each product repo describes itself to the skills in **`.agents/project-profile.md`**, committed in the repo.
-The template, with every section documented, is [`templates/project-profile.md`](../templates/project-profile.md):
+The template, with every section documented, is [`templates/project-profile.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/project-profile.md):
 copy it, fill it in, and commit it.
 
 ## Where skills look
@@ -36,5 +36,10 @@ The profile is project knowledge for agents. Engine settings (repo roots, the bo
 engine's project env instead; see [design.md](design.md#configuration).
 
 Alongside the profile, the repo's `AGENTS.md` gets a short "How work flows here" section from
-[`templates/AGENTS-workflow-section.md`](../templates/AGENTS-workflow-section.md), and `CLAUDE.md` becomes
+[`templates/AGENTS-workflow-section.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/AGENTS-workflow-section.md), and `CLAUDE.md` becomes
 `@AGENTS.md` plus any Claude-only notes.
+
+`/project-setup` also writes the repo's human guide, `docs/agent-workflow.md` (or under the docs dir §Docs
+names), from
+[`templates/agent-workflow-guide.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/agent-workflow-guide.md),
+filled from the profile; it regenerates it on re-runs when the profile changes, and bumps its `guide-version`.

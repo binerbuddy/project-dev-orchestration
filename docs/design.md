@@ -38,9 +38,11 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
 - Every launch is prefixed by `identity_wrapper`: `bin/with-gh-user --user $GH_USER` when the project sets
   `GH_USER` (gh's active account is machine-wide and other sessions switch it), plus whatever words the
   project's `IDENTITY_HOOK` prints for that checkout (e.g. a bot identity for one repo).
+- Every launch also sets `PDO_DISPATCHED=1` in the agent's environment (`agent_command` in `bin/lib.sh`),
+  so the agent knows it was started by the engine and skips the collaborator's one-time guide check.
 - The dispatch brief is `BRIEF_TEMPLATE`, else the first `prompts/dispatch-brief.md` in the config dirs,
-  else the engine's `prompts/dispatch-brief.md`. `{{UPPERCASE}}` placeholders are filled in: REF, URL,
-  NAME, WORKTREE, BRANCH, BASE, ROUTE, SKILL, TITLE, TYPE, LABELS, BODY, DIRECTIVES, NUMBER, ENGINE.
+  else the engine's `prompts/dispatch-brief.md`. Its placeholders (upper-case names in double braces) are
+  filled in: REF, URL, NAME, WORKTREE, BRANCH, BASE, ROUTE, SKILL, TITLE, TYPE, LABELS, BODY, DIRECTIVES, NUMBER, ENGINE.
 - **Human directives.** Issue comments that start with "Claude" or "@claude", from OWNER, MEMBER or
   COLLABORATOR authors only, go into the brief with the same authority as the issue body.
 
@@ -271,12 +273,12 @@ in **`.agents/project-profile.md`** on the default branch; the skills cite its s
   default branch's copy (`git show origin/HEAD:.agents/project-profile.md` against
   `git rev-parse --git-common-dir`). With no profile, a skill detects the obvious build tooling
   (package.json scripts, `*.sln`, pyproject, Cargo, go.mod), carries on with that, and offers to write one
-  from [`templates/project-profile.md`](../templates/project-profile.md).
+  from [`templates/project-profile.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/project-profile.md).
 - **Sections** (exact `##` headings): `Identity`, `Layout`, `Build & checks`, `Tests`, `Dev servers`,
   `QC data`, `QC preview`, `Changelog`, `Review roles`, `Docs`, `Conventions`, `Do not`. What each holds is
   in [profile.md](profile.md) and the template.
 - The repo's `AGENTS.md` gets a short "How work flows here" section from
-  [`templates/AGENTS-workflow-section.md`](../templates/AGENTS-workflow-section.md); `CLAUDE.md` can be
+  [`templates/AGENTS-workflow-section.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/AGENTS-workflow-section.md); `CLAUDE.md` can be
   `@AGENTS.md` plus any Claude-only notes.
 
 ## Overlays
