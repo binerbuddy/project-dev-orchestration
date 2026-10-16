@@ -1,16 +1,16 @@
 ---
 name: project-setup
-description: Set up, initialise or onboard the current git repo for project-dev-orchestration (the orchestration / agent workflow) - detect the layout, origin, stack and its build/typecheck/test commands, draft .agents/project-profile.md, add the "How work flows here" section to AGENTS.md, create the missing GitHub labels, record the QC fixture format, generate the human guide docs/agent-workflow.md and gitignore .agents/local/, and in full mode register the repo with the engine (projects/<name>.env, optional project board), then deliver the repo files as a PR on chore/agent-workflow-setup. Idempotent - a re-run reports what is present and what has drifted, and only fills gaps. Use when asked to set up, initialise, onboard or bootstrap a repo for the orchestration or agent workflow, or to check or repair an existing setup.
+description: Set up, initialise or onboard the current git repo for project-dev-orchestration (the orchestration / agent workflow) - detect the layout, origin, stack and its build/typecheck/test commands, draft .agents/project-profile.md, add the "How work flows here" section to AGENTS.md, check and create the GitHub labels, record the QC fixture format, generate the human guide (docs/agent-workflow.md or the repo's human-docs dir) and gitignore .agents/local/, and in full mode register the repo with the engine (projects/<name>.env, optional project board), then deliver the repo files as a PR on chore/agent-workflow-setup that follows the repo's own changeset/CI rules. Handles repos that are one of several in a project. Idempotent - a re-run reports what is present and what has drifted, and only fills gaps. Use when asked to set up, initialise, onboard or bootstrap a repo for the orchestration or agent workflow, or to check or repair an existing setup.
 argument-hint: "[collaborator|full]"
 ---
 
 # Project setup
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path. Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH). Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
 
 Initialise the **current working repo** to use project-dev-orchestration: the repo files every agent reads (the
-profile and `AGENTS.md`), the guide its humans read (`docs/agent-workflow.md`), the GitHub labels the pipeline relies on, and, in full mode, the engine's registration of
-the repo.
+profile and `AGENTS.md`), the guide its humans read (`docs/agent-workflow.md` by default), the GitHub labels the
+pipeline relies on, and, in full mode, the engine's registration of the repo.
 
 **Idempotent.** Every step first checks what is already there. A re-run prints what is present, what has drifted
 (present but out of date, or disagreeing with what detection finds), and what is missing, and only fills gaps.
@@ -21,6 +21,9 @@ renamed or deleted without it.
 - **Don't invent anything.** Every fact in the profile, the workflow section and the env file comes from detection
   (with its source) or from the human. Anything neither gives stays marked `TODO(setup): <question>`, so the next
   run finds it.
+- **Verify what you didn't detect.** A command, script, path or branch that comes from the human, from a draft, or
+  from an existing file is still checked against the repo's default branch (step 2's verification pass) before it
+  is written or kept. A mismatch is flagged, never silently dropped or kept.
 - **This repo only.** Reading related repos for context is fine. Writing to any other repo (files, branches, PRs,
   issues, comments, labels) needs the human's yes first; offer to run `/project-setup` there separately instead.
 - **Never push to the default branch.** Repo-file changes go on `chore/agent-workflow-setup` and a PR.
@@ -30,17 +33,27 @@ renamed or deleted without it.
 - **Ask in batches.** Collect the unknowns and ask once (Claude Code: `AskUserQuestion`, at most 4 questions per call,
   repeated as needed; Codex and Grok: one numbered list in chat). Every question can be answered "skip": the item
   stays `TODO(setup)`.
-- **gh identity.** Never `gh auth switch`. Once a `GH_USER` is known (an existing project env, or the human's answer
-  in step 6), run gh as `pdo with-gh-user gh …` or `GH_TOKEN=$(gh auth token -u <user>) gh …`.
-- LF line endings in every file you write.
+- **gh and git identity.** Never `gh auth switch`. Once a `GH_USER` is known (an existing project env, or the
+  human's answer in step 6), run gh as `pdo with-gh-user gh …` or `GH_TOKEN=$(gh auth token -u <user>) gh …`.
+  `git push` and `git fetch` over HTTPS don't read `GH_TOKEN` on their own: run them as
+  `pdo with-gh-user --user <login> git push …`, which also injects gh's credential helper for github.com. Without
+  the engine: `GH_TOKEN=$(gh auth token -u <login>) git -c credential.https://github.com.helper= -c
+  'credential.https://github.com.helper=!gh auth git-credential' push …`.
+- LF line endings in every file you write. Normalise anything you copy from an existing file to LF first.
 
 ## 0. Mode
 
 - `collaborator`: repo files and labels only. No engine, no env file, no board. For someone who works the repo with
   their own agent and no orchestrator.
 - `full`: everything in collaborator mode, plus engine registration (step 6).
-- No argument: `full` if `pdo` is on PATH (or the human points you at an engine checkout), else `collaborator`.
-  Say which mode you picked and why in one line.
+- No argument: `full` if the engine is reachable, else `collaborator`. The engine is reachable when `pdo` is on
+  PATH, or the human names an engine checkout: a directory whose `bin/` holds `pdo` and `project-env`. If they name
+  a wrapper or overlay directory with its own `bin/`, use it only if its `bin/` runs every command this skill calls
+  (`<dir>/bin/pdo help` lists them); otherwise ask for the engine checkout itself. Say which mode you picked and
+  why in one line.
+- **One of several repos in a project:** if `pdo project-env` run from this repo resolves a project whose
+  `PRIMARY_REPO` is another repo, this repo is a secondary repo of that project. Use full mode against that
+  project's env (step 6 edits it, never creates a second one), and treat its board as shared (step 2, §Identity).
 
 ## 1. Detect (read-only)
 
@@ -53,13 +66,17 @@ Recipes for each item: `references/detection.md`. Find:
    permission on the repo (below WRITE: no label creation, and the PR comes from a fork).
 3. **Stack and the authoritative build, typecheck and test commands**, per part of the repo: CI workflows first, then
    `package.json` scripts, `*.sln`/`*.csproj`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Makefile`. Record only
-   commands that exist. Dev servers and their ports where obvious.
-4. **Existing files:** `AGENTS.md` (and whether it already has `## How work flows here`), `CLAUDE.md`,
-   `.agents/project-profile.md` (worktree and default branch), the human guide (`docs/agent-workflow.md`, or the
-   profile §Docs location; its `guide-version:`), whether `.gitignore` covers `.agents/local/`, changesets or a CHANGELOG, docs dirs, issue and PR
-   templates, and the repo's labels.
-5. **Full mode:** whether the repo is already registered (`pdo project-env` run from the repo resolves a project),
-   the config dirs, and the gh logins on the machine.
+   commands that exist on the default branch. Dev servers and their ports where obvious. Whether the repo has a UI
+   at all (a web or desktop front end), or is headless (an engine, library, CLI or API with no UI).
+4. **Existing files:** `AGENTS.md` (and whether it already has `## How work flows here`), `CLAUDE.md` (and its line
+   endings), `.agents/project-profile.md` (worktree and default branch), the human guide (`<docs dir>/agent-workflow.md`;
+   its `guide-version:`), whether `.gitignore` covers `.agents/local/`, docs dirs (and which are gitignored), issue
+   and PR templates, and the repo's labels.
+5. **Changelog and PR rules (CI):** the changelog convention (changesets, a CHANGELOG file, release tooling), and any
+   workflow that fails a PR without one: a required-changeset or changelog check, the label that skips it (e.g.
+   `skip changeset`), and the paths it exempts. Step 8 applies these to the setup PR itself.
+6. **Full mode:** whether the repo is already registered (`pdo project-env` run from the repo resolves a project,
+   and whether this repo is its `PRIMARY_REPO`), the config dirs, and the gh logins on the machine.
 
 Print a short **detection report**: one line per item with its value, its source, and its state (present, missing,
 drifted). On a re-run this report is the main output; the later steps act only on the missing and drifted lines.
@@ -76,10 +93,12 @@ guidance paragraph with facts.
   plain clone, worktree naming if it can be inferred, base branch, branch prefixes seen in `git branch -r`),
   §Build & checks and §Tests (the commands, each with the directory it runs in; "none defined" where there is none),
   §Dev servers (start commands and ports found, with their files), §Changelog (the convention found, with an example
-  entry copied from the repo), §Docs (the dirs found).
+  entry copied from the repo, plus the CI check, skip label and exempt paths from step 1), §Docs (the dirs found).
 - **List the unknowns and ask only for what detection can't give**, typically:
-  - **§QC data:** what human QC runs against (seed data, what the top-level record is called in the UI), the
-    fixture format and extension, how to export and import one, any size limit (see step 5);
+  - **§QC data:** what human QC runs against. With a UI: seed data, what the top-level record is called in the UI,
+    the fixture format and extension, how to export and import one, any size limit (see step 5). Headless: what a
+    QC case is (an input file or request plus its expected output), the fixture format, and the command a human
+    runs to check one;
   - **§QC preview:** is there a remote preview service (triggers, link pattern, login), or "None";
   - **§Review roles:** extra reviewer roles (a UI designer for the project's component library, a data reviewer for
     migrations), or none;
@@ -87,35 +106,63 @@ guidance paragraph with facts.
   - **§Identity board:** the project board, if any (full mode handles it in step 6; collaborator mode only records
     what the human says);
   - **§Dev servers:** the ports reserved for the human's QC servers and the port scheme agents use instead; the
-    database rules;
-  - **§Conventions** and **§Do not:** anything the human wants stated now (both may start short).
-  - **For the human guide (step 7):** who the manager is (the person who runs the team, sets priorities and
-    merges) and how to reach them, and where collaborators ask questions. Ask these in the same batch.
+    database rules; and the plain commands a person runs to start the app for QC (the "Human run" line);
+  - **§Conventions** and **§Do not:** anything the human wants stated now (both may start short);
+  - **§Identity, for the human guide (step 7):** `Manager` (the person who runs the team, sets priorities and
+    merges, and how to reach them), `Where to ask` (where collaborators ask questions), and `Human guide notes`
+    (anything repo-specific the guide must tell people: which repo to file in, house prohibitions in plain words).
+    Ask these in the same batch. The guide is rendered from these lines, so a re-run never loses the answers.
 - Write answers in; unanswered items stay `TODO(setup): <question>` under their heading.
+- **Shared board (a project with several repos).** The primary repo's profile holds the board's ids. A secondary
+  repo's §Identity names the board and points at the ids instead of copying them: "Board: org Project #<n>, shared
+  with `<org>/<primary>`; ids: `pdo project-env --board` (without the engine: `gh project field-list <n> --owner
+  <org> --format json`)." Copies go stale when a column is edited.
+- **Verification pass (every run, whatever the source).** When the profile's content comes from a draft, an
+  existing profile, or the human's answers, check every concrete claim against the default branch before writing or
+  keeping it: each `npm run <x>` exists in that `package.json`'s `scripts` (`git show origin/<base>:<dir>/package.json`),
+  each make/just target exists, each path and file exists, each named branch exists on origin, each label exists
+  (step 4). A mismatch (e.g. a script that exists only on an unmerged branch) is flagged in the detection report and
+  the PR's open questions with what was found; keep it only if the human says so, and then with a note saying where
+  it does exist.
 - **Profile already present:** don't rewrite it. Report missing or renamed headings, `TODO(setup)` markers, template
-  text left in, and facts that disagree with detection (a base branch that changed, a build script that no longer
+  text left in, missing §Identity guide lines (`Manager`, `Where to ask`, `Human guide notes`), and facts that
+  disagree with detection or fail the verification pass (a base branch that changed, a build script that no longer
   exists, a different `<org>/<repo>`). Propose a fix for each and apply only what the human accepts.
 
 ## 3. `AGENTS.md`: the workflow section
 
 Fill this plugin's `templates/AGENTS-workflow-section.md` (`../../templates/AGENTS-workflow-section.md`): drop its
 leading comment, replace every `<placeholder>` (`<org>/<repo>`, `<project#>`, `<base>`) and use the project's label
-names where its env renames them. `<guide path>` is where step 7 writes the human guide (default
-`docs/agent-workflow.md`). With no board, replace the "on org Project `<project#>`" clause with "with no
-project board (a maintainer dispatches agents by hand)". Leave `<engine checkout>` as written: a dispatch brief fills
-it in.
+names where its env renames them. `<guide path>` is where step 7 writes the human guide. With no board, replace the
+"on org Project `<project#>`" clause with "with no project board (a maintainer dispatches agents by hand)".
+`<engine checkout>`: in full mode, the engine path `pdo project-env PDO_HOME` prints, written with `~/` when it is
+under the home directory (person-started sessions without `pdo` on PATH find the engine through it; a dispatch
+brief's absolute path still wins); in collaborator mode, replace it with "your project-dev-orchestration
+checkout". For a headless repo, use the template's headless wording in the QC Checklist rule.
 
 - **No `AGENTS.md`:** create it with a one-line title and the section.
 - **`AGENTS.md` without the section:** append it at the end, unchanged otherwise.
 - **Section present:** compare it with a freshly filled template. Report placeholders left, wrong org/repo/base or
   label names, and rules the template has that the section lacks. Propose the edits; apply on yes. Never drop rules
   the human added.
+- **A human-approved draft of the section** (the human hands you one, or it is in a draft PR or file): merge it with
+  the freshly filled template. The approved wording wins on content: keep its rules, its stricter variants (e.g.
+  "every PR gets a checklist" over the template's "every user-visible PR"), and its repo-specific labels in the
+  labels list. The template supplies the required parts the draft lacks: the first-session guide rule, the labels
+  and routes, the must and must-not rules, "Other repos", the intake rule and the QC Checklist rule. Where the two
+  conflict, keep the draft's wording and list each conflict (template rule, draft rule, which was kept) in the PR
+  body's open questions.
 - **`CLAUDE.md` with content** (anything beyond `@AGENTS.md` and Claude-only notes): offer to move the
   tool-neutral content into `AGENTS.md`, so Codex and Grok read it too, and leave `CLAUDE.md` as `@AGENTS.md` plus
-  the Claude-only notes (slash commands, Claude Code hooks or settings, Claude-specific tool names). Build both new
-  files in the scratchpad, **show the diff** (`git diff --no-index <old> <new>` for each file), and move only after
-  the human's yes. If they decline, leave `CLAUDE.md` as it is and report it as skipped. `CLAUDE.md` absent: create it
-  as `@AGENTS.md` only if the human uses Claude Code; it is harmless either way, so ask.
+  the Claude-only notes (slash commands, Claude Code hooks or settings, Claude-specific tool names).
+  - Build both new files in the scratchpad **from the default branch's current `CLAUDE.md`**
+    (`git show origin/<base>:CLAUDE.md`), read at run time. If a draft of the move predates that file's last commit,
+    re-diff the draft against it and carry over what changed since.
+  - **Normalise to LF before diffing** (`tr -d '\r'`), so a CRLF file doesn't show every line as changed; say in the
+    PR body that the moved content was converted from CRLF to LF.
+  - **Show the diff** (`git diff --no-index <old, LF> <new>` for each file), and move only after the human's yes. If
+    they decline, leave `CLAUDE.md` as it is and report it as skipped. `CLAUDE.md` absent: create it as `@AGENTS.md`
+    only if the human uses Claude Code; it is harmless either way, so ask.
 
 ## 4. GitHub labels
 
@@ -123,24 +170,33 @@ Check every label the engine and skills rely on, then create the missing ones wi
 only): `route:small`, `route:design`, `route:build`; the P-labels (`P_LABELS`, default `P1-urgent P2-high P3-medium
 P4-low`); `LABEL_QC_READY` and `LABEL_QC_DONE` (default `ready for QC`, `QC complete - ready to review`); the
 `CARRY_LABELS` (default `client-requested`); and `needs-triage`, `epic-phase`, `awaiting-ux-gate`, `likely-fixed`,
-`blocked-by-pr`, `on-hold`, `needs-design`, `Security`, `small-win`, `orchestrator-system`. Colors, descriptions,
-what relies on each, and the check-then-create loop: `references/labels.md`. On a user-owned repo (no issue types),
-also create the type labels the human names, and record them in §Identity.
+`blocked-by-pr`, `on-hold`, `needs-design`, `Security`, `small-win`, `orchestrator-system`. Also check (never
+create) the repo-specific labels the profile, the workflow section or CI name, such as the changeset skip label.
+Colors, descriptions, what relies on each, and the check-then-create loop: `references/labels.md`. On a user-owned
+repo (no issue types), also create the type labels the human names, and record them in §Identity.
+
+- **Check-only mode** (`CREATE=0` in the recipe): a re-run, a run without write access, or a human who only wants
+  the report. It lists present and missing labels and prints the `gh label create` commands, creating nothing.
+- **The repo's own labels:** list every label the repo has that the engine set doesn't name, as information only
+  (no judgement, no rename, no delete). They go in the PR body's label check.
 
 Never delete or rename a label. A case-only difference counts as present (GitHub names are case-insensitive); report
-it. Without write access, list the missing labels and the commands for a maintainer, and carry on.
+it. Without write access, run check-only, list the commands for a maintainer, and carry on.
 
 ## 5. QC fixtures
 
 Tell the human, in two or three lines:
 - QC fixtures (test data a QC checklist links to) live on a never-merged `qc-fixtures` branch (`FIXTURE_BRANCH`).
   You don't create it now: `pdo qc-fixture-push <PR#> <file>` creates it the first time an agent publishes a fixture.
-- It is per repo, and its format is this repo's own (an app export, a database dump, a JSON seed file).
+- It is per repo, and its format is this repo's own (an app export, a database dump, a JSON seed file; for a
+  headless repo, typically an input file with its expected output).
 
-Ask for the fixture format (what it is, its file extension, how to export one from the running app and import it,
-any size limit) and record it in the profile's §QC data. In full mode also set `FIXTURE_EXT` (e.g. `.json`,
-`.tar.gz`) in the env file; `qc-fixture-push` warns when a file doesn't match it. No fixtures (the seed data covers
-QC): say so in §QC data and leave `FIXTURE_EXT` unset.
+Ask for the fixture format (what it is, its file extension, how to export one and import or run it, any size limit)
+and record it in the profile's §QC data. In full mode also set the extension in the env file: `FIXTURE_EXT` (e.g.
+`.json`, `.tar.gz`) for the project's primary repo, and for a secondary repo with its own format an entry in
+`FIXTURE_EXT_BY_REPO` (`declare -A FIXTURE_EXT_BY_REPO=([<repo>]=".<ext>")`), which `qc-fixture-push --repo <repo>`
+uses before `FIXTURE_EXT`. `qc-fixture-push` warns when a file doesn't match. No fixtures (the seed data covers
+QC): say so in §QC data and leave both unset.
 
 ## 6. Full mode: engine registration
 
@@ -165,10 +221,12 @@ declare -A ROUTE_SKILL=(
   [build]="${PDO_SKILL_PREFIX}project-feature-build"
 )
 DEFAULT_MODEL="opus"            # the engine default; ask if the human wants another
-GH_USER="<login>"               # the gh login this project's agents use
+GH_USER="<login>"               # the gh login this project's agents use (gh and git push)
 # PROJECT_NUMBER=<n>            # only with a board (below)
-# FIXTURE_EXT=".<ext>"          # from step 5
+# FIXTURE_EXT=".<ext>"          # from step 5: the primary repo's fixture format
+# declare -A FIXTURE_EXT_BY_REPO=([<other repo>]=".<ext>")   # repos with another format
 # QC_PORTS="<ports>"            # the human's reserved QC ports, from §Dev servers
+# QC_PASS_HANDLER=external      # only if another service acts on "Claude, QC pass" (default: the watcher)
 # MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
 # PORTFOLIO_PRIORITY=3          # portfolio manager (pdo fleet): 1 = highest
 # RESOURCE_PROFILE=medium       # light | medium | heavy
@@ -177,10 +235,13 @@ GH_USER="<login>"               # the gh login this project's agents use
 
 - **`GH_USER`:** show the logins `gh auth status` lists and ask which one this project's agents use. Leave it unset
   only if the human says the active account is fine (the engine then pins nothing).
+- **A secondary repo** (step 0): its entry in the project's `REPO_ROOT` is already there or is added; add its
+  `FIXTURE_EXT_BY_REPO` entry if its format differs. Don't change `PRIMARY_REPO` or `PROJECT_NUMBER`.
 - Write renamed label keys (`CWT_STATUS`, `P_LABELS`, `LABEL_QC_READY`, `LABEL_QC_DONE`) only when the repo already
   uses other names; otherwise the defaults apply and the keys stay out.
 - Hooks (`QC_HOOK`, `IDENTITY_HOOK`, `TEAM_UP_HOOK`) are project-specific code: list them as next steps, don't write
-  them.
+  them. An `IDENTITY_HOOK` wrapper that sets `GIT_CONFIG_*` should append after the existing `GIT_CONFIG_COUNT`, as
+  `bin/with-gh-user` does, since it runs inside it.
 
 **Board (optional).** Offer to set up a GitHub Projects v2 board. The engine's board writes (`claim`,
 `board-status`, `file-issue`) query an organization project, so the board must be org-owned; for a user-owned repo,
@@ -188,11 +249,12 @@ recommend skipping it.
 - **Use an existing one:** `gh project list --owner <org> --format json`, then
   `gh project field-list <n> --owner <org> --format json` (needs the `read:project` scope; if gh lacks it, ask the
   human to run `gh auth refresh -s read:project,project` themselves). Record `PROJECT_NUMBER` in the env, and in
-  §Identity the board's number, title, node id, the Status field id, and the option id of each Status column. The
-  queue column (`CWT_STATUS`, default `Claude Work This`) must be one of the options; the others the engine uses are
-  Backlog, In Progress, In Review and Done (see `../project-how-it-works/references/labels-and-board.md`). Report
-  missing options and ask the human to add them in the board's UI: editing the field's options through the API
-  replaces the whole list and changes every option id.
+  the primary repo's §Identity the board's number, title, node id, the Status field id, and the option id of each
+  Status column (`pdo project-env --board` prints them once `PROJECT_NUMBER` is set). The queue column
+  (`CWT_STATUS`, default `Claude Work This`) must be one of the options; the others the engine uses are Backlog,
+  In Progress, In Review and Done (see `../project-how-it-works/references/labels-and-board.md`). Report missing
+  options and ask the human to add them in the board's UI: editing the field's options through the API replaces
+  the whole list and changes every option id.
 - **Create one:** only on the human's explicit yes. `gh project create --owner <org> --title "<title>"`, then
   `gh project link <n> --owner <org> --repo <org>/<repo>`, then have the human add the Status options above in the UI,
   and record it as for an existing board.
@@ -201,55 +263,89 @@ recommend skipping it.
 
 **Verify.**
 - `pdo project-env --project <name>`: every key resolves as intended (`REPO_ROOT`, `PRIMARY_REPO`, `GH_USER`, the
-  `ROUTE_SKILL` entries); and `pdo project-env` with no `--project`, run from the repo, resolves to `<name>`.
+  `ROUTE_SKILL` entries, `FIXTURE_EXT_BY_REPO`); and `pdo project-env` with no `--project`, run from the repo,
+  resolves to `<name>`. With a board, `pdo project-env --board` lists its columns.
 - `pdo queue --project <name>`: a dry read (it ranks; it doesn't claim or move anything). With a board it lists the
   eligible issues; without one it stops with "has no PROJECT_NUMBER", which is expected.
 
-## 7. The human guide: `docs/agent-workflow.md`
+## 7. The human guide
 
 The page the repo's collaborating humans read: which labels and routes to use, how to request work, how QC works
 here (comment triggers, preview login, fixtures), the changelog rule, who the manager is and where to ask. Agents
 check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and stay current.
 
-- **Location:** `docs/agent-workflow.md`, unless the profile's §Docs names another docs dir; then
-  `<that dir>/agent-workflow.md`. Record the path in §Docs ("Human guide: `<path>`") and use it for `AGENTS.md`'s
-  `<guide path>`.
+- **Location.** Choose the docs dir, then check it, and say in the summary and the PR body which dir was chosen and
+  why:
+  1. the dir the profile's §Docs names for human docs ("Human guide: `<path>`" from an earlier run wins outright);
+  2. else the dir that already holds the repo's other human-facing docs (developer or user guides, contributing
+     notes), preferred over a design-doc, ADR or plan dir;
+  3. else `docs/`.
+  Then run `git check-ignore -v <dir>/agent-workflow.md`: if the path is ignored, that dir can't hold it; take the
+  next candidate (the repo root is the last resort) and never edit the ignore rule without the human's yes. Record
+  the path in §Docs ("Human guide: `<path>`") and use it for `AGENTS.md`'s `<guide path>`.
 - **Fill** this plugin's `templates/agent-workflow-guide.md` (`../../templates/agent-workflow-guide.md`) from the
   profile as written in steps 2 and 5, and in full mode from the env file of step 6 (renamed labels, the queue
-  column, the board). Each placeholder names its source. Keep the `[if …]` blocks whose condition holds and delete
-  the rest; drop the leading guidance comment; keep `<!-- guide-version: 1 -->` as the first line. Facts neither the
-  profile nor the human gives stay `TODO(setup): <question>`, as in the profile. Plain words for people: no engine
-  internals, no host paths, no ports or ids beyond what the profile already states for humans.
+  column, the board). Each placeholder names its source; the manager, where to ask and the repo notes come from
+  §Identity's `Manager`, `Where to ask` and `Human guide notes` lines, and "Run it locally" from §Dev servers'
+  "Human run" line (never the agent port scheme). Keep the `[if …]` blocks whose condition holds and delete the
+  rest; drop the leading guidance comment; keep `<!-- guide-version: 1 -->` as the first line. Facts the profile
+  doesn't give stay `TODO(setup): <question>`, as in the profile (and the answer goes into the profile, not only the
+  guide). Plain words for people: no engine internals, no host paths, no agent port schemes or ids; ports a person
+  uses themselves (their reserved QC ports) only as §Dev servers states them.
 - **Already present (a re-run): drift detection.** Fill the template afresh in the scratchpad from the current
   profile and env, and compare everything above `## Local notes` with the committed file (ignore the
-  `guide-version:` line). Report each difference as drifted, with the reason where it shows (a renamed label, a new
-  QC preview, a changed base branch, a template rule the file lacks). Show the diff, apply on the human's yes, and
-  when anything above `## Local notes` changes, add 1 to `guide-version` (that makes agents ask collaborators to
-  re-read it once). Never touch `## Local notes` or what's under it, and never drop text the human added elsewhere
-  without showing it in the diff.
+  `guide-version:` line). Because every guide fact comes from a profile line, an answer given on an earlier run
+  renders the same and shows no drift. Text in the committed guide that no profile line produces is the human's:
+  propose moving it into §Identity's `Human guide notes` (or under `## Local notes`), and keep it. Report each other
+  difference as drifted, with the reason where it shows (a renamed label, a new QC preview, a changed base branch, a
+  template rule the file lacks). Show the diff, apply on the human's yes, and when anything above `## Local notes`
+  changes, add 1 to `guide-version` (that makes agents ask collaborators to re-read it once). Never touch
+  `## Local notes` or what's under it, and never drop text the human added elsewhere without showing it in the diff.
 - **README link:** if the product repo's `README.md` doesn't link the guide, offer one line (in its contributing
   section, else at the end), with `<guide path>` filled in: `Working on this repo with an agent? Read
   [<guide path>](<guide path>) first (general guide: https://binerbuddy.github.io/project-dev-orchestration/).`
   Add it only on the human's yes.
 - **`.gitignore`:** make sure it ignores `.agents/local/` (per-clone agent state, such as `guide-ack`). Missing:
-  append the line `.agents/local/` (create `.gitignore` if there is none). Never reorder or rewrite existing lines.
-  If a rule already ignores all of `.agents/`, report that it would also hide the profile, and ask.
+  append `.agents/local/`, optionally preceded by one comment line (`# per-clone agent state
+  (project-dev-orchestration)`); create `.gitignore` if there is none. Never reorder or rewrite existing lines. If a
+  rule already ignores all of `.agents/`, report that it would also hide the profile, and ask.
 
 ## 8. Deliver
 
 1. **Branch.** If nothing in the repo files changed, skip to the summary. Otherwise put the changes on
-   `chore/agent-workflow-setup` from `origin/<base>`:
-   - bare-root layout: a new worktree for the branch, named by §Layout's convention;
-   - plain clone: `git switch -c chore/agent-workflow-setup origin/<base>` when the working tree is clean; when it
-     isn't, use a separate worktree (`git worktree add`) and leave the human's checkout alone;
+   `chore/agent-workflow-setup`, created from `origin/<base>` **without tracking it** (a branch that tracks
+   `origin/<base>` makes a bare `git push` or `git pull` target the default branch):
+   - bare-root layout: a new worktree named `agent-workflow-setup` (the worktree name for issue-less setup work;
+     use §Layout's case style, e.g. `agentWorkflowSetup` for camelCase):
+     `git fetch origin <base> && git worktree add --no-track -b chore/agent-workflow-setup <bare-root>/agent-workflow-setup origin/<base>`;
+   - plain clone: `git switch --no-track -c chore/agent-workflow-setup origin/<base>` when the working tree is
+     clean; when it isn't, use a separate worktree (`git worktree add --no-track -b chore/agent-workflow-setup
+     ../<repo>-agent-workflow-setup origin/<base>`) and leave the human's checkout alone;
    - the branch or its PR already exists (a re-run): reuse it and add a commit; never open a second PR.
-2. **Commit** the profile, `AGENTS.md`, the human guide, `.gitignore`, and (if changed) `CLAUDE.md` and
-   `README.md`, with the attribution line your tool or session prescribes, if any. Push the branch (never the
-   default branch) and open the PR against `<base>`:
-   `gh pr create -R <org>/<repo> --base <base> --head chore/agent-workflow-setup`. Body: what was added (name the
-   human guide's path, so reviewers read it), what was detected and from where, the `TODO(setup)` items left, and
-   that the profile takes effect for agents once merged (skills read the default branch's copy).
-3. **Summary** to the human:
+2. **Changeset / CI rules.** Apply the convention step 1 found to this PR, so it doesn't fail the repo's checks:
+   - every changed path is exempt (docs-only, if the exempt list covers `AGENTS.md`, `CLAUDE.md`, `.agents/`, the
+     guide and `.gitignore`): nothing to add;
+   - otherwise, if the repo has a skip label and the change has no user-visible effect, apply that label to the PR
+     (it is the documented route; say so in the body);
+   - otherwise add the entry the convention asks for (a changeset file, a CHANGELOG line) in the repo's own format,
+     as an internal or non-user-facing change if the format has such a type.
+   Check the PR's checks after opening it (`gh pr checks <n>`) and report the result.
+3. **Commit** the profile, `AGENTS.md`, the human guide, `.gitignore`, and (if changed) `CLAUDE.md`, `README.md`
+   and the changeset, with the attribution line your tool or session prescribes, if any. Push the branch with
+   `git push -u origin chore/agent-workflow-setup` (as `pdo with-gh-user --user <GH_USER> git push …` when a
+   `GH_USER` is set; never the default branch), and open the PR against `<base>`:
+   `gh pr create -R <org>/<repo> --base <base> --head chore/agent-workflow-setup`. The body has these sections:
+   - **Adds:** each file with one line on what it is; name the human guide's path and the docs dir chosen (and why),
+     so reviewers read it; what was detected and from where.
+   - **Docs/config only:** a statement that the PR changes no product code or behaviour (or what it does change),
+     that the profile takes effect for agents once merged (skills read the default branch's copy), and the LF
+     conversion of any moved CRLF content.
+   - **Label check:** present, created, missing (with commands for a maintainer), case differences, and the repo's
+     own extra labels (listed, not judged).
+   - **CI/changeset handling:** the convention found and what this PR did about it (exempt, skip label, or entry).
+   - **Open questions:** every `TODO(setup)` left, every verification-pass mismatch, every draft-versus-template
+     conflict, and anything else waiting on the human.
+4. **Summary** to the human:
    - **Created:** files (with the PR link), labels, the env file and its path, the board.
    - **Present / unchanged:** what was already right.
    - **Drifted:** what was fixed on their yes, and what they chose to keep.

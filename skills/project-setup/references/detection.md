@@ -69,11 +69,31 @@ agents use instead, can't be detected: ask.
 | Path | Check |
 |---|---|
 | `AGENTS.md` | exists? has `## How work flows here`? any `<placeholder>` left in it? |
-| `CLAUDE.md` | exists? only `@AGENTS.md` (plus Claude-only notes), or real content to move? |
+| `CLAUDE.md` | exists? only `@AGENTS.md` (plus Claude-only notes), or real content to move? CRLF line endings (`grep -c $'\r' CLAUDE.md`)? |
 | `.agents/project-profile.md` | in the worktree, and on the default branch (`git show origin/<base>:.agents/project-profile.md`) |
 | `.changeset/` (`config.json`), `CHANGELOG.md`, `CHANGES.md`, release-please / semantic-release config | the changelog convention |
-| `docs/`, `doc/`, `docs/design/`, `adr/`, a docs site config (`mkdocs.yml`, `docusaurus.config.*`) | design-doc and user-guide locations |
+| `docs/`, `doc/`, `documentation/`, `docs/design/`, `adr/`, a docs site config (`mkdocs.yml`, `docusaurus.config.*`) | design-doc, developer-doc and user-guide locations; which hold human-facing docs; `git check-ignore -v <dir>/agent-workflow.md` for each candidate guide dir |
 | `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` | conventions the PR body and issues must follow |
+
+## UI or headless
+
+A web or desktop front end (an `index.html`, a front-end framework in `package.json` dependencies, `angular.json`,
+`vite.config.*`, a desktop app manifest) means QC is steps in the running app. None of these, and the repo is an
+engine, library, CLI or API: QC is cases named by their inputs and expected outputs (a fixture input file, a request
+to replay, the command that runs it). Record which, and ask when unsure.
+
+## Changelog and PR checks
+
+```bash
+ls .changeset/ CHANGELOG.md CHANGES.md 2>/dev/null
+grep -lE 'changeset|changelog' .github/workflows/*.y*ml 2>/dev/null       # a workflow that enforces it
+```
+
+In each matching workflow, find: whether it fails a PR without an entry; the label that skips it (a
+`contains(github.event.pull_request.labels.*.name, '<label>')` condition, or a label named in its error message);
+and the paths it exempts (`paths-ignore:`, or a pattern list in the script). Record all three, with the file, in
+§Changelog. Note which of the setup PR's paths (`AGENTS.md`, `CLAUDE.md`, `.agents/`, the guide, `.gitignore`) the
+exempt list doesn't cover: step 8 needs it.
 
 ## Engine registration (full mode)
 
@@ -86,4 +106,6 @@ gh auth status                                    # the gh logins on this machin
 ```
 
 When `pdo project-env` resolves a project from the repo's directory, the repo is already registered: edit that env
-file (gaps only), never create a second one.
+file (gaps only), never create a second one. If that project's `PRIMARY_REPO` (`pdo project-env PRIMARY_REPO`) is
+another repo, this is a secondary repo of a multi-repo project: the board is shared (`pdo project-env --board`),
+and its fixture format may need a `FIXTURE_EXT_BY_REPO` entry.

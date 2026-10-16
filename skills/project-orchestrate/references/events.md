@@ -25,6 +25,7 @@ Label and status names are the engine defaults ("Claude Work This", `ready for Q
 | `usage_ceiling` | Stop spawning. Report the weekly and 5-hour figures. The weekly reserve is for manual or hot work. |
 | `closed_out` | Informational. The watcher released a finished agent: PR merged, QC passed and it printed "wrap-up done", or its issue closed with no open PR (likely-fixed confirmed, won't-fix). Session kept. One line. |
 | `hibernated` / `hibernate_failed` | Informational; they ride along with other events. The watcher released an agent parked at `ready for QC` (side processes stopped, workspace closed, session kept for `pdo resume-agent`). One line; for a failure include the reason and don't retry by hand. |
+| `qc_pass_recorded` / `qc_pass_ignored` | Informational; they ride along with other events. A trusted `Claude, QC pass` comment: the watcher swapped `ready for QC` for `QC complete - ready to review` and replied (`qc_complete` follows on the next tick), or ignored it (`why`: not an open PR, not labelled ready, already complete, or the label edit failed). One line; for an ignored pass, include the reason so the human can apply the label by hand. |
 | `first_run` / `heartbeat` | Nothing special. Continue to step 3. |
 
 ## Prompts

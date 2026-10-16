@@ -70,20 +70,22 @@ A repo may rename the priority and QC labels; its human guide lists the names it
 
 Every PR that changes what users see carries one comment headed **QC Checklist**: steps to try in the running app,
 naming data the way the app does (never a localhost link or an id). The first item links test data when the seed
-data doesn't cover a case; it lives on the never-merged `qc-fixtures` branch.
+data doesn't cover a case; it lives on the never-merged `qc-fixtures` branch. In a repo with no UI (an engine or a
+library), the checklist's items are inputs (fixture files, requests to replay) with the expected output for each,
+and the command that checks them.
 
 Comments must **start with** the trigger:
 
 | Comment | What happens |
 |---|---|
 | `QC: <findings or answers>` | Feedback for the PR's agent. It fixes, pushes, replies on the PR, and re-labels `ready for QC`. |
+| `Claude, QC pass` | Marks QC complete, where the team runs the orchestrator (no preview needed). Otherwise a human applies the label. |
 | `Claude, spin up QC` | Only where the repo has a QC preview service: builds the PR and replies with the link and login. |
-| `Claude, QC pass` | Only with a preview service: marks QC complete. Otherwise a human applies the label. |
 | `Claude, tear down` | Only with a preview service: stops the preview. |
 
 Only the repo's owners, members and collaborators can trigger these. The repo's human guide says whether there is a
-preview service, and its login. Where no orchestrator delivers `QC:` comments, point the agent that built the PR at
-them.
+preview service, and its login. Where no orchestrator runs, point the agent that built the PR at your `QC:` comments,
+and apply the QC-complete label yourself.
 
 ## 6. The rules your agent follows
 
@@ -94,7 +96,9 @@ them.
 - Never commits QC fixtures or test data to a PR branch.
 - Doesn't move board cards the orchestrator owns, and doesn't assign itself issues.
 - Never runs `gh auth switch` (the account is machine-wide); it pins one per command:
-  `GH_TOKEN=$(gh auth token -u <you>) gh …`.
+  `GH_TOKEN=$(gh auth token -u <you>) gh …`. `git push` needs the token too:
+  `pdo with-gh-user --user <you> git push …` with the engine, else
+  `GH_TOKEN=$(gh auth token -u <you>) git -c credential.https://github.com.helper= -c 'credential.https://github.com.helper=!gh auth git-credential' push …`.
 - Follows the profile's "Do not" list.
 
 **Other repos.** Your agent asks you before touching any repo other than the one it's working in. Reading another

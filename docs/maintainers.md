@@ -36,6 +36,11 @@ bin/install --bin                 # puts `pdo` on PATH
 pdo team-up --project <name>      # intake, QC and orchestrator agents, then a status report
 ```
 
+Sessions you start yourself (not dispatched by the engine) find it through `pdo` on PATH; on a machine where it isn't,
+the repo's `AGENTS.md` names the engine checkout (`/project-setup` fills that in). To run one git or gh command as
+the project's GitHub login without switching the machine's account: `pdo with-gh-user --user <login> git push …`
+(it pins gh's token and injects gh's credential helper for git over HTTPS).
+
 It needs bash 4+, python 3.8+, git 2.31+, jq, the GitHub CLI and [herdr](https://herdr.dev). Then you talk to one
 session, the **System Manager** (`/project-system-manager`), which starts and checks everything else:
 

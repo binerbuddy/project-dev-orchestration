@@ -42,6 +42,13 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
 - Every launch is prefixed by `identity_wrapper`: `bin/with-gh-user --user $GH_USER` when the project sets
   `GH_USER` (gh's active account is machine-wide and other sessions switch it), plus whatever words the
   project's `IDENTITY_HOOK` prints for that checkout (e.g. a bot identity for one repo).
+- `with-gh-user` pins both gh (`GH_TOKEN`) and git over HTTPS: it appends two `GIT_CONFIG_KEY_<i>`/`VALUE_<i>`
+  entries after the existing `GIT_CONFIG_COUNT` (reset the github.com credential helpers, then
+  `!gh auth git-credential`, which answers with `GH_TOKEN`), so `git push` and `fetch` use the same login and no
+  config file changes. If entries already in the environment set a github.com helper, it adds none and the outer
+  chain stays in charge. An `IDENTITY_HOOK` wrapper runs inside it, so it should append the same way rather than
+  set `GIT_CONFIG_COUNT` outright. A person-started session pins one call with
+  `pdo with-gh-user --user <login> git push …`.
 - Every launch also sets `PDO_DISPATCHED=1` in the agent's environment (`agent_command` in `bin/lib.sh`),
   so the agent knows it was started by the engine and skips the collaborator's one-time guide check.
 - The dispatch brief is `BRIEF_TEMPLATE`, else the first `prompts/dispatch-brief.md` in the config dirs,
@@ -162,6 +169,12 @@ watcher).
 - **Remote QC.** Trusted PR comments starting `QC:` become `qc_feedback` events, so a reviewer who only
   uses a browser (e.g. against a hosted preview service, the profile's "QC preview" section) can drive the
   same loop. Agents answer remote reviewers on the PR, never only in their session.
+- **QC pass by comment.** A trusted comment starting `Claude, QC pass` on an open PR labelled `ready for QC`
+  makes the watcher (not `--peek`) swap the label for `QC complete - ready to review` and reply on the PR (quiet
+  event `qc_pass_recorded`; `qc_complete` follows). No preview service is involved; only the spin-up and tear-down
+  triggers need one. `QC_PASS_HANDLER=external` leaves the comment to another service.
+- **Headless repos** (no UI): QC cases are fixture inputs with expected outputs and the command that checks them
+  (profile "QC data"); the same checklist, fixture branch and comment protocol apply.
 - **Fixtures.** GitHub's API can't attach files to comments. `bin/qc-fixture-push <pr#> <file>` stores test
   data on a never-merged branch (`FIXTURE_BRANCH`, default `qc-fixtures`) with git plumbing (no checkout),
   and prints the link for the checklist. Fixtures never go on the PR branch, or they merge with it.
@@ -202,7 +215,9 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 - While an env file is sourced, `$HERE` is the config dir that holds it. Relative hook, template and
   `CONTROL_DIR` paths resolve against that dir.
 - Python scripts read the same resolution through `bin/pdo-config --json` (`bin/pdo_config.py`), and
-  `bin/project-env [--project P] [KEY]` prints it for skills and humans.
+  `bin/project-env [--project P] [KEY]` prints it for skills and humans. `project-env --board` looks up the
+  board's node id, Status field id and column option ids live, so the profiles of several repos sharing one
+  board cite it instead of copying ids.
 
 ### Project env keys
 
@@ -231,6 +246,8 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QC_WORKTREE` | `qc` | QC worktree dir name under the repo root |
 | `QC_PORTS` | (none) | ports hibernation never stops |
 | `FIXTURE_EXT` | (none) | the project's fixture extension (a mismatch warns) |
+| `FIXTURE_EXT_BY_REPO` | `()` | `declare -A`: repo → its fixture extension, for repos whose format differs; `qc-fixture-push --repo` uses it before `FIXTURE_EXT` |
+| `QC_PASS_HANDLER` | `watch` | `watch`: the watcher acts on `Claude, QC pass` comments; `external`: another service does |
 | `FIXTURE_BRANCH` | `qc-fixtures` | never-merged fixture branch |
 | `SCREENSHOT_DIR` | `.omc/qa` | screenshot root inside a worktree |
 | `CARRY_LABELS` | `client-requested` | issue labels copied onto PRs |
@@ -303,7 +320,9 @@ different amounts of resources." It never does project work.
 - **`bin/fleet`** (read-only) enumerates every project env along `PDO_CONFIG_DIRS` and reports, per
   project: its manager (`MANAGER`; `REPO_MANAGER` for `SELF_MANAGED_REPOS`) and how to reach it
   (peer messaging, else the herdr agent, else the human); active, parked, hibernated (split by
-  whether an open PR remains), stalled and standing agents, from the agent metadata, herdr's
+  whether an open PR remains), stalled and standing agents (agents in a `SELF_MANAGED_REPOS` repo on a
+  separate "self-managed (owner: <REPO_MANAGER>)" line: out of active/MAX and the advice, in the memory
+  estimate), from the agent metadata, herdr's
   workspace/agent lists and the watcher's last saved snapshot; what waits on the human (QC-passed
   PRs, `awaiting-ux-gate` issues, pending questions, `ready for QC` PRs, the intake inbox); the
   queue's eligible and auto-spawn counts; open PRs awaiting the human against the PR cap. System

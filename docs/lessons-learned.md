@@ -75,9 +75,16 @@ skill. When you hit a new one, add a line in its section.
   every agent's gh/git mid-run ("Could not resolve repository"). Pin each agent's process tree with
   `GH_TOKEN` (`with-gh-user`, via `GH_USER`); never `gh auth switch`. Agents started before a pin need a
   restart to pick it up.
+- **`GH_TOKEN` doesn't reach `git push`.** Over HTTPS git asks its own credential helper, which can hold
+  another account ("Repository not found"). `with-gh-user` now also injects gh's credential helper through
+  `GIT_CONFIG_COUNT`/`KEY`/`VALUE`, appended after any entries a wrapper already set.
 
 ## Git and processes
 
+- **`git worktree add -b <br> <path> origin/<base>` tracks `origin/<base>`** (git's default
+  `branch.autoSetupMerge`): a bare `git pull` on the new branch pulls the base branch, and a bare `git push`
+  refuses (`push.default=simple`) or pushes to the base branch (`push.default=upstream`). Create
+  branches with `--no-track` and push the first time with `git push -u origin <br>`.
 - **Bare clones may lack `remote.origin.fetch`,** so they have no `origin/main`. Fetch with an explicit
   refspec regardless.
 - **Plain `setsid` in a subshell doesn't detach.** The waiting bash holds the caller's stdout open. Use

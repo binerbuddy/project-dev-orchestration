@@ -6,7 +6,7 @@ argument-hint: "[repo root path]"
 
 # Clean up merged worktrees and branches
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH).
 
 Update the base branch, then delete every local branch and worktree whose changes are safely
 contained in it. Built for the bare-root layout (e.g. `~/Projects/Acme.git` with worktrees as

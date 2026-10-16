@@ -21,7 +21,8 @@ merge with the PR.
 
 **I don't see a preview link when I comment `Claude, spin up QC`.**
 That only works where the repo runs a QC preview service; its human guide says whether it does. Without one, QC
-locally as the guide describes and leave `QC:` comments.
+locally as the guide describes and leave `QC:` comments; `Claude, QC pass` still works where the team runs the
+orchestrator.
 
 **My agent found a bug unrelated to its task. Should it fix it?**
 No. It files it (a `needs-triage` issue, or a report to the intake agent where there is one) and stays on task.

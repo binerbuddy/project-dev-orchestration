@@ -28,7 +28,11 @@ consent.
 **System:** available memory and swap (`/proc/meminfo`), disk free on the state dir and every repo
 root, weekly and 5-hour usage (the `USAGE_CACHE` file), GitHub GraphQL and core points left for
 each project's `GH_USER`, the number of herdr agents. Per project: active agents (live, not
-parked) and the queue's startable count (`auto_spawn` items).
+parked) and the queue's startable count (`auto_spawn` items). Agents working in one of the project's
+`SELF_MANAGED_REPOS` are not its active agents: their owner (`REPO_MANAGER`) runs them and the
+project's queue and watch skip those repos, so `fleet` lists them on a separate "self-managed
+(owner: …)" line and leaves them out of active/MAX and the advice. They still hold memory, which the
+measured available memory already reflects; `est_agent_mb` includes them.
 
 ## Rules, in order
 

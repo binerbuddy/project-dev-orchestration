@@ -1,7 +1,10 @@
 <!--
 Paste this section into the product repo's AGENTS.md (CLAUDE.md then becomes `@AGENTS.md` plus any Claude-only notes).
 Replace every <placeholder> (`<guide path>` is where /project-setup wrote the human guide, default
-`docs/agent-workflow.md`). Keep it short: the details live in the profile and the skills.
+`docs/agent-workflow.md`; `<engine checkout>` is the engine path on the manager's machine, e.g.
+`~/src/project-dev-orchestration`, or "your project-dev-orchestration checkout" where there is no engine). For a
+repo with no UI, use the headless variant of the QC Checklist rule and delete the other. Keep it short: the details
+live in the profile and the skills.
 -->
 
 ## How work flows here
@@ -9,8 +12,8 @@ Replace every <placeholder> (`<guide path>` is where /project-setup wrote the hu
 Work is tracked as GitHub issues in `<org>/<repo>` on org Project `<project#>`, and built by agents running the
 project-dev-orchestration skills. Project facts (build commands, ports, QC data, conventions) are in
 `.agents/project-profile.md`; read it before you start. To learn the whole pipeline, load the `project-how-it-works`
-skill. Engine commands are written `pdo <name>`; if `pdo` isn't on PATH, use `<engine checkout>/bin/<name>` (a
-dispatch brief gives the absolute path).
+skill. Engine commands are written `pdo <name>`. If `pdo` isn't on PATH, use `<engine checkout>/bin/<name>` (a
+dispatch brief's absolute path wins), or put `pdo` on PATH once with `<engine checkout>/bin/install --bin`.
 
 **First session in a clone: the human guide (once).** Skip this if you were dispatched rather than started by a
 person: `PDO_DISPATCHED=1` is set in your environment, or your first prompt is a dispatch brief from an orchestrator.
@@ -36,7 +39,9 @@ Otherwise, at the start of work, check for `.agents/local/guide-ack` (per clone,
   triaged.
 
 **Agents must**
-- Work in their own worktree and branch from `origin/<base>`; open a PR against `<base>` with `Closes #<n>` lines.
+- Work in their own worktree and branch from `origin/<base>`, created with `--no-track` (so a bare `git push` never
+  targets `<base>`) and first pushed with `git push -u origin <branch>`; open a PR against `<base>` with `Closes #<n>`
+  lines.
 - Pass the checks in the profile's §Build & checks before handing off code.
 - Stop their dev servers and browsers before labelling a PR `ready for QC`.
 - Verify every GitHub write by the id it returned, never by searching for "the newest".
@@ -54,7 +59,8 @@ closes that issue) waits for their yes. When another project's manager owns that
 portfolio manager, which asks the owner.
 
 **Intake rule.** Don't fix or file bugs and ideas you notice outside your task. Queue them for the intake agent:
-`pdo intake-submit "<your workspace name>" "<what, where, repro>"` (one report per call). The human triages the queue with
+`pdo intake-submit "<your workspace name>" "<what, where, repro>"`. Each call queues one report: put items that share
+a cause or a fix in one report, and unrelated items in separate calls. The human triages the queue with
 `/project-intake inbox`. Without an engine install, open an issue with the `needs-triage` label instead (see the
 `project-how-it-works` skill).
 
@@ -63,3 +69,10 @@ portfolio manager, which asks the owner.
 data by project name and UI path, never by a localhost or host link, port or id. When the seed data doesn't cover a
 case, link a fixture published with `pdo qc-fixture-push` to the never-merged `qc-fixtures` branch. End with the QC
 commands block. Update the comment in place; never post a second one.
+
+<!-- headless variant (no UI): -->
+**QC Checklist rule.** Every PR that changes behaviour gets one PR comment starting `<!-- ux-qc-checklist -->` and
+headed `## QC Checklist`: a GitHub task list of QC cases, each named by its input (a fixture input file or a request
+to replay, published with `pdo qc-fixture-push` to the never-merged `qc-fixtures` branch) with the expected output and
+the command that checks it (profile §QC data), plus the evidence you already gathered. No host links, ports or ids.
+End with the QC commands block. Update the comment in place; never post a second one.

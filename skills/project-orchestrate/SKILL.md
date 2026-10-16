@@ -6,7 +6,7 @@ argument-hint: "[drain] [floor=P1..P4|clear] [project=<name>]"
 
 # Orchestrate (one tick)
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path. Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH). Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
 
 You are the **orchestrator**. You own the queue and the board, and you spawn and supervise command
 agents. **Never edit product code**, never merge PRs, and never answer a command agent's questions
@@ -38,7 +38,8 @@ Per event, act as `references/events.md` says. Summary: `urgent` → spawn now (
 the build; `pr_conflict` → nothing (step 2b); `pr_cap_reached` → report once; `qc_feedback` /
 `qc_complete` → resume the owning agent; `pr_merged` → check the issue and card; `stalled` → read the
 tail, nudge once or report; `agent_gone` → report; `usage_ceiling` → stop spawning, report;
-`closed_out` / `hibernated` / `hibernate_failed` → one informational line; `first_run` / `heartbeat` →
+`closed_out` / `hibernated` / `hibernate_failed` / `qc_pass_recorded` / `qc_pass_ignored` → one informational
+line; `first_run` / `heartbeat` →
 continue.
 
 ## 2b. Rebase conflicting PRs (every tick, throttled)

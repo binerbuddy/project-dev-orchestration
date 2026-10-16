@@ -34,6 +34,11 @@ echo "gh $*" >>"$SMOKE_LOG"
 case "$*" in
   "api user --jq .login") echo me ;;
   "auth token -u "*) echo "token-for-${@: -1}" ;;
+  "auth git-credential"*) cat >/dev/null; printf 'protocol=https\nhost=github.com\nusername=x-access-token\npassword=%s\n' "${GH_TOKEN:-none}" ;;
+  "pr edit"*|"pr comment"*) ;;
+  "api repos/acme/widget/issues/comments?since="*) [[ -n "${SMOKE_COMMENTS:-}" ]] && cat "$SMOKE_COMMENTS" ;;
+  "api graphql"*"query board"*)
+    echo '{"data":{"organization":{"projectV2":{"id":"PVT_b7","number":7,"title":"Acme Board","field":{"id":"PVTSSF_s","options":[{"id":"o1","name":"Backlog"},{"id":"o2","name":"Claude Work This"}]}}}}}' ;;
   "api repos/acme/widget/issues/12") cat "$SMOKE_DIR/issue12.json" ;;
   "api repos/acme/widget/issues/12/comments"*) ;;
   "pr view 5 -R acme/widget"*) cat "$SMOKE_DIR/pr5.json" ;;
@@ -51,7 +56,8 @@ case "$*" in
     if [[ "$*" == *"r=tool"* ]]; then cat "$SMOKE_DIR/fleet-tool.json"
     else echo '{"data":{"repository":{"pullRequests":{"totalCount":0,"nodes":[]},"gates":{"nodes":[]}}}}'; fi ;;
   "api repos/acme/"*"/issues?state=open"*) ;;
-  "api graphql"*"open: pullRequests"*) echo '{"data":{"repository":{"open":{"nodes":[]},"done":{"nodes":[]}}}}' ;;
+  "api graphql"*"open: pullRequests"*)
+    if [[ -n "${SMOKE_PRS:-}" ]]; then cat "$SMOKE_PRS"; else echo '{"data":{"repository":{"open":{"nodes":[]},"done":{"nodes":[]}}}}'; fi ;;
   "api graphql"*) echo '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}' ;;
   *) echo "fake gh: unhandled: $*" >&2; exit 1 ;;
 esac
@@ -101,6 +107,7 @@ PRIMARY_REPO="widget"
 IDENTITY_HOOK="hooks/identity"
 QC_HOOK="hooks/qc"
 FIXTURE_EXT=".acme"
+declare -A FIXTURE_EXT_BY_REPO=([docs]=".dump")
 QC_PORTS="3999"
 EOF
 echo 'ORG="wrong"' >"$T/cfg-b/projects/acme.env"
@@ -169,6 +176,11 @@ eq "project-env KEY" "$("$BIN/project-env" PRIMARY_REPO)" widget
 eq "project-env map entry" "$("$BIN/project-env" 'REPO_ROOT[docs]')" "$T/repos/docs"
 has "project-env all keys" "$("$BIN/project-env")" "REPO_ROOT[widget]=$T/repos/widget.git"
 "$BIN/project-env" NO_SUCH_KEY >/dev/null 2>&1; eq "project-env unknown key exits 1" "$?" 1
+eq "project-env FIXTURE_EXT_BY_REPO entry" "$("$BIN/project-env" 'FIXTURE_EXT_BY_REPO[docs]')" .dump
+out="$("$BIN/project-env" --board 2>&1)"
+has "project-env --board prints the board node id" "$out" "BOARD_ID=PVT_b7"
+has "project-env --board prints Status option ids" "$out" "STATUS_OPTION[Claude Work This]=o2"
+out="$("$BIN/project-env" --project beta --board 2>&1)"; has "project-env --board without a board fails clearly" "$out" "no PROJECT_NUMBER"
 
 # --- identity wrapper ---
 w="$(cd "$T" && bash -c "source '$BIN/lib.sh'; PROJECT=acme; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; pdo_finalize; identity_wrapper '$T/repos/widget.git'")"
@@ -179,6 +191,19 @@ c="$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"
 has "launch command marks the agent dispatched" "$c" "env PDO_DISPATCHED=1 $BIN/with-gh-user --user octo claude --resume s1 --remote-control"
 eq "with-gh-user without a login just runs" "$("$BIN/with-gh-user" printenv GH_TOKEN || echo unset)" unset
 eq "with-gh-user --user pins GH_TOKEN" "$("$BIN/with-gh-user" --user octo printenv GH_TOKEN)" token-for-octo
+cred() { printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 "$@" git credential fill 2>/dev/null | sed -n 's/^password=//p'; }
+eq "with-gh-user pins git over HTTPS (gh credential helper)" "$(cred "$BIN/with-gh-user" --user octo)" token-for-octo
+eq "with-gh-user without a login adds no git config" "$("$BIN/with-gh-user" printenv GIT_CONFIG_COUNT || echo unset)" unset
+out="$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=hookbot "$BIN/with-gh-user" --user octo \
+  bash -c 'echo "$GIT_CONFIG_COUNT $GIT_CONFIG_KEY_0 $GIT_CONFIG_KEY_2 $(git config user.name)"')"
+eq "with-gh-user appends after existing GIT_CONFIG_* entries" "$out" "3 user.name credential.https://github.com.helper hookbot"
+eq "with-gh-user + an outer wrapper's GIT_CONFIG_* still authenticates" \
+  "$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=hookbot cred "$BIN/with-gh-user" --user octo)" token-for-octo
+eq "with-gh-user leaves an outer wrapper's github.com helper in charge" \
+  "$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0='!f() { cat >/dev/null; echo username=u; echo password=outer; }; f' \
+     cred "$BIN/with-gh-user" --user octo)" outer
+eq "with-gh-user keeps the outer count when it adds nothing" \
+  "$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=x "$BIN/with-gh-user" --user octo printenv GIT_CONFIG_COUNT)" 1
 
 # --- intake inbox ---
 out="$("$BIN/intake-submit" "Acme-12 smoke" "a report")"
@@ -246,6 +271,11 @@ has "fixture README uses FIXTURE_EXT" "$(git -C "$T/origin.git" show qc-fixtures
 echo other >"$T/other.bin"
 out="$("$BIN/qc-fixture-push" 5 "$T/other.bin" 2>&1)"; has "fixture extension warning" "$out" "does not end in .acme"
 eq "re-push unchanged" "$("$BIN/qc-fixture-push" 5 "$T/sample.acme" 2>/dev/null | head -1)" unchanged
+echo dump >"$T/seed.dump"
+out="$("$BIN/qc-fixture-push" 6 "$T/seed.dump" --repo docs 2>&1)"
+has "fixture for a second repo uses its FIXTURE_EXT_BY_REPO" "$out" "https://github.com/acme/docs/blob/qc-fixtures/6/seed.dump"
+eq "no warning for the second repo's own format" "$(grep -c warning <<<"$out")" 0
+out="$("$BIN/qc-fixture-push" 6 "$T/sample.acme" --repo docs 2>&1)"; has "per-repo format warning names the repo" "$out" "does not end in .dump (docs's fixture format)"
 
 # --- fleet: two more projects in their own config dir and state dir ---
 FC="$T/fleet-cfg" FS="$T/fleet-state"
@@ -278,8 +308,8 @@ jq -n '{data: {repository: {pullRequests: {totalCount: 2, nodes: [
   {number: 11, title: "agent four", url: "https://github.com/alpha/tool/pull/11", isDraft: false, headRefName: "feat/4", labels: {nodes: [{name: "QC complete - ready to review"}]}}]},
   gates: {nodes: [{number: 6, title: "a prototype", url: "https://github.com/alpha/tool/issues/6"}]}}}}' >"$T/fleet-tool.json"
 echo '{"repo":"tool","number":3,"name":"tool-3 agent three","branch":"feat/3","hibernated_at":1700000000}' >"$FS/agents/tool-3.json"
-echo '{"result":{"workspaces":[{"label":"Orchestrator (alpha)","workspace_id":"wA","agent_status":"idle"},{"label":"tool-4 other work","workspace_id":"wB","agent_status":"blocked"}]}}' >"$T/herdr-ws.json"
-echo '{"result":{"agents":[{"agent":"claude","name":null,"workspace_id":"wA","pane_id":"wA:p1","agent_status":"idle"},{"agent":"claude","name":"tool-4","workspace_id":"wB","pane_id":"wB:p1","agent_status":"blocked"}]}}' >"$T/herdr-agents.json"
+echo '{"result":{"workspaces":[{"label":"Orchestrator (alpha)","workspace_id":"wA","agent_status":"idle"},{"label":"tool-4 other work","workspace_id":"wB","agent_status":"blocked"},{"label":"lib-5 owned work","workspace_id":"wC","agent_status":"working"}]}}' >"$T/herdr-ws.json"
+echo '{"result":{"agents":[{"agent":"claude","name":null,"workspace_id":"wA","pane_id":"wA:p1","agent_status":"idle"},{"agent":"claude","name":"tool-4","workspace_id":"wB","pane_id":"wB:p1","agent_status":"blocked"},{"agent":"claude","name":"lib-5","workspace_id":"wC","pane_id":"wC:p1","agent_status":"working"}]}}' >"$T/herdr-agents.json"
 echo r >"$FS/inbox/one.md"
 F=(env PDO_CONFIG_DIRS="$FC" PDO_STATE_DIR="$FS" PDO_INBOX="$FS/inbox" SMOKE_HERDR_WS="$T/herdr-ws.json" SMOKE_HERDR_AGENTS="$T/herdr-agents.json"
    PDO_FLEET_WEEKLY=10 PDO_FLEET_FIVE_HOUR=5 PDO_FLEET_DISK_FREE_MB=100000 PDO_FLEET_SWAP_TOTAL_MB=0 PDO_FLEET_SWAP_USED_MB=0)
@@ -302,7 +332,11 @@ has "fleet: no board is reported, not fatal" "$(jq -r '.projects[1].queue.error'
 eq "fleet: PRs vs cap" "$(jq -c '.projects[0].prs | [.open, .awaiting_human, .cap]' <<<"$out" 2>/dev/null)" '[2,2,10]'
 eq "fleet: waiting on you ranked by impact" "$(jq -c '[.waiting_on_you[].why]' <<<"$out" 2>/dev/null)" '["merge (QC passed)","question","UX gate","QC","intake inbox"]'
 eq "fleet: rate limits per GH_USER identity" "$(jq -c '[.system.gh[] | "\(.user)=\(.graphql.remaining)"]' <<<"$out" 2>/dev/null)" '["(active gh account)=4000","gbot=4000"]'
-eq "fleet: agent count" "$(jq -c '.system.agents | [.herdr_total, .claude]' <<<"$out" 2>/dev/null)" '[2,2]'
+eq "fleet: agent count" "$(jq -c '.system.agents | [.herdr_total, .claude, .project_active, .self_managed_active]' <<<"$out" 2>/dev/null)" '[3,3,1,1]'
+eq "fleet: a self-managed repo's agent is not in the project's active" "$(jq -c '.projects[1].agents | [(.active | length), (.self_managed | map(.agent + ":" + .owner))]' <<<"$out" 2>/dev/null)" '[0,["lib#5:Lib Lead"]]'
+eq "fleet: ... nor in its advice" "$(jq -r '.advice.gamma.active' <<<"$out" 2>/dev/null)" 0
+eq "fleet: ... but in its memory estimate" "$(jq -r '.projects[1].est_agent_mb' <<<"$out" 2>/dev/null)" 400
+has "fleet text: self-managed line names the owner" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --project gamma 2>/dev/null)" "self-managed (owner: Lib Lead) 1: lib-5 owned work"
 check "fleet: gbot's calls used its own token" grep -q "gh auth token -u gbot" "$SMOKE_LOG"
 check "fleet without --write-advice writes nothing" test ! -e "$FS/fleet-advice.json"
 
@@ -358,6 +392,23 @@ eq "watch: honoured advice bounds the slots" "$(jq -c '[.max_active, .free_slots
 jq '.generated_at -= 3 * 3600' "$FS/fleet-advice.json" >"$FS/x.json" && mv "$FS/x.json" "$FS/fleet-advice.json"
 out="$(qa SMOKE_FLEET_ADVICE=honour)"
 eq "queue ignores stale advice" "$(jq -c '[.fleet, .max_active, ([.ranked[].auto_spawn] | all)]' <<<"$out")" '[null,3,true]'
+
+# --- watch: a "Claude, QC pass" comment swaps the QC labels (no preview service needed) ---
+jq -n '{data: {repository: {open: {nodes: [{number: 5, state: "OPEN", isDraft: false, url: "https://github.com/acme/widget/pull/5",
+  headRefName: "feat/5", baseRefName: "main", mergeable: "MERGEABLE", labels: {nodes: [{name: "ready for QC"}]}}]}, done: {nodes: []}}}}' >"$T/prs.json"
+{ jq -nc '{id: 901, body: "Claude, QC pass", html_url: "https://github.com/acme/widget/pull/5#c901", issue_url: "https://api.github.com/repos/acme/widget/issues/5", user: "boss", assoc: "OWNER"}'
+  jq -nc '{id: 902, body: "claude, qc pass", html_url: "u", issue_url: "https://api.github.com/repos/acme/widget/issues/5", user: "drive-by", assoc: "NONE"}'
+  jq -nc '{id: 903, body: "Claude, QC pass", html_url: "u", issue_url: "https://api.github.com/repos/acme/widget/issues/9", user: "boss", assoc: "MEMBER"}'; } >"$T/comments.jsonl"
+WS="$T/watch-state"; mkdir -p "$WS"
+out="$(PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" SMOKE_COMMENTS="$T/comments.jsonl" "$BIN/watch" --project acme 2>/dev/null)"
+check "watch: QC pass swapped the labels" grep -q "gh pr edit 5 -R acme/widget --remove-label ready for QC --add-label QC complete - ready to review" "$SMOKE_LOG"
+check "watch: QC pass replied on the PR" grep -q "gh pr comment 5 -R acme/widget --body QC pass recorded" "$SMOKE_LOG"
+eq "watch: QC pass events (untrusted ignored, unknown PR reported)" "$(jq -c '[.events[] | select(.type | startswith("qc_pass")) | "\(.type):\(.pr)"]' <<<"$out" 2>/dev/null)" '["qc_pass_recorded:widget#5","qc_pass_ignored:widget#9"]'
+: >"$SMOKE_LOG"
+PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" SMOKE_COMMENTS="$T/comments.jsonl" "$BIN/watch" --project acme >/dev/null 2>&1
+check "watch: a QC pass comment is acted on once" bash -c "! grep -q 'gh pr edit' '$SMOKE_LOG'"
+out="$(PDO_STATE_DIR="$T/watch-peek" SMOKE_PRS="$T/prs.json" SMOKE_COMMENTS="$T/comments.jsonl" "$BIN/watch" --project acme --peek 2>/dev/null)"
+check "watch --peek never applies a QC pass" bash -c "! grep -q 'gh pr edit' '$SMOKE_LOG'"
 
 # --- pdo dispatcher ---
 has "pdo help lists commands" "$("$BIN/pdo" help)" "intake-submit"

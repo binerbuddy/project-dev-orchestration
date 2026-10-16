@@ -6,7 +6,7 @@ argument-hint: "<path to design doc> [resume]"
 
 # Feature Build (from a Design Doc, Phased)
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH).
 
 Implement a design produced by `/project-feature-design` as one PR with phased, bisectable commits: per-phase build →
 compile gate → fresh-context review → headless QC → verifier → checkpoint, with a committed progress ledger, GitHub
@@ -64,11 +64,13 @@ available.
 - From the bare root:
   ```
   git fetch origin <base> docs/<slug>-design
-  git worktree add <bare-root>/<dir> -b feat/<epic#>-<slug> origin/docs/<slug>-design
+  git worktree add --no-track -b feat/<epic#>-<slug> <bare-root>/<dir> origin/docs/<slug>-design
   cd <bare-root>/<dir> && git rebase origin/<base>
   ```
-  (If no docs branch exists, or its design PR already merged and the branch is stale, branch from `origin/<base>`
-  and, if the doc isn't there yet, copy it in as the first commit.)
+  `--no-track` keeps the branch from tracking the docs branch, so a bare `git push` never lands there. Make the
+  first push (phase 1's checkpoint) `git push -u origin feat/<epic#>-<slug>`, which gives it its own upstream.
+  (If no docs branch exists, or its design PR already merged and the branch is stale, branch from `origin/<base>`,
+  also with `--no-track`, and, if the doc isn't there yet, copy it in as the first commit.)
 - Board (org Project `<project#>`, ids from §Identity, as in `/project-feature-design` phase 8): epic → Status In
   Progress (`gh project item-edit … --single-select-option-id <In Progress option id>`).
 

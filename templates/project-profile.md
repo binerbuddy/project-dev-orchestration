@@ -14,9 +14,16 @@ LF line endings only.
 Who the project is on GitHub and where its work is tracked. Give the org, the primary repo (the one bare `#n` refs
 mean), every related repo agents may need to search or file against and when each one is in scope, and the org
 Project board the issues live on: its number, its node id, its Status field id, and the option ids of each Status
-column (Backlog, Todo, the orchestrator's queue column, In Progress, In Review, Done). Say whether the repo supports
-GitHub issue types (personal repos don't, and the API silently drops `type`; name the type labels used instead), and
-name any legacy tracker that still holds older closed work (read-only).
+column (Backlog, Todo, the orchestrator's queue column, In Progress, In Review, Done). When several repos share one
+board, only the primary repo's profile lists the ids; the others name the board and point at
+`pdo project-env --board`. Say whether the repo supports GitHub issue types (personal repos don't, and the API
+silently drops `type`; name the type labels used instead), and name any legacy tracker that still holds older closed
+work (read-only).
+
+Three lines feed the human guide (`/project-setup` renders it from them, so keep them here, not only in the guide):
+`Manager` (the person who runs the team, sets priorities and merges, and how to reach them), `Where to ask` (where
+collaborators ask questions), and `Human guide notes` (repo-specific things people must know, in plain words: which
+repo to file in, house prohibitions).
 
 <!-- Example (Acme):
 - Org: `acme-co`. Primary repo: `acme-co/acme-app` (bare `#n` = this repo).
@@ -26,6 +33,13 @@ name any legacy tracker that still holds older closed work (read-only).
   Done `ffff6666`.
 - Issue types: org types Epic / Feature / Bug / Task.
 - Legacy tracker: closed work before 2025-01-01 is in the old tracker (read-only); new issues go to GitHub only.
+- Manager: Dana Lee (@dana-acme on GitHub; the #acme-dev chat channel).
+- Where to ask: an issue with the `question` label, or #acme-dev.
+- Human guide notes:
+  - Pricing bugs go to `acme-co/acme-engine`, not here.
+  - Don't run the full test suite against the shared staging database.
+A secondary repo sharing the board instead says:
+- Board: org Project #3 "Acme Roadmap", shared with `acme-co/acme-app`; ids: `pdo project-env --board`.
 -->
 
 ## Layout
@@ -70,13 +84,15 @@ headless QC). Name the headless browser driver used for automated QC and smoke r
 How to run the app locally for agent QC: the start commands, the env vars and secrets they need, the dev login or
 auth bypass, and the database rules (shared or per-agent, what must never be stopped or dropped, how migrations are
 handled). Give the ports reserved for the human (agents never bind or kill them) and the port scheme agents use
-instead, plus any CORS or API-URL wiring that changing ports requires.
+instead, plus any CORS or API-URL wiring that changing ports requires. Add one "Human run" line: the plain commands
+a person runs to start the app (or run the engine) for QC; the human guide's "Run it locally" is rendered from it.
 
 <!-- Example (Acme):
 - API: `npm run dev:api` (needs `ACME_DB_URL`; dev auth: `ACME_AUTH=none`, then log in as `demo`).
 - Web: `npm run dev:web -- --port <port>`; point it at your API with `ACME_API_URL`.
 - Reserved for the human: 3000 and 8080. Agents: web on `4300 + (issue# % 100)`, API on `5300 + (issue# % 100)`.
 - DB: shared local Postgres container `acme-db`. Never stop it. Snapshot before running migrations; restore after.
+- Human run: `npm run dev:api` and `npm run dev:web` in two terminals, then open the web port and log in as `demo`.
 -->
 
 ## QC data
@@ -87,11 +103,18 @@ file extension, how to export a fixture from the running app, how the human impo
 are published with the engine's `pdo qc-fixture-push <PR#> <file>` to the never-merged `qc-fixtures` branch, never
 committed to a PR branch.
 
+A headless repo (an engine, library, CLI or API with no UI) says so here, and what QC means for it: each case is a
+fixture input (a file, a request to replay) with its expected output, named by the input, plus the command a human
+runs to check it (or "the evidence in the PR body is the QC" where a human only reviews outputs).
+
 <!-- Example (Acme):
 - Seed: two users (`demo`, `admin`) and one project, *Acme Demo*.
 - Top-level record: "project" (Projects → <name>).
 - Fixture format: `.acme-export` (Projects → ⋯ → Export). Import: Projects → Import. Keep under 5 MB.
 - Publish: `pdo qc-fixture-push <PR#> <file>.acme-export`.
+Headless example (a pricing engine):
+- No UI. A QC case is a request file in `qc/requests/` plus its expected response; check one with
+  `npm run replay -- <file>` and compare against the expected output in the checklist.
 -->
 
 ## QC preview
@@ -99,7 +122,8 @@ committed to a PR branch.
 The optional remote preview service that builds a PR for browser QC without a local setup. Give the PR comment
 triggers that start and stop a preview, the preview link pattern, the login to use, roughly how long a build takes,
 and the idle timeout. These fill the QC commands block at the end of every QC checklist. If there is no preview
-service, say "None"; the checklist then keeps only the `QC:` and `Claude, QC pass` rows.
+service, say "None"; the checklist then keeps only the `QC:` and `Claude, QC pass` rows (the orchestrator's watcher
+handles both, preview or not; only spin-up and tear-down need a preview service).
 
 <!-- Example (Acme):
 - Start: `Claude, spin up QC` (about 5 min). Stop: `Claude, tear down`. Idle previews stop after 4 h.
@@ -111,7 +135,8 @@ service, say "None"; the checklist then keeps only the `QC:` and `Claude, QC pas
 
 How every PR records its change for release notes: changesets, a CHANGELOG file, PR labels, or nothing. Give the exact
 file location and format, with an example entry, and any format traps (characters that break the release build,
-retired styles not to copy).
+retired styles not to copy). If CI enforces it, name the workflow, the label that skips it, and the exact paths it
+exempts (a docs-only PR may still need the label or an entry).
 
 <!-- Example (Acme):
 - Changesets: one file per PR in `.changeset/<slug>.md`:
@@ -123,6 +148,8 @@ retired styles not to copy).
   ```
   One `Feature:` / `Fix:` line per user-visible change. Don't use braces `{ }` in entries (the release-notes page
   is a template and they break its build).
+- CI: `.github/workflows/require-changeset.yml` fails a PR without one, unless it has the `skip changeset` label or
+  touches only `docs/**` and `*.md`.
 -->
 
 ## Review roles
@@ -142,12 +169,13 @@ replaces the generic UI / UX reviewer.
 ## Docs
 
 Where documentation lives: the design-doc directory used by `/project-feature-design` and `/project-feature-build`
-(and their `.progress.md` ledgers), the user guide and how it is built, and any other docs agents should update when
-behaviour changes.
+(and their `.progress.md` ledgers), the user guide and how it is built, any other docs agents should update when
+behaviour changes, and the human guide's path ("Human guide: `<path>`", in a dir that isn't gitignored).
 
 <!-- Example (Acme):
 - Design docs: `docs/design/<slug>.md`; ledgers alongside as `docs/design/<slug>.progress.md`.
 - User guide: separate repo `acme-co/acme-docs`, `guide/`; update it for user-visible changes only when asked.
+- Human guide: `docs/agent-workflow.md` (generated by /project-setup).
 -->
 
 ## Conventions

@@ -5,7 +5,7 @@ description: How work flows in a repo that uses project-dev-orchestration — is
 
 # How work flows here
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path. Collaborators usually have no engine; each rule below says what to do without one.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH). Collaborators usually have no engine; each rule below says what to do without one.
 
 This repo is worked by a pipeline of agents and humans. You may be a command agent started by the
 orchestrator, or a collaborator's agent (Claude Code, Codex, Grok) on another machine with no
@@ -54,7 +54,8 @@ gitignored; never commit it).
 5. **PR.** It opens a PR (`Closes #n`), which gets the P-label of its issues, gets a consortium review,
    and is labelled **`ready for QC`** with a **QC Checklist** comment. The agent then idles (and is
    hibernated) until QC.
-6. **QC.** A human QCs locally or through an optional remote preview. Feedback comes back to the same
+6. **QC.** A human QCs locally, through an optional remote preview, or (in a headless repo) by
+   checking the fixture inputs' outputs. Feedback comes back to the same
    agent, which fixes, pushes and re-labels. On pass the label becomes
    **`QC complete - ready to review`** and the agent wraps up.
 7. **Merge.** A human merges by hand. Finished agents close out on their own.
@@ -67,14 +68,17 @@ the queue status, the P-labels and the two QC labels.
 
 - **File bugs and ideas through intake, never fix out-of-scope things in passing.**
   - With an engine install: `pdo intake-submit "<your workspace name>" "<what, where, repro>"`
-    (one report per call; batch related items; stdin works for long reports). Don't prompt the intake
+    (each call queues one report: items that share a cause or a fix go in one report, unrelated items
+    in separate calls; stdin works for long reports). Don't prompt the intake
     agent directly; a human triages the queue with `/project-intake inbox`.
   - Without one: open an issue in the right repo with the `needs-triage` label and no P-label (unless
     a maintainer gave one), using the intake template (`../project-intake/references/issue-template.md`:
     Summary / Details / Starting points (unverified)), and say who reported it.
 - **QC Checklist.** One PR comment starting `<!-- ux-qc-checklist -->` then exactly `## QC Checklist`,
   task-list steps, and the **project-name rule**: no localhost or host URLs, ports or ids; name data
-  the way the app names it, plus the UI path. Details: `references/qc-protocol.md`.
+  the way the app names it, plus the UI path. In a headless repo (no UI), the steps are QC cases:
+  fixture inputs with their expected outputs and the command that checks them. Details:
+  `references/qc-protocol.md`.
 - **Fixtures go on the `qc-fixtures` branch** (`pdo qc-fixture-push <PR#> <file>`), never on the
   PR branch, and only when QC needs data the seed lacks.
 - **Stop at `ready for QC`.** Stop every dev server and browser you started before labelling. Never
@@ -82,9 +86,12 @@ the queue status, the P-labels and the two QC labels.
 - **Answer remote QC on the PR**, with an `@mention`; the reporter reads GitHub, not your session.
 - **UX sign-off gates:** add `awaiting-ux-gate` to the issue while you wait; remove it when the human
   responds.
-- **Pin gh, never switch it.** If the project env sets `GH_USER`, use `pdo with-gh-user gh …` (or
-  `GH_TOKEN=$(gh auth token -u <user>) gh …`). Never `gh auth switch`: the active account is
-  machine-wide and other sessions depend on it.
+- **Pin gh and git, never switch the account.** If the project env sets `GH_USER`, use
+  `pdo with-gh-user gh …` (or `GH_TOKEN=$(gh auth token -u <user>) gh …`). `git push`/`fetch` over
+  HTTPS don't read `GH_TOKEN`: in a person-started session run them as
+  `pdo with-gh-user --user <login> git push …` (it injects gh's credential helper; agents the engine
+  starts already run inside it). Never `gh auth switch`: the active account is machine-wide and
+  other sessions depend on it.
 - **Check before touching another repo.** Ask your manager (the agent that started you) or a human
   before touching any repo outside your current working repo. Reading it for context is fine; edits,
   branches, pushes, PRs, issues, comments, labels or closes there (a `Closes <org>/<other-repo>#<n>`
@@ -112,15 +119,17 @@ the queue status, the P-labels and the two QC labels.
 - Don't bind the project's reserved QC ports or kill what's on them (profile `## Dev servers`).
 - Anything in the profile's `## Do not`.
 
-## QC comment protocol (optional)
+## QC comment protocol
 
-Only where the profile's `## QC preview` says a preview service is set up. Trusted commenters start a
-PR comment with:
+Trusted commenters start a PR comment with:
 
-- `Claude, spin up QC`: build a preview of this PR; a reply posts the link and login;
-- `QC: <findings or answers>`: feedback for the PR's agent, which replies on the PR;
-- `Claude, QC pass`: mark QC complete;
-- `Claude, tear down`: stop the preview (idle ones stop on their own).
+- `QC: <findings or answers>`: feedback for the PR's agent, which replies on the PR (needs the
+  orchestrator, not a preview);
+- `Claude, QC pass`: mark QC complete (the orchestrator's watcher swaps the labels; no preview
+  needed);
+- `Claude, spin up QC`: build a preview of this PR; a reply posts the link and login (only where the
+  profile's `## QC preview` describes a preview service);
+- `Claude, tear down`: stop the preview (idle ones stop on their own; preview service only).
 
 Full table, wording for the checklist, and how agents answer: `references/qc-protocol.md`.
 

@@ -6,7 +6,7 @@ argument-hint: "<PR#>"
 
 # PR review (multi-agent consortium)
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH).
 
 Review pull request `#<PR>` (the argument) of the git repo you are in, using a temporary worktree and
 a review consortium. Only findings the consortium agrees on get posted.

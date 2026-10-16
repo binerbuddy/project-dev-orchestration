@@ -42,20 +42,37 @@ profile's §Identity.
 ## Check, then create the missing ones
 
 Never pass `--force` (it rewrites an existing label's color and description), and never delete or rename a label.
+`CREATE=0` makes the same loop check-only: it creates nothing and prints the command a maintainer would run for
+each missing label (use it on a re-run, without write access, or when the human only wants the report).
 
 ```bash
-R=<org>/<repo>
+R=<org>/<repo>; CREATE=${CREATE:-1}
 have="$(gh label list -R "$R" --limit 500 --json name --jq '.[].name')"
 [[ "$(wc -l <<<"$have")" -lt 500 ]] || { echo "label list may be truncated; raise --limit" >&2; exit 1; }
+wanted=()
 want() {  # want <name> <color> <description>
+  wanted+=("$1")
   if grep -qixF -- "$1" <<<"$have"; then
     grep -qxF -- "$1" <<<"$have" && echo "present  $1" || echo "present  $1 (as '$(grep -ixF -- "$1" <<<"$have")', case differs)"
+  elif [[ "$CREATE" == 1 ]]; then
+    gh label create "$1" -R "$R" --color "$2" --description "$3" && echo "created  $1" || echo "failed   $1"
   else
-    gh label create "$1" -R "$R" --color "$2" --description "$3" && echo "created  $1"
+    printf 'missing  %s   (gh label create %q -R %s --color %s --description %q)\n' "$1" "$1" "$R" "$2" "$3"
   fi
+}
+check() {  # check <name>: a repo-specific label the profile, AGENTS.md or CI names; never created
+  wanted+=("$1")
+  grep -qixF -- "$1" <<<"$have" && echo "present  $1 (repo-specific)" || echo "MISSING  $1 (repo-specific: ask the human)"
 }
 want "route:small" 0e8a16 "Route: small feature or bug fix (project-small-feature-or-bug-fix)"
 # ...one line per row of the table above, with the project's names
+# check "skip changeset"            # e.g. the changeset skip label from step 1
+# the repo's own labels, listed for information only (no judgement, never renamed or deleted)
+while IFS= read -r l; do
+  [[ -n "$l" ]] || continue
+  printf '%s\n' "${wanted[@]}" | grep -qixF -- "$l" || echo "extra    $l"
+done <<<"$have"
 ```
 
-Report each label as present, created, or failed (with gh's error: usually missing write access).
+Report each label as present, created, missing (check-only), or failed (with gh's error: usually missing write
+access), and list the `extra` ones as the repo's own labels.

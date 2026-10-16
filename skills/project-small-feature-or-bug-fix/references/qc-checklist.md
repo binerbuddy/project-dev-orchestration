@@ -14,6 +14,15 @@ The human-QC checklist that every lifecycle skill posts on its PR. `/project-sma
   followed immediately by the heading `## QC Checklist`. Always this exact title, so the human can find it on any PR.
 - Save it to the scratchpad. It is posted as a PR comment, which is the canonical copy the user works from and ticks off.
 
+## Headless repos (no UI)
+
+When §QC data says the repo has no UI (an engine, library, CLI or API), QC means checking outputs, not clicking
+through an app. Each item is a QC case named by its input (a fixture input file, a request to replay) with the
+expected output and the command from §QC data that checks it, e.g. "`npm run replay -- 412/rounding.json`: the
+total is 10.05, not 10.04". Put the evidence you already gathered (the actual output, a diff against the base
+branch) under the case, so a human can pass it by reading. The rules below still apply: no host URLs, ports or
+ids; inputs go on `qc-fixtures`, never on the PR branch; the same marker, heading and commands block.
+
 ## Name data by project, never by link
 
 The human may QC on a local dev server, a remote preview, or any other host, so the checklist never contains a
@@ -42,7 +51,10 @@ Skip all of this when the seed data already covers the checklist.
 
 End the checklist comment with this block, verbatim except for the PR-specific placeholders. Fill each `<…>` from
 §QC preview (its comment triggers, preview link pattern, login, build time and idle timeout). If the profile has no
-QC preview service, drop the two preview rows (spin up, tear down) and the "(no local setup)" words from the heading.
+QC preview service, drop the two preview rows (spin up, tear down) and the "(no local setup)" words from the heading:
+the `QC:` and `Claude, QC pass` rows stay, because the orchestrator's watcher handles them, preview or not. Only
+where no orchestrator runs (a collaborator's repo with no engine), replace the `Claude, QC pass` row with "Apply the
+`QC complete - ready to review` label when QC passes".
 
 ```markdown
 ---

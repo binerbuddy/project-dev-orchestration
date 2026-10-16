@@ -6,7 +6,7 @@ argument-hint: "[repo | epic #n / Repo#n | label | keyword]"
 
 # Project status (read-only snapshot)
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH).
 
 Answer "where are things?" across the project's work tracking. **Read-only: never create, edit,
 label or close anything.**

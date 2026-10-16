@@ -13,7 +13,9 @@ saved snapshot); what waits on the human (ready-for-QC and QC-complete PRs, awai
 agents with a question pending, the intake inbox); the queue's eligible count; open PRs awaiting
 the human against the PR cap. System constraints: weekly and 5-hour usage (USAGE_CACHE), free memory
 and swap, disk free on the state dir and repo roots, gh GraphQL/core rate limits per GH_USER, and
-the overall agent count.
+the overall agent count. Agents working in a SELF_MANAGED_REPOS repo are listed apart, as
+"self-managed (owner: <REPO_MANAGER>)": the owning manager runs them, so they count toward neither
+the project's active/MAX nor its advice, but they are in the memory estimate.
 
 Allocation advice per project: go | slow | hold, a reason and a soft suggested_max_active, from
 PORTFOLIO_PRIORITY (1 = highest), RESOURCE_PROFILE (light | medium | heavy, or AGENT_MB /
@@ -295,7 +297,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     except OSError:
         pass
     gate_keys = {f"{g['repo']}#{g['number']}" for g in gates}
-    active, parked, hibernated, stalled, questions, standing = [], [], [], [], [], []
+    active, parked, hibernated, stalled, questions, standing, owned = [], [], [], [], [], [], []
     seen = set()
     standing_names = {f"Orchestrator ({p})": "orchestrator", f"QC ({p})": "qc"}
     for w in workspaces:
@@ -319,6 +321,11 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
             or (key in gate_keys and status != "working") or bool(sa.get("parked") and status != "working")
         row = {"agent": key, "workspace": label, "status": status, "self_managed": m.group(1) in self_managed,
                "pr": pr["number"] if pr else None}
+        if m.group(1) in self_managed:
+            # another manager owns this repo end to end (this project's queue and watch skip it):
+            # listed apart, kept out of active/MAX and the advice, still counted for memory
+            owned.append(dict(row, owner=(cfg.get("repo_manager") or {}).get(m.group(1)), parked=is_parked))
+            continue
         if status == "blocked" or sa.get("question_pending"):
             questions.append({"workspace": label, "agent": key, "why": "question"})
         if sa.get("stalled") and status in ("idle", "done"):
@@ -341,9 +348,12 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
             meta = read_json(os.path.join(agents_dir, f), {}) or {}
             if meta.get("repo") in repos and not meta.get("hibernated_at") and not meta.get("done_tracking") \
                     and meta.get("workspace_id"):
-                active.append({"agent": f"{meta['repo']}#{meta.get('number')}", "workspace": meta.get("name"),
-                               "status": "unknown (no herdr)", "self_managed": meta["repo"] in self_managed,
-                               "pr": None})
+                row = {"agent": f"{meta['repo']}#{meta.get('number')}", "workspace": meta.get("name"),
+                       "status": "unknown (no herdr)", "self_managed": meta["repo"] in self_managed, "pr": None}
+                if row["self_managed"]:
+                    owned.append(dict(row, owner=(cfg.get("repo_manager") or {}).get(meta["repo"]), parked=False))
+                else:
+                    active.append(row)
 
     # queue depth (needs a board and a managed repo)
     queue = {"eligible": None, "auto_spawn": None, "error": None}
@@ -374,7 +384,9 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         "manager": manager_of(cfg, workspaces, agents_by_ws),
         "self_managed": [{"repo": r, "manager": (cfg.get("repo_manager") or {}).get(r)} for r in sorted(self_managed)],
         "agents": {"active": active, "parked": parked, "hibernated": hibernated, "stalled": stalled,
-                   "standing": standing},
+                   "standing": standing, "self_managed": owned},
+        # memory this project's live agents hold, self-managed ones included (they still use the machine)
+        "est_agent_mb": (len(active) + len(parked) + len(owned)) * agent_mb,
         "questions": questions, "qc_ready": qc_ready, "qc_done": qc_done, "ux_gates": gates,
         "queue": queue,
         "prs": {"open": open_total, "awaiting_human": awaiting, "cap": cap, "reached": awaiting >= cap},
@@ -619,7 +631,9 @@ def text_report(r, only):
               + (f" (resets in {g['reset_min']} min)" if g.get("reset_min") is not None else ""))
     a = s["agents"]
     print(f"== agents: {a['herdr_total']} herdr agent(s) ({a['claude']} claude), "
-          f"{a['project_active']} active and {a['project_hibernated']} hibernated project agent(s)")
+          f"{a['project_active']} active and {a['project_hibernated']} hibernated project agent(s)"
+          + (f", {a['self_managed_active']} in self-managed repos" if a["self_managed_active"] else "")
+          + f"; ~{gb(a['est_agent_mb'])} estimated for live agents")
     print("== waiting on you (all projects, by impact)")
     if not r["waiting_on_you"]:
         print("  nothing")
@@ -640,6 +654,11 @@ def text_report(r, only):
             names = [x.get("workspace") or x["agent"] for x in rows]
             return (", ".join(names[:n]) + (f" +{len(names) - n} more" if len(names) > n else "")) or "-"
         print(f"  active {len(ag['active'])}/{v['max_active']}: {nm(ag['active'])}")
+        by_owner = {}
+        for x in ag["self_managed"]:
+            by_owner.setdefault(x["owner"] or "REPO_MANAGER unset", []).append(x)
+        for owner, rows in sorted(by_owner.items()):
+            print(f"  self-managed (owner: {owner}) {len(rows)}: {nm(rows)}  [not in active/MAX or advice]")
         if ag["parked"]:
             print(f"  parked {len(ag['parked'])}: {nm(ag['parked'])}")
         hw = [x for x in ag["hibernated"] if x["open_pr"]]
@@ -721,6 +740,8 @@ def main():
         "memory": memory(), "disk": disk(paths), "usage": usage(cfgs), "gh": rate_limits(users),
         "agents": {"herdr_total": len(agents), "claude": sum(1 for x in agents if x.get("agent") == "claude"),
                    "project_active": sum(len(v["agents"]["active"]) for v in views),
+                   "self_managed_active": sum(len(v["agents"]["self_managed"]) for v in views),
+                   "est_agent_mb": sum(v["est_agent_mb"] for v in views),
                    "project_hibernated": sum(len(v["agents"]["hibernated"]) for v in views)},
     }
     advice = advise(views, system)

@@ -6,7 +6,7 @@ argument-hint: "[status | loop | allocate | deps | a pasted request from a proje
 
 # Portfolio Manager
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead. Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead (the repo's `AGENTS.md` names the checkout; `<engine checkout>/bin/install --bin` puts `pdo` on PATH). Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
 
 You are the **Portfolio Manager**: the session one level above the per-project managers (each
 project's orchestrator, or the lead that self-manages a repo). You **observe and coordinate**. You

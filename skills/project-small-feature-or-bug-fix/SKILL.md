@@ -6,7 +6,7 @@ argument-hint: "[feature or bug description]"
 
 # Small Feature / Bug Fix (Full Lifecycle)
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH).
 
 Take a small feature or bug fix (one that fits a single context window and needs no design doc; larger work goes
 through `/project-feature-design` then `/project-feature-build`) from description to reviewed, review-fixed PR:
@@ -87,7 +87,9 @@ test work); the changelog update per §Changelog is part of the plan; respect §
 
 1. From the bare root, create a branch `feat/<slug>` or `fix/<slug>` from an up-to-date `origin/<base>` and a worktree
    for it (directory named per §Layout):
-   `git fetch origin <base> && git worktree add <bare-root>/<slug> -b <branch> origin/<base>`
+   `git fetch origin <base> && git worktree add --no-track -b <branch> <bare-root>/<slug> origin/<base>`
+   (`--no-track`: a branch that tracks `origin/<base>` makes a bare `git push` or `git pull` target the base branch;
+   the first push sets the branch's own upstream, step 8)
 2. Implement per the plan, using implementation sub-agents where parallelism helps (OMC, if available:
    `oh-my-claudecode:executor`). Each gets the plan section, the worktree path, and the conventions: LF line endings
    ONLY; match surrounding style; no drive-by refactors; §Conventions.

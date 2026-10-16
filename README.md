@@ -90,7 +90,8 @@ and what has drifted, and only fills gaps.
   standing agents with `PDO_SKILL_PREFIX` (default `/project-dev-orchestration:`); set it to `/` in
   your `config.env` when the skills are linked un-namespaced.
 - **Engine commands** appear in the skills as `pdo <name> …`. Without `pdo` on PATH, run
-  `<engine checkout>/bin/<name> …`; a dispatch brief gives agents the absolute path.
+  `<engine checkout>/bin/<name> …`; a dispatch brief gives agents the absolute path, and a repo's `AGENTS.md`
+  names the checkout for sessions a person starts (`bin/install --bin` puts `pdo` on PATH).
 
 ## How it fits together
 
@@ -136,7 +137,8 @@ QC_PORTS="3000 4200"          # optional: ports hibernation must never stop
 Every script takes `--project <name>`. Without it they use `$PDO_PROJECT`, else the project whose
 `REPO_ROOT` holds the current directory's repo, and otherwise fail with the list of known projects. State
 lives in `PDO_STATE_DIR` (default `~/.local/state/project-dev-orchestration`). `pdo project-env` prints a
-project's resolved settings. The full key list and the hook contracts are in
+project's resolved settings, and `pdo project-env --board` its board's ids. A project with several repos can give
+each its own fixture format (`declare -A FIXTURE_EXT_BY_REPO=([other-repo]=".dump")`). The full key list and the hook contracts are in
 [docs/design.md](docs/design.md#configuration).
 
 ## Docs

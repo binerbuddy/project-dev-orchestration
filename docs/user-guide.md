@@ -69,8 +69,12 @@ the shared QC worktree through your project's `QC_HOOK`. Type your findings in p
 PR's agent and get posted on the PR. Say `pass` when it's good.
 
 **From a browser:** a reviewer comments on the PR. `QC: <findings or answers>` goes to the PR's agent,
-which replies on the PR. If your project runs a hosted preview service, its comment triggers are in the
+which replies on the PR, and `Claude, QC pass` marks QC complete (the watcher swaps the labels). Neither needs a
+preview service. If your project runs a hosted preview service, its spin-up and tear-down triggers are in the
 repo profile's "QC preview" section.
+
+**A repo with no UI** (an engine, a library): the checklist names fixture inputs and their expected outputs, with
+the command that checks each; you QC by running them or by reading the evidence the agent put in the PR.
 
 ## Filing bugs and ideas
 
@@ -100,7 +104,9 @@ The P-labels, the CWT status and the QC labels can be renamed per project (`P_LA
 
 ## The engine's commands
 
-With `bin/install --bin`, every script runs as `pdo <script>`; from a checkout, as `bin/<script>`.
+With `bin/install --bin`, every script runs as `pdo <script>`; from a checkout, as `bin/<script>`. A session you
+start yourself (not dispatched) finds the engine through `pdo` on PATH, else through the engine path the repo's
+`AGENTS.md` names in "How work flows here" (filled in by `/project-setup`).
 
 | Command | Does |
 |---|---|
@@ -117,7 +123,8 @@ With `bin/install --bin`, every script runs as `pdo <script>`; from a checkout, 
 | `intake-submit "<ws>" "<report>"` | queue a report for intake |
 | `file-issue`, `claim`, `board-status` | board and issue helpers |
 | `pr-agent <pr#>`, `pr-priority`, `shots <pr#>`, `agent-meta backfill` | PR helpers |
-| `project-env [KEY]` | the current project's resolved settings |
+| `project-env [KEY]` / `project-env --board` | the current project's resolved settings / the board's ids (live) |
+| `with-gh-user --user <login> <cmd>` | run one command (`gh …`, `git push …`) as that GitHub login, without switching the account |
 | `fleet [--json] [--write-advice]` | every project at once, the machine's constraints, allocation advice (read-only by default) |
 | `fleet deps add\|list\|done …` | cross-project dependencies |
 

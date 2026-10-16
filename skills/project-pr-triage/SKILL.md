@@ -6,7 +6,7 @@ argument-hint: "<PR#>"
 
 # PR review triage and fix (consortium-verified)
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH).
 
 Triage the review comments on pull request `#<PR>` (the argument), propose verified solutions, and,
 after explicit human approval and human QC, implement and push the accepted fixes to the PR branch.

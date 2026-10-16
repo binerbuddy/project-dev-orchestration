@@ -158,6 +158,7 @@ pdo_finalize() {
   QC_WORKTREE="${QC_WORKTREE:-qc}"
   QC_REPO="${QC_REPO:-$PRIMARY_REPO}"
   QC_PORTS="${QC_PORTS:-}"
+  QC_PASS_HANDLER="${QC_PASS_HANDLER:-watch}"  # watch: bin/watch acts on "Claude, QC pass"; external: another service does
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
   ORCHESTRATE_SKILL="${ORCHESTRATE_SKILL:-${PDO_SKILL_PREFIX}project-orchestrate}"
   QC_SKILL="${QC_SKILL:-${PDO_SKILL_PREFIX}project-qc-review}"
@@ -183,7 +184,7 @@ pdo_finalize() {
 
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
-  local k roots="{}" routes="{}" managed="[]" repo_mgr="{}"
+  local k roots="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}"
   if declare -p REPO_ROOT >/dev/null 2>&1; then
     for k in "${!REPO_ROOT[@]}"; do roots="$(jq -c --arg k "$k" --arg v "${REPO_ROOT[$k]}" '. + {($k): $v}' <<<"$roots")"; done
   fi
@@ -192,6 +193,9 @@ pdo_config_json() {
   fi
   if declare -p REPO_MANAGER >/dev/null 2>&1; then
     for k in "${!REPO_MANAGER[@]}"; do repo_mgr="$(jq -c --arg k "$k" --arg v "${REPO_MANAGER[$k]}" '. + {($k): $v}' <<<"$repo_mgr")"; done
+  fi
+  if declare -p FIXTURE_EXT_BY_REPO >/dev/null 2>&1; then
+    for k in "${!FIXTURE_EXT_BY_REPO[@]}"; do fx_by_repo="$(jq -c --arg k "$k" --arg v "${FIXTURE_EXT_BY_REPO[$k]}" '. + {($k): $v}' <<<"$fx_by_repo")"; done
   fi
   if declare -p SELF_MANAGED_REPOS >/dev/null 2>&1; then
     managed="$(printf '%s\n' ${SELF_MANAGED_REPOS[@]+"${SELF_MANAGED_REPOS[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')"
@@ -202,8 +206,8 @@ pdo_config_json() {
     --argjson managed "$managed" --arg model "$DEFAULT_MODEL" --arg brief "$BRIEF_TEMPLATE" \
     --arg gh_user "$GH_USER" --arg primary "$PRIMARY_REPO" --arg identity "${IDENTITY_HOOK:-}" \
     --arg team_up "${TEAM_UP_HOOK:-}" --arg sysreport "${SYSREPORT_HOOK:-}" --arg qc "${QC_HOOK:-}" \
-    --arg fixture_ext "$FIXTURE_EXT" --arg fixture_branch "$FIXTURE_BRANCH" --arg agent_cli "$AGENT_CLI" \
-    --arg qc_worktree "$QC_WORKTREE" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" \
+    --arg fixture_ext "$FIXTURE_EXT" --argjson fx_by_repo "$fx_by_repo" --arg fixture_branch "$FIXTURE_BRANCH" --arg agent_cli "$AGENT_CLI" \
+    --arg qc_worktree "$QC_WORKTREE" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_pass "$QC_PASS_HANDLER" \
     --arg sm "$SYSTEM_MANAGER_WORKSPACE" --arg control "$CONTROL_DIR" \
     --arg carry "$CARRY_LABELS" --arg shots "$SCREENSHOT_DIR" \
     --arg cwt "$CWT_STATUS" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
@@ -216,8 +220,8 @@ pdo_config_json() {
       inbox: $inbox, org: $org, project_number: $num, repo_root: $roots, route_skill: $routes,
       self_managed_repos: $managed, default_model: $model, brief_template: $brief, gh_user: $gh_user,
       primary_repo: $primary, identity_hook: $identity, team_up_hook: $team_up, sysreport_hook: $sysreport,
-      qc_hook: $qc, fixture_ext: $fixture_ext, fixture_branch: $fixture_branch, agent_cli: $agent_cli,
-      qc_worktree: $qc_worktree, qc_repo: $qc_repo,
+      qc_hook: $qc, fixture_ext: $fixture_ext, fixture_ext_by_repo: $fx_by_repo, fixture_branch: $fixture_branch, agent_cli: $agent_cli,
+      qc_worktree: $qc_worktree, qc_repo: $qc_repo, qc_pass_handler: $qc_pass,
       qc_ports: ($qc_ports | split(" ") | map(select(length > 0) | tonumber)),
       system_manager_workspace: $sm, control_dir: $control,
       cwt_status: $cwt, p_labels: ($plabels | split(" ") | map(select(length > 0))),

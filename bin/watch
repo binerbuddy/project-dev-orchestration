@@ -28,8 +28,13 @@ It also reports weekly/5-hour usage from the oh-my-claudecode HUD cache, and the
 
 Events are transitions against the previous snapshot (state file), so each fires once:
   slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, new_claude_work_this,
-  usage_ceiling, heartbeat. Quiet events (hibernated, hibernate_failed) ride along with the next
-  wake and never end --until-event on their own.
+  usage_ceiling, heartbeat. Quiet events (hibernated, hibernate_failed, qc_pass_recorded,
+  qc_pass_ignored) ride along with the next wake and never end --until-event on their own.
+
+QC pass: unless --peek, a trusted PR comment starting "Claude, QC pass" on a managed repo's open
+PR labelled 'ready for QC' swaps that label for 'QC complete - ready to review' and replies on the
+PR (quiet event qc_pass_recorded; qc_complete then fires on the next snapshot). No preview service
+is needed. QC_PASS_HANDLER=external in the project env leaves these comments to another service.
 
 PR priority: unless --peek, every queue refresh also runs bin/pr-priority, so open PRs carry
 the highest P-label of the issues they close (it never downgrades).
@@ -63,7 +68,7 @@ WEEKLY_CEILING = 80   # keep 20% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
 HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'
-QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed"}  # reported on the next wake; never wake by themselves
+QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed", "qc_pass_recorded", "qc_pass_ignored"}  # reported on the next wake; never wake by themselves
 WAIT_MIN = 10  # a non-parked agent idle this long, with no question, is probably waiting on a human gate
 QUEUE_EVERY_SEC = 300  # bin/queue costs ~7 API calls; don't run it every poll
 QC_READY, QC_DONE = "ready for QC", "QC complete - ready to review"  # LABEL_QC_READY / LABEL_QC_DONE
@@ -336,15 +341,16 @@ def waiting_on_you(ag):
 
 
 QC_RE = re.compile(r"^\s*QC:", re.I)
+QC_PASS_RE = re.compile(r"^\s*Claude,?\s+QC pass\b", re.I)
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
 def qc_comments(org, repos, prev):
-    """New trusted PR comments starting with "QC:" (feedback from remote QC, e.g. a hosted
-    preview service), since the last check. One repo-wide call per repo; ids dedupe across overlaps."""
+    """New trusted PR comments since the last check: ("QC:" feedback, "Claude, QC pass" requests).
+    One repo-wide call per repo; ids dedupe across overlaps."""
     since = prev.get("qc_since") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
     seen = set(prev.get("qc_seen", []))
-    found, now = [], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    found, passes, now = [], [], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     for repo in sorted(repos):
         out = run(["gh", "api", f"repos/{org}/{repo}/issues/comments?since={since}&per_page=100", "--paginate",
                    "--jq", '.[] | {id, body, html_url, issue_url, user: .user.login, assoc: .author_association}'])
@@ -353,12 +359,42 @@ def qc_comments(org, repos, prev):
                 c = json.loads(line)
             except ValueError:
                 continue
-            if c["id"] in seen or c["assoc"] not in TRUSTED or not QC_RE.match(c["body"] or ""):
+            body = c["body"] or ""
+            if c["id"] in seen or c["assoc"] not in TRUSTED:
+                continue
+            kind = "feedback" if QC_RE.match(body) else "pass" if QC_PASS_RE.match(body) else None
+            if not kind:
                 continue
             seen.add(c["id"])
-            found.append({"repo": repo, "number": int(c["issue_url"].rsplit("/", 1)[1]), "id": c["id"],
-                          "author": c["user"], "url": c["html_url"], "body": c["body"]})
-    return found, now, sorted(seen)[-500:]
+            (found if kind == "feedback" else passes).append(
+                {"repo": repo, "number": int(c["issue_url"].rsplit("/", 1)[1]), "id": c["id"],
+                 "author": c["user"], "url": c["html_url"], "body": body})
+    return found, passes, now, sorted(seen)[-500:]
+
+
+def apply_qc_passes(org, passes):
+    """Swap 'ready for QC' for 'QC complete' on each PR a trusted "Claude, QC pass" names, if it
+    is open and still labelled ready. Returns quiet events."""
+    out = []
+    for c in passes:
+        pr = next((p for (r, _), p in PR_INDEX.items() if r == c["repo"] and p["number"] == c["number"]), None)
+        ref = f"{c['repo']}#{c['number']}"
+        if not pr or pr["state"] != "OPEN" or QC_READY not in pr["labels"] or QC_DONE in pr["labels"]:
+            why = "not an open PR" if not pr or pr["state"] != "OPEN" else \
+                "already QC complete" if QC_DONE in pr["labels"] else f"not labelled '{QC_READY}'"
+            out.append({"type": "qc_pass_ignored", "pr": ref, "author": c["author"], "why": why, "url": c["url"]})
+            continue
+        r = subprocess.run(["gh", "pr", "edit", str(c["number"]), "-R", f"{org}/{c['repo']}",
+                            "--remove-label", QC_READY, "--add-label", QC_DONE], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            out.append({"type": "qc_pass_ignored", "pr": ref, "author": c["author"], "url": c["url"],
+                        "why": f"label edit failed: {(r.stderr or '').strip()[:200]}"})
+            continue
+        pr["labels"] = [l for l in pr["labels"] if l != QC_READY] + [QC_DONE]
+        run(["gh", "pr", "comment", str(c["number"]), "-R", f"{org}/{c['repo']}", "--body",
+             f"QC pass recorded (from @{c['author']}): removed `{QC_READY}`, added `{QC_DONE}`."])
+        out.append({"type": "qc_pass_recorded", "pr": ref, "author": c["author"], "url": c["url"]})
+    return out
 
 
 PR_INDEX = {}  # (repo, headRefName) -> pr dict; filled once per snapshot by load_pr_index()
@@ -454,7 +490,7 @@ def snapshot(project, prev):
     ag = agents(org, repos, prev.get("agents", {}))
     q, q_at = (prev.get("queue", []), prev.get("queue_at", 0)) if rate_low else queue_top(project, prev)
     floor = run([os.path.join(HERE, "bin", "floor"), "--project", project]).strip() or "none"
-    qcn, qc_since, qc_seen = qc_comments(org, repos, prev)
+    qcn, qcp, qc_since, qc_seen = qc_comments(org, repos, prev)
     active = [k for k, v in ag.items() if not v["parked"] and not v["merged"] and v["status"] != "gone"]
     u = usage()
     over = (u.get("weekly") or 0) >= WEEKLY_CEILING or (u.get("five_hour") or 0) >= FIVE_HOUR_CEILING
@@ -470,7 +506,7 @@ def snapshot(project, prev):
         # P1-urgent + Claude Work This: spawned regardless of free_slots and the usage ceiling
         "urgent": [r for r in q if r.get("urgent_bypass")],
         "usage": u, "usage_over_ceiling": over, "queue": q, "queue_at": q_at,
-        "qc_new": qcn, "qc_since": qc_since, "qc_seen": qc_seen,
+        "qc_new": qcn, "qc_pass_new": qcp, "qc_since": qc_since, "qc_seen": qc_seen,
         "spawn_floor": floor,  # bin/floor; report it in the status line
         "max_active": MAX_ACTIVE, "fleet": CFG.get("_fleet"),  # portfolio advice, when fresh
     }
@@ -601,6 +637,8 @@ def main():
                                capture_output=True, text=True, timeout=180)
             except subprocess.TimeoutExpired:
                 pass
+        if not a.peek and cur.get("qc_pass_new") and (CFG.get("qc_pass_handler") or "watch") == "watch":
+            quiet += apply_qc_passes(CFG["org"], cur["qc_pass_new"])
         if not a.peek:
             fresh = auto_hibernate(a.project, cur["agents"])
             if fresh:  # waiting_on_you was built before these closed: rebuild it without dead panes

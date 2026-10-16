@@ -6,7 +6,7 @@ argument-hint: "<feature description> | <path to existing design doc>"
 
 # Feature Design (Survey → Consortium → Decisions → GitHub Epic)
 
-> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path.
+> Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH).
 
 Take a large or cross-cutting feature from idea to an implementation-ready design document: code/memory/issue survey →
 proposal → consortium review → human decisions gate → committed doc with a phased delivery plan → GitHub epic (one
@@ -65,8 +65,11 @@ kebab-case (`user-preferences`) and the directory named per §Layout (default `<
 
 ```
 git fetch origin <base>
-git worktree add <bare-root>/<design-dir> -b docs/<slug>-design origin/<base>
+git worktree add --no-track -b docs/<slug>-design <bare-root>/<design-dir> origin/<base>
 ```
+
+`--no-track` keeps the branch from tracking `origin/<base>` (a bare `git push` or `git pull` would target the base
+branch); phase 7's `git push -u` gives it its own upstream.
 
 The doc lives in the design-doc directory from §Docs (default `docs/design/<slug>.md`). If a draft already exists
 elsewhere (untracked in another worktree), move it here.

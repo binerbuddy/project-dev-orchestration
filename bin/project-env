@@ -4,8 +4,13 @@
 #
 # Usage: project-env [--project P]          every key as KEY=value lines
 #        project-env [--project P] KEY      just KEY's value (empty line + exit 1 when unknown)
+#        project-env [--project P] --board  the board's ids, looked up live on GitHub (as GH_USER):
+#                                            BOARD_NUMBER, BOARD_TITLE, BOARD_ID, STATUS_FIELD_ID and
+#                                            STATUS_OPTION[<column>]=<option id>. Every repo of the
+#                                            project shares one board, so repo profiles cite this
+#                                            command instead of copying ids that can go stale.
 # Maps print one line per entry: REPO_ROOT[<repo>]=<path>, ROUTE_SKILL[<route>]=<skill>,
-# REPO_MANAGER[<repo>]=<manager>.
+# REPO_MANAGER[<repo>]=<manager>, FIXTURE_EXT_BY_REPO[<repo>]=<ext>.
 # `project-env REPO_ROOT` prints "<repo>=<path>" lines; `project-env 'REPO_ROOT[x]'` one value.
 # Project: --project, else $PDO_PROJECT, else the project whose REPO_ROOT holds the cwd's repo.
 set -euo pipefail
@@ -17,7 +22,8 @@ PROJECT="" KEY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --project) PROJECT="$2"; shift 2 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    --board) KEY="--board"; shift ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     -*) pdo_die "unknown option: $1" ;;
     *) KEY="$1"; shift ;;
   esac
@@ -27,7 +33,7 @@ pdo_resolve_project "$PROJECT"
 HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
 
 SCALARS=(PROJECT ORG PROJECT_NUMBER PRIMARY_REPO DEFAULT_MODEL GH_USER AGENT_CLI BRIEF_TEMPLATE CONTROL_DIR
-  IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK QC_REPO QC_WORKTREE QC_PORTS FIXTURE_EXT FIXTURE_BRANCH
+  IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK QC_REPO QC_WORKTREE QC_PORTS QC_PASS_HANDLER FIXTURE_EXT FIXTURE_BRANCH
   SYSTEM_MANAGER_WORKSPACE ORCHESTRATE_SKILL QC_SKILL INTAKE_SKILL PDO_SKILL_PREFIX CWT_STATUS P_LABELS
   LABEL_QC_READY LABEL_QC_DONE CARRY_LABELS SCREENSHOT_DIR MAX_ACTIVE WEEKLY_CEILING FIVE_HOUR_CEILING
   MANAGER PORTFOLIO_PRIORITY RESOURCE_PROFILE AGENT_MB AGENT_USAGE_WEIGHT FLEET_ADVICE
@@ -41,15 +47,31 @@ map_lines() {  # map_lines <name> <prefix-style>: style "full" = NAME[k]=v, "sho
 }
 managed() { declare -p SELF_MANAGED_REPOS >/dev/null 2>&1 && echo "${SELF_MANAGED_REPOS[*]}" || echo ""; }
 
+if [[ "$KEY" == --board ]]; then
+  [[ -n "${PROJECT_NUMBER:-}" ]] || pdo_die "project '$PROJECT' has no PROJECT_NUMBER (no board)"
+  if [[ -n "${GH_USER:-}" ]]; then
+    GH_TOKEN="$(gh auth token -u "$GH_USER" 2>/dev/null)" || pdo_die "no gh login for $GH_USER"
+    export GH_TOKEN
+  fi
+  Q='query board($o:String!,$p:Int!){organization(login:$o){projectV2(number:$p){id number title
+    field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}'
+  J="$(gh api graphql -f query="$Q" -F o="$ORG" -F p="$PROJECT_NUMBER")" \
+    || pdo_die "board lookup failed (the token needs the read:project scope: gh auth refresh -s read:project)"
+  jq -e '.data.organization.projectV2 != null' <<<"$J" >/dev/null 2>&1 \
+    || pdo_die "no org Project #$PROJECT_NUMBER under $ORG (the board must be org-owned)"
+  jq -r '.data.organization.projectV2 | "BOARD_NUMBER=\(.number)", "BOARD_TITLE=\(.title)", "BOARD_ID=\(.id)",
+    "STATUS_FIELD_ID=\(.field.id // "")", (.field.options // [] | .[] | "STATUS_OPTION[\(.name)]=\(.id)")' <<<"$J"
+  exit 0
+fi
 if [[ -z "$KEY" ]]; then
   for k in "${SCALARS[@]}"; do printf '%s=%s\n' "$k" "${!k:-}"; done
   printf 'SELF_MANAGED_REPOS=%s\n' "$(managed)"
-  map_lines REPO_ROOT full; map_lines ROUTE_SKILL full; map_lines REPO_MANAGER full
+  map_lines REPO_ROOT full; map_lines ROUTE_SKILL full; map_lines REPO_MANAGER full; map_lines FIXTURE_EXT_BY_REPO full
   exit 0
 fi
 case "$KEY" in
-  REPO_ROOT|ROUTE_SKILL|REPO_MANAGER) map_lines "$KEY" short ;;
-  REPO_ROOT\[*\]|ROUTE_SKILL\[*\]|REPO_MANAGER\[*\])
+  REPO_ROOT|ROUTE_SKILL|REPO_MANAGER|FIXTURE_EXT_BY_REPO) map_lines "$KEY" short ;;
+  REPO_ROOT\[*\]|ROUTE_SKILL\[*\]|REPO_MANAGER\[*\]|FIXTURE_EXT_BY_REPO\[*\])
     n="${KEY%%[*}" k="${KEY#*[}"; k="${k%]}"
     declare -p "$n" >/dev/null 2>&1 || { echo; exit 1; }
     declare -n mm="$n"; [[ -n "${mm[$k]+x}" ]] || { echo; exit 1; }; echo "${mm[$k]}" ;;

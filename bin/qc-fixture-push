@@ -9,8 +9,10 @@
 # download URL for the QC checklist's "Test data" item. Fixtures never go on PR branches: they
 # would merge into main with the PR. Uses git plumbing against the clone root (no worktree, no
 # checkout), creates the orphan branch if it doesn't exist, and retries when another agent pushed
-# first. Re-pushing the same path replaces the file. FIXTURE_EXT (e.g. `.tar.gz`) names the
-# project's fixture format: a file with another extension is pushed with a warning.
+# first. Re-pushing the same path replaces the file. The fixture format of --repo is
+# FIXTURE_EXT_BY_REPO[<repo>] when the project env sets it (a project with several repos, each
+# with its own format), else FIXTURE_EXT (e.g. `.tar.gz`): a file with another extension is
+# pushed with a warning.
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 die() { echo "qc-fixture-push: $*" >&2; exit 1; }
@@ -20,7 +22,7 @@ while [[ $# -gt 0 ]]; do
     --repo) REPO="$2"; shift 2 ;;
     --project) PROJECT="$2"; shift 2 ;;
     --name) NAME="$2"; shift 2 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) if [[ -z "$PR" ]]; then PR="${1#\#}"; else FILE="$1"; fi; shift ;;
   esac
 done
@@ -37,8 +39,12 @@ pdo_resolve_project "$PROJECT"
 HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
 REPO="${REPO:-$PRIMARY_REPO}"
 [[ -n "$REPO" ]] || die "pass --repo (the project has no PRIMARY_REPO)"
-if [[ -n "$FIXTURE_EXT" && "$NAME" != *"$FIXTURE_EXT" ]]; then
-  echo "qc-fixture-push: warning: $NAME does not end in $FIXTURE_EXT (the project's fixture format)" >&2
+EXT="$FIXTURE_EXT" EXT_FROM="the project's fixture format"
+if declare -p FIXTURE_EXT_BY_REPO >/dev/null 2>&1 && [[ -n "${FIXTURE_EXT_BY_REPO[$REPO]+x}" ]]; then
+  EXT="${FIXTURE_EXT_BY_REPO[$REPO]}" EXT_FROM="$REPO's fixture format"
+fi
+if [[ -n "$EXT" && "$NAME" != *"$EXT" ]]; then
+  echo "qc-fixture-push: warning: $NAME does not end in $EXT ($EXT_FROM)" >&2
 fi
 export GIT_DIR="${REPO_ROOT[$REPO]:?unknown repo $REPO}"
 [[ -d "$GIT_DIR/worktrees" || -f "$GIT_DIR/HEAD" ]] || GIT_DIR="$GIT_DIR/.git"
@@ -55,7 +61,7 @@ for attempt in 1 2 3 4 5; do
   else
     GIT_INDEX_FILE="$IDX" git read-tree --empty; parent=()   # first fixture ever: orphan branch
     readme=$(printf '%s\n' "# QC fixtures" "" \
-      "Never merged. Test data for human QC, one folder per PR: \`<PR#>/<name>${FIXTURE_EXT}\`." \
+      "Never merged. Test data for human QC, one folder per PR: \`<PR#>/<name>${EXT}\`." \
       "Published with project-dev-orchestration \`bin/qc-fixture-push\`. How to load a fixture is in each PR's QC checklist." \
       | git hash-object -w --stdin)
     GIT_INDEX_FILE="$IDX" git update-index --add --cacheinfo "100644,$readme,README.md"
