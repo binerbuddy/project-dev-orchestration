@@ -159,6 +159,7 @@ pdo_finalize() {
   QC_REPO="${QC_REPO:-$PRIMARY_REPO}"
   QC_PORTS="${QC_PORTS:-}"
   QC_PASS_HANDLER="${QC_PASS_HANDLER:-watch}"  # watch: bin/watch acts on "Claude, QC pass"; external: another service does
+  QC_PASS_EXTERNAL_REPOS="${QC_PASS_EXTERNAL_REPOS:-}"  # repos (space-separated) whose QC pass another service handles; watch handles the rest
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
   ORCHESTRATE_SKILL="${ORCHESTRATE_SKILL:-${PDO_SKILL_PREFIX}project-orchestrate}"
   QC_SKILL="${QC_SKILL:-${PDO_SKILL_PREFIX}project-qc-review}"
@@ -207,7 +208,7 @@ pdo_config_json() {
     --arg gh_user "$GH_USER" --arg primary "$PRIMARY_REPO" --arg identity "${IDENTITY_HOOK:-}" \
     --arg team_up "${TEAM_UP_HOOK:-}" --arg sysreport "${SYSREPORT_HOOK:-}" --arg qc "${QC_HOOK:-}" \
     --arg fixture_ext "$FIXTURE_EXT" --argjson fx_by_repo "$fx_by_repo" --arg fixture_branch "$FIXTURE_BRANCH" --arg agent_cli "$AGENT_CLI" \
-    --arg qc_worktree "$QC_WORKTREE" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_pass "$QC_PASS_HANDLER" \
+    --arg qc_worktree "$QC_WORKTREE" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_pass "$QC_PASS_HANDLER" --arg qc_pass_ext "$QC_PASS_EXTERNAL_REPOS" \
     --arg sm "$SYSTEM_MANAGER_WORKSPACE" --arg control "$CONTROL_DIR" \
     --arg carry "$CARRY_LABELS" --arg shots "$SCREENSHOT_DIR" \
     --arg cwt "$CWT_STATUS" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
@@ -221,7 +222,7 @@ pdo_config_json() {
       self_managed_repos: $managed, default_model: $model, brief_template: $brief, gh_user: $gh_user,
       primary_repo: $primary, identity_hook: $identity, team_up_hook: $team_up, sysreport_hook: $sysreport,
       qc_hook: $qc, fixture_ext: $fixture_ext, fixture_ext_by_repo: $fx_by_repo, fixture_branch: $fixture_branch, agent_cli: $agent_cli,
-      qc_worktree: $qc_worktree, qc_repo: $qc_repo, qc_pass_handler: $qc_pass,
+      qc_worktree: $qc_worktree, qc_repo: $qc_repo, qc_pass_handler: $qc_pass, qc_pass_external_repos: ($qc_pass_ext | split(" ") | map(select(length > 0))),
       qc_ports: ($qc_ports | split(" ") | map(select(length > 0) | tonumber)),
       system_manager_workspace: $sm, control_dir: $control,
       cwt_status: $cwt, p_labels: ($plabels | split(" ") | map(select(length > 0))),

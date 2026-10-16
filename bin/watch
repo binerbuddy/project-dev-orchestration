@@ -34,7 +34,8 @@ Events are transitions against the previous snapshot (state file), so each fires
 QC pass: unless --peek, a trusted PR comment starting "Claude, QC pass" on a managed repo's open
 PR labelled 'ready for QC' swaps that label for 'QC complete - ready to review' and replies on the
 PR (quiet event qc_pass_recorded; qc_complete then fires on the next snapshot). No preview service
-is needed. QC_PASS_HANDLER=external in the project env leaves these comments to another service.
+is needed. QC_PASS_HANDLER=external in the project env leaves these comments to another service;
+QC_PASS_EXTERNAL_REPOS="<repo> ..." does that for just those repos.
 
 PR priority: unless --peek, every queue refresh also runs bin/pr-priority, so open PRs carry
 the highest P-label of the issues they close (it never downgrades).
@@ -637,8 +638,10 @@ def main():
                                capture_output=True, text=True, timeout=180)
             except subprocess.TimeoutExpired:
                 pass
-        if not a.peek and cur.get("qc_pass_new") and (CFG.get("qc_pass_handler") or "watch") == "watch":
-            quiet += apply_qc_passes(CFG["org"], cur["qc_pass_new"])
+        ext = set(CFG.get("qc_pass_external_repos") or [])
+        passes = [c for c in (cur.get("qc_pass_new") or []) if c["repo"] not in ext]
+        if not a.peek and passes and (CFG.get("qc_pass_handler") or "watch") == "watch":
+            quiet += apply_qc_passes(CFG["org"], passes)
         if not a.peek:
             fresh = auto_hibernate(a.project, cur["agents"])
             if fresh:  # waiting_on_you was built before these closed: rebuild it without dead panes

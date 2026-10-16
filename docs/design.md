@@ -248,6 +248,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `FIXTURE_EXT` | (none) | the project's fixture extension (a mismatch warns) |
 | `FIXTURE_EXT_BY_REPO` | `()` | `declare -A`: repo → its fixture extension, for repos whose format differs; `qc-fixture-push --repo` uses it before `FIXTURE_EXT` |
 | `QC_PASS_HANDLER` | `watch` | `watch`: the watcher acts on `Claude, QC pass` comments; `external`: another service does |
+| `QC_PASS_EXTERNAL_REPOS` | (empty) | Repos whose `Claude, QC pass` another service handles (e.g. a preview manager); the watcher handles the rest |
 | `FIXTURE_BRANCH` | `qc-fixtures` | never-merged fixture branch |
 | `SCREENSHOT_DIR` | `.omc/qa` | screenshot root inside a worktree |
 | `CARRY_LABELS` | `client-requested` | issue labels copied onto PRs |
