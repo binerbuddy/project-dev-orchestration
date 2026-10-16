@@ -68,11 +68,13 @@ a cause or a fix in one report, and unrelated items in separate calls. The human
 `<!-- ux-qc-checklist -->` and headed `## QC Checklist`: a GitHub task list of concrete steps in the running app. Name
 data by project name and UI path, never by a localhost or host link, port or id. When the seed data doesn't cover a
 case, link a fixture published with `pdo qc-fixture-push` to the never-merged `qc-fixtures` branch. End with the QC
-commands block. Update the comment in place; never post a second one.
+handoff block (and the profile's §Project extras QC commands, if any). Update the comment in place; never post a
+second one.
 
 <!-- headless variant (no UI): -->
 **QC Checklist rule.** Every PR that changes behaviour gets one PR comment starting `<!-- ux-qc-checklist -->` and
 headed `## QC Checklist`: a GitHub task list of QC cases, each named by its input (a fixture input file or a request
 to replay, published with `pdo qc-fixture-push` to the never-merged `qc-fixtures` branch) with the expected output and
 the command that checks it (profile §QC data), plus the evidence you already gathered. No host links, ports or ids.
-End with the QC commands block. Update the comment in place; never post a second one.
+End with the QC handoff block (and the profile's §Project extras QC commands, if any). Update the comment in place;
+never post a second one.

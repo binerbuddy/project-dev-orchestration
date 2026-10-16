@@ -52,7 +52,7 @@ You can also type into any agent's workspace directly, or reach it through Remot
 3. **The agent explores, plans, builds, gets a review, and opens a PR.** The PR gets the P-label of its
    issue. If the issue turns out to be already fixed, it says so, labels it `likely-fixed`, and stops.
 4. **It labels the PR `ready for QC`** and posts a QC checklist, with test data when needed (published
-   with `qc-fixture-push`) and the PR-comment commands. About 5 minutes later the agent **hibernates**: its
+   with `qc-fixture-push`) and how to give feedback and pass. About 5 minutes later the agent **hibernates**: its
    workspace closes, its memory is freed, and its session is saved.
 5. **You (or a remote reviewer) QC it.** Feedback wakes the same agent with its full context; it fixes,
    pushes and re-labels.
@@ -68,10 +68,14 @@ at UX sign-offs, never design docs.
 the shared QC worktree through your project's `QC_HOOK`. Type your findings in plain words; they go to the
 PR's agent and get posted on the PR. Say `pass` when it's good.
 
-**From a browser:** a reviewer comments on the PR. `QC: <findings or answers>` goes to the PR's agent,
-which replies on the PR, and `Claude, QC pass` marks QC complete (the watcher swaps the labels). Neither needs a
-preview service. If your project runs a hosted preview service, its spin-up and tear-down triggers are in the
-repo profile's "QC preview" section.
+**From a browser:** a reviewer submits a PR review with **Request changes**. The watcher hands it to the
+PR's agent, which replies on the PR. To pass, add the `QC complete - ready to review` label (and remove
+`ready for QC`): the watcher sees the label and the agent wraps up. GitHub won't let a PR's author request
+changes on their own PR, so as the author give feedback in the agent's session or through `/project-qc-review`.
+
+**Your project's extras:** comment commands, a hosted preview service or other conventions of your own go in
+the repo profile's "Project extras" section. A `WATCH_EVENT_HOOK` in the project env can turn them into
+watcher events (see [design.md](design.md#hooks)).
 
 **A repo with no UI** (an engine, a library): the checklist names fixture inputs and their expected outputs, with
 the command that checks each; you QC by running them or by reading the evidence the agent put in the PR.

@@ -75,27 +75,21 @@ each, plus any evidence the agent already gathered. <!-- profile §QC data -->
   <file>`, then compare with the expected output in the checklist">.
 - **Test data:** the inputs live on the never-merged `qc-fixtures` branch; the checklist links each one.
 [end if]
-- **Give feedback** with a PR comment that starts `QC: ` followed by your findings or answers. Where the team runs
-  the orchestrator, the PR's agent gets it and replies on the PR; otherwise point the agent that built the PR at it.
-- **Pass it:** <where the team runs the orchestrator (full mode): "a comment that starts `Claude, QC pass` (it swaps
-  `<QC-ready label>` for `<QC-done label>`)"; otherwise: "apply the `<QC-done label>` label yourself (only a human
-  does)">. Neither needs a preview service. <!-- env LABEL_QC_READY, LABEL_QC_DONE -->
+- **Give feedback:** where the team runs the orchestrator (full mode), submit a GitHub PR review with
+  **Request changes** and your findings or answers (review comments on lines are fine; the summary is what the agent
+  reads first). The PR's agent gets it and replies on the PR. If you opened the PR yourself, GitHub won't let you
+  request changes on it: tell the agent in its session instead. Without an orchestrator, point the agent that built
+  the PR at your review.
+- **Pass it:** add the `<QC-done label>` label (and remove `<QC-ready label>`); only a human does. The agent then
+  wraps the PR up for review. <!-- env LABEL_QC_READY, LABEL_QC_DONE -->
 [if full mode and the env sets QC_HOOK]
 - **QC servers on the manager's machine:** the manager can start this PR's QC servers with `/project-qc-review
   <PR#>`; ask them in the PR if you want that.
 [end if]
 
-[if the profile's §QC preview describes a service]
-- **Preview in the browser, with nothing installed:** two more comment triggers start and stop a hosted preview.
-  `QC:` and `Claude, QC pass` work as above.
-
-  | Comment (must start the comment) | What happens |
-  |---|---|
-  | `<start trigger, e.g. Claude, spin up QC>` | builds this PR (about <build time>) and replies with the link |
-  | `<stop trigger, e.g. Claude, tear down>` | stops the preview (idle ones stop after <idle timeout>) |
-
-  Preview link: `<link pattern>`. Log in as <preview login>. Only repo owners, members and collaborators can
-  trigger it. <!-- profile §QC preview -->
+[if the profile has a §Project extras section]
+- **This project's extras:** <profile §Project extras, condensed: each command's exact text, who may use it and
+  what it does; copy any `### QC commands` table as is, with its links and login>. <!-- profile §Project extras -->
 [end if]
 
 ## Changelog

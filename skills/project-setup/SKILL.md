@@ -85,8 +85,8 @@ drifted). On a re-run this report is the main output; the later steps act only o
 
 Start from this plugin's `templates/project-profile.md` (`../../templates/project-profile.md` from this skill's
 directory). **Keep the template's `##` headings exactly** (`Identity`, `Layout`, `Build & checks`, `Tests`,
-`Dev servers`, `QC data`, `QC preview`, `Changelog`, `Review roles`, `Docs`, `Conventions`, `Do not`); the lifecycle
-skills cite them as `§<Section>`. Drop the template's guidance comment and the commented examples, and replace each
+`Dev servers`, `QC data`, `Changelog`, `Review roles`, `Docs`, `Conventions`, `Project extras`, `Do not`; `Project extras`
+is optional and is deleted when empty); the lifecycle skills cite them as `§<Section>`. Drop the template's guidance comment and the commented examples, and replace each
 guidance paragraph with facts.
 
 - Fill from detection: §Identity (org, primary repo, issue types or "none: user-owned repo"), §Layout (bare root or
@@ -99,7 +99,11 @@ guidance paragraph with facts.
     the fixture format and extension, how to export and import one, any size limit (see step 5). Headless: what a
     QC case is (an input file or request plus its expected output), the fixture format, and the command a human
     runs to check one;
-  - **§QC preview:** is there a remote preview service (triggers, link pattern, login), or "None";
+  - **§Project extras:** does the project have conventions of its own on top of the engine's label/review QC
+    handoff that humans or agents must know: PR-comment commands handled by a service or a `WATCH_EVENT_HOOK`, a
+    hosted preview (how to start and stop it, link pattern, login), chat or bot commands, extra QC steps? Record
+    each with its exact trigger text; QC commands go under `### QC commands` as a table (it ends every QC checklist).
+    None: delete the section;
   - **§Review roles:** extra reviewer roles (a UI designer for the project's component library, a data reviewer for
     migrations), or none;
   - **§Identity related repos:** other repos agents may need to search or file against, and when each is in scope;
@@ -226,7 +230,7 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # FIXTURE_EXT=".<ext>"          # from step 5: the primary repo's fixture format
 # declare -A FIXTURE_EXT_BY_REPO=([<other repo>]=".<ext>")   # repos with another format
 # QC_PORTS="<ports>"            # the human's reserved QC ports, from §Dev servers
-# QC_PASS_HANDLER=external      # only if another service acts on "Claude, QC pass" (default: the watcher)
+# WATCH_EVENT_HOOK="hooks/<name>"  # only for project events of its own (e.g. §Project extras comment commands)
 # MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
 # PORTFOLIO_PRIORITY=3          # portfolio manager (pdo fleet): 1 = highest
 # RESOURCE_PROFILE=medium       # light | medium | heavy
@@ -271,7 +275,7 @@ recommend skipping it.
 ## 7. The human guide
 
 The page the repo's collaborating humans read: which labels and routes to use, how to request work, how QC works
-here (comment triggers, preview login, fixtures), the changelog rule, who the manager is and where to ask. Agents
+here (the label/review handoff, fixtures, and any §Project extras), the changelog rule, who the manager is and where to ask. Agents
 check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and stay current.
 
 - **Location.** Choose the docs dir, then check it, and say in the summary and the PR body which dir was chosen and
@@ -297,7 +301,7 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
   `guide-version:` line). Because every guide fact comes from a profile line, an answer given on an earlier run
   renders the same and shows no drift. Text in the committed guide that no profile line produces is the human's:
   propose moving it into §Identity's `Human guide notes` (or under `## Local notes`), and keep it. Report each other
-  difference as drifted, with the reason where it shows (a renamed label, a new QC preview, a changed base branch, a
+  difference as drifted, with the reason where it shows (a renamed label, a new §Project extras command, a changed base branch, a
   template rule the file lacks). Show the diff, apply on the human's yes, and when anything above `## Local notes`
   changes, add 1 to `guide-version` (that makes agents ask collaborators to re-read it once). Never touch
   `## Local notes` or what's under it, and never drop text the human added elsewhere without showing it in the diff.

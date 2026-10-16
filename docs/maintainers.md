@@ -9,11 +9,11 @@ Open your agent in the repo and run `/project-setup`. In **full** mode (the defa
 PATH) it also registers the repo with the engine; `/project-setup collaborator` touches the repo only. It:
 
 - detects the layout, origin, default branch and the build, typecheck and test commands;
-- drafts `.agents/project-profile.md`, the facts every agent reads (build commands, dev servers and ports, QC data
-  and preview, changelog, conventions, prohibitions);
+- drafts `.agents/project-profile.md`, the facts every agent reads (build commands, dev servers and ports, QC data,
+  changelog, conventions, project extras, prohibitions);
 - adds the "How work flows here" section to `AGENTS.md`;
 - writes the human guide, `docs/agent-workflow.md`, for your collaborators: which labels and routes to use, how to
-  request work, QC comments and the preview login, fixtures, the changelog rule, who the manager is and where to
+  request work, the QC handoff and any project-specific QC commands, fixtures, the changelog rule, who the manager is and where to
   ask; and offers a link to it from your README;
 - adds `.agents/local/` (per-clone agent state) to `.gitignore`;
 - creates the GitHub labels the pipeline uses (never deletes or renames one);

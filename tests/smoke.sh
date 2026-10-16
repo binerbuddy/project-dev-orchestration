@@ -36,7 +36,6 @@ case "$*" in
   "auth token -u "*) echo "token-for-${@: -1}" ;;
   "auth git-credential"*) cat >/dev/null; printf 'protocol=https\nhost=github.com\nusername=x-access-token\npassword=%s\n' "${GH_TOKEN:-none}" ;;
   "pr edit"*|"pr comment"*) ;;
-  "api repos/acme/widget/issues/comments?since="*) [[ -n "${SMOKE_COMMENTS:-}" ]] && cat "$SMOKE_COMMENTS" ;;
   "api graphql"*"query board"*)
     echo '{"data":{"organization":{"projectV2":{"id":"PVT_b7","number":7,"title":"Acme Board","field":{"id":"PVTSSF_s","options":[{"id":"o1","name":"Backlog"},{"id":"o2","name":"Claude Work This"}]}}}}}' ;;
   "api repos/acme/widget/issues/12") cat "$SMOKE_DIR/issue12.json" ;;
@@ -393,22 +392,77 @@ jq '.generated_at -= 3 * 3600' "$FS/fleet-advice.json" >"$FS/x.json" && mv "$FS/
 out="$(qa SMOKE_FLEET_ADVICE=honour)"
 eq "queue ignores stale advice" "$(jq -c '[.fleet, .max_active, ([.ranked[].auto_spawn] | all)]' <<<"$out")" '[null,3,true]'
 
-# --- watch: a "Claude, QC pass" comment swaps the QC labels (no preview service needed) ---
-jq -n '{data: {repository: {open: {nodes: [{number: 5, state: "OPEN", isDraft: false, url: "https://github.com/acme/widget/pull/5",
-  headRefName: "feat/5", baseRefName: "main", mergeable: "MERGEABLE", labels: {nodes: [{name: "ready for QC"}]}}]}, done: {nodes: []}}}}' >"$T/prs.json"
-{ jq -nc '{id: 901, body: "Claude, QC pass", html_url: "https://github.com/acme/widget/pull/5#c901", issue_url: "https://api.github.com/repos/acme/widget/issues/5", user: "boss", assoc: "OWNER"}'
-  jq -nc '{id: 902, body: "claude, qc pass", html_url: "u", issue_url: "https://api.github.com/repos/acme/widget/issues/5", user: "drive-by", assoc: "NONE"}'
-  jq -nc '{id: 903, body: "Claude, QC pass", html_url: "u", issue_url: "https://api.github.com/repos/acme/widget/issues/9", user: "boss", assoc: "MEMBER"}'; } >"$T/comments.jsonl"
-WS="$T/watch-state"; mkdir -p "$WS"
-out="$(PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" SMOKE_COMMENTS="$T/comments.jsonl" "$BIN/watch" --project acme 2>/dev/null)"
-check "watch: QC pass swapped the labels" grep -q "gh pr edit 5 -R acme/widget --remove-label ready for QC --add-label QC complete - ready to review" "$SMOKE_LOG"
-check "watch: QC pass replied on the PR" grep -q "gh pr comment 5 -R acme/widget --body QC pass recorded" "$SMOKE_LOG"
-eq "watch: QC pass events (untrusted ignored, unknown PR reported)" "$(jq -c '[.events[] | select(.type | startswith("qc_pass")) | "\(.type):\(.pr)"]' <<<"$out" 2>/dev/null)" '["qc_pass_recorded:widget#5","qc_pass_ignored:widget#9"]'
-: >"$SMOKE_LOG"
-PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" SMOKE_COMMENTS="$T/comments.jsonl" "$BIN/watch" --project acme >/dev/null 2>&1
-check "watch: a QC pass comment is acted on once" bash -c "! grep -q 'gh pr edit' '$SMOKE_LOG'"
-out="$(PDO_STATE_DIR="$T/watch-peek" SMOKE_PRS="$T/prs.json" SMOKE_COMMENTS="$T/comments.jsonl" "$BIN/watch" --project acme --peek 2>/dev/null)"
-check "watch --peek never applies a QC pass" bash -c "! grep -q 'gh pr edit' '$SMOKE_LOG'"
+# --- watch: label-based QC pass, review-based feedback, WATCH_EVENT_HOOK ---
+NOW_ISO="$(date -u +%FT%TZ)"; OLD_ISO="$(date -u -d '-2 hours' +%FT%TZ)"
+mkprs() {  # mkprs <labels json array> <reviews json array>
+  jq -n --argjson l "$1" --argjson r "$2" '{data: {repository: {open: {nodes: [{number: 5, state: "OPEN", isDraft: false,
+    url: "https://github.com/acme/widget/pull/5", headRefName: "feat/5", headRefOid: "abc123", baseRefName: "main",
+    mergeable: "MERGEABLE", labels: {nodes: ($l | map({name: .}))}, reviews: {nodes: $r}}]}, done: {nodes: []}}}}'
+}
+REVS="$(jq -nc --arg now "$NOW_ISO" --arg old "$OLD_ISO" '[
+  {databaseId: 801, url: "https://github.com/acme/widget/pull/5#r801", body: "Button is misaligned", submittedAt: $now, authorAssociation: "MEMBER", author: {login: "boss"}},
+  {databaseId: 802, url: "u", body: "drive-by", submittedAt: $now, authorAssociation: "NONE", author: {login: "rando"}},
+  {databaseId: 803, url: "u", body: "", submittedAt: $now, authorAssociation: "OWNER", author: {login: "boss"}},
+  {databaseId: 800, url: "u", body: "old review", submittedAt: $old, authorAssociation: "OWNER", author: {login: "boss"}}]')"
+mkprs '["ready for QC"]' "$REVS" >"$T/prs.json"
+WS="$T/watch-state"; mkdir -p "$WS/agents"
+# a hibernated agent on widget#5 (branch feat/5) is tracked without herdr, so qc_complete can fire for it
+jq -n '{repo: "widget", number: 5, name: "widget-5 thing", branch: "feat/5", hibernated_at: 1, session_id: "s5"}' >"$WS/agents/widget-5.json"
+W() { PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" "$BIN/watch" --project acme "$@" 2>"$T/watch.err"; }
+W >/dev/null   # first run: baseline
+# rewind the review cursor so the reviews above count as new; the old one stays before it
+jq --arg s "$(date -u -d '-1 hour' +%FT%TZ)" '.review_since = $s | .review_seen = []' "$WS/acme-watch.json" >"$WS/x" && mv "$WS/x" "$WS/acme-watch.json"
+out="$(W)"
+eq "watch: trusted CHANGES_REQUESTED reviews become qc_feedback" "$(jq -c '[.events[] | select(.type == "qc_feedback") | "\(.repo)#\(.number):\(.id):\(.author):\(.source)"]' <<<"$out" 2>/dev/null)" '["widget#5:801:boss:review","widget#5:803:boss:review"]'
+has "watch: an empty review body points at the inline comments" "$(jq -r '.events[] | select(.id == 803) | .body' <<<"$out" 2>/dev/null)" "inline comments"
+eq "watch: no comment polling or label edits left in the engine" "$(grep -c 'issues/comments\|pr edit\|pr comment' "$SMOKE_LOG")" 0
+out="$(W)"
+eq "watch: a review is raised once" "$(jq -c '[.events[] | select(.type == "qc_feedback")] | length' <<<"$out" 2>/dev/null)" 0
+eq "watch: waiting on QC while 'ready for QC'" "$(jq -c '[.waiting_on_you[] | select(.agent == "widget#5") | .why]' <<<"$out" 2>/dev/null)" '["QC"]'
+# the human's pass: add 'QC complete - ready to review' (here without removing 'ready for QC')
+mkprs '["ready for QC","QC complete - ready to review"]' '[]' >"$T/prs.json"
+out="$(W)"
+eq "watch: the QC done label is the pass (qc_complete)" "$(jq -c '[.events[] | select(.type == "qc_complete") | .agent]' <<<"$out" 2>/dev/null)" '["widget#5"]'
+eq "watch: a passed PR no longer waits on QC" "$(jq -c '[.waiting_on_you[] | select(.agent == "widget#5")] | length' <<<"$out" 2>/dev/null)" 0
+out="$(W)"
+eq "watch: qc_complete fires once" "$(jq -c '[.events[] | select(.type == "qc_complete")] | length' <<<"$out" 2>/dev/null)" 0
+
+# WATCH_EVENT_HOOK: context in, events out, merged; quiet ones ride along
+cat >"$T/hook-ok" <<'EOF'
+#!/usr/bin/env bash
+cat >"$SMOKE_DIR/hook-ctx.json"
+echo "peek=${PDO_WATCH_PEEK:-}" >>"$SMOKE_LOG"
+echo '[{"type":"qc_feedback","repo":"widget","number":5,"id":77,"author":"boss","url":"u","body":"from the hook"},{"type":"hook_note","quiet":true,"detail":"x"},"junk",{"notype":1}]'
+EOF
+printf '#!/usr/bin/env bash\necho nope >&2; exit 3\n' >"$T/hook-fail"
+printf '#!/usr/bin/env bash\nsleep 5; echo []\n' >"$T/hook-slow"
+printf '#!/usr/bin/env bash\necho "not json"\n' >"$T/hook-bad"
+chmod +x "$T/hook-ok" "$T/hook-fail" "$T/hook-slow" "$T/hook-bad"
+jq '.event_since = null | .qc_since = "2026-01-02T03:04:05Z"' "$WS/acme-watch.json" >"$WS/x" && mv "$WS/x" "$WS/acme-watch.json"
+LEGACY="$(jq -r .qc_since "$WS/acme-watch.json")"
+out="$(WATCH_EVENT_HOOK="$T/hook-ok" W)"; rc=$?
+eq "watch hook: exit 0" "$rc" 0
+eq "watch hook: wake events merged" "$(jq -c '[.events[] | select(.type == "qc_feedback") | .id]' <<<"$out" 2>/dev/null)" '[77]'
+eq "watch hook: quiet events ride along" "$(jq -c '[.events[] | select(.quiet == true) | .type]' <<<"$out" 2>/dev/null)" '["hook_note"]'
+has "watch hook: malformed events dropped with a warning" "$(cat "$T/watch.err")" "dropped 2 malformed"
+eq "watch hook: context keys" "$(jq -c '[.org, .repos, .trusted_associations, .labels.qc_ready, .peek]' "$T/hook-ctx.json" 2>/dev/null)" '["acme",["widget"],["COLLABORATOR","MEMBER","OWNER"],"ready for QC",false]'
+eq "watch hook: context PR index has labels and heads" "$(jq -c '[.prs[] | "\(.repo)#\(.number):\(.head):\(.head_sha)"]' "$T/hook-ctx.json" 2>/dev/null)" '["widget#5:feat/5:abc123"]'
+has "watch hook: the legacy cursor seeds since (clamped to 7 days)" "$(jq -r .since "$T/hook-ctx.json")" "$(date -u -d '-7 days' +%F)"
+SINCE1="$(jq -r .event_since "$WS/acme-watch.json")"
+check "watch hook: a clean run advances event_since" test "$SINCE1" != null -a "$SINCE1" != "$LEGACY"
+out="$(WATCH_EVENT_HOOK="$T/hook-ok" PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" "$BIN/watch" --project acme --peek 2>/dev/null)"
+eq "watch hook: --peek tells the hook" "$(jq -c .peek "$T/hook-ctx.json")" true
+check "watch hook: --peek sets PDO_WATCH_PEEK" grep -q "peek=1" "$SMOKE_LOG"
+for h in fail slow bad; do
+  out="$(WATCH_EVENT_HOOK="$T/hook-$h" WATCH_EVENT_HOOK_TIMEOUT=1 W)"; rc=$?
+  eq "watch hook ($h): no crash" "$rc" 0
+  eq "watch hook ($h): event_hook_failed (quiet)" "$(jq -c '[.events[] | .type]' <<<"$out" 2>/dev/null)" '["event_hook_failed"]'
+  eq "watch hook ($h): event_since kept" "$(jq -r .event_since "$WS/acme-watch.json")" "$SINCE1"
+done
+has "watch hook: failures warn on stderr" "$(cat "$T/watch.err")" "WATCH_EVENT_HOOK"
+out="$(WATCH_EVENT_HOOK="$T/missing-hook" W)"
+eq "watch hook: a missing hook is a warning" "$(jq -c '[.events[] | .type]' <<<"$out" 2>/dev/null)" '["event_hook_failed"]'
+eq "project-env prints WATCH_EVENT_HOOK" "$(WATCH_EVENT_HOOK=hooks/x "$BIN/project-env" --project acme WATCH_EVENT_HOOK)" "$T/cfg-a/hooks/x"
 
 # --- pdo dispatcher ---
 has "pdo help lists commands" "$("$BIN/pdo" help)" "intake-submit"

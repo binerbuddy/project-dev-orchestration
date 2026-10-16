@@ -117,20 +117,6 @@ Headless example (a pricing engine):
   `npm run replay -- <file>` and compare against the expected output in the checklist.
 -->
 
-## QC preview
-
-The optional remote preview service that builds a PR for browser QC without a local setup. Give the PR comment
-triggers that start and stop a preview, the preview link pattern, the login to use, roughly how long a build takes,
-and the idle timeout. These fill the QC commands block at the end of every QC checklist. If there is no preview
-service, say "None"; the checklist then keeps only the `QC:` and `Claude, QC pass` rows (the orchestrator's watcher
-handles both, preview or not; only spin-up and tear-down need a preview service).
-
-<!-- Example (Acme):
-- Start: `Claude, spin up QC` (about 5 min). Stop: `Claude, tear down`. Idle previews stop after 4 h.
-- Link pattern: `https://pr-<n>.preview.example.com`.
-- Login: dev auth, as **demo**.
--->
-
 ## Changelog
 
 How every PR records its change for release notes: changesets, a CHANGELOG file, PR labels, or nothing. Give the exact
@@ -189,6 +175,24 @@ that show each pattern best.
 - Write endpoints are `POST /<resource>/update`, never PUT/PATCH.
 - Mapping profiles are registered explicitly in `server/src/mapping/index.ts`; no auto-discovery.
 - Dialogs use the shared `ConfirmDialog` (`web/src/shared/confirm-dialog.tsx`).
+-->
+
+## Project extras
+
+Optional. Conventions of this project that the engine doesn't define and that humans or agents need to use: PR
+comment commands that a project service or the project's `WATCH_EVENT_HOOK` acts on, a hosted preview service (how
+to start and stop one, its link pattern, login, build time and idle timeout), chat or bot commands, extra QC steps.
+Give each one's exact trigger text, who may use it, and what happens. When this section defines QC commands, put
+them under a `### QC commands` heading: every QC checklist ends with that table (the QC commands block). Delete
+the section if there is nothing; the engine's QC handoff (labels and PR reviews) works without it.
+
+<!-- Example (Acme, with a preview service and comment commands handled by its WATCH_EVENT_HOOK):
+### QC commands
+| Comment | What happens |
+|---|---|
+| `Acme, preview` | Builds this PR into a preview (about 5 min) and replies with the link, `https://pr-<n>.preview.example.com`. Log in as **demo**. |
+| `Acme, stop preview` | Stops the preview. Idle previews stop after 4 h. |
+Only repo owners, members and collaborators can trigger these.
 -->
 
 ## Do not

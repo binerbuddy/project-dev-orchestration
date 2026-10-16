@@ -1,4 +1,4 @@
-# QC: checklist, fixtures and the comment protocol
+# QC checklist, fixtures and the handoff
 
 ## The QC checklist comment
 
@@ -14,13 +14,13 @@ Every PR that reaches `ready for QC` carries one QC checklist comment, posted by
   so): QC means checking outputs. Each item is a case named by its input (a fixture input file, a
   request to replay) with the expected output and the command that checks it, plus the evidence
   already gathered (actual output, a diff against the base branch).
-- **Project-name rule: name data, never link to it.** The human may QC on localhost, a remote
+- **Project-name rule: name data, never link to it.** The human may QC on localhost, a hosted
   preview, or any other host, so the checklist never contains a localhost or host URL, a port, or a
   database id. Refer to data the way the app names it (e.g. a project, workspace or dataset name)
   plus the UI path: "open Projects → *Acme Sample* → Map", or "import the fixture, then open the
   project *QC 412 sorted exports*". Name the exact item, and the records inside it where it matters.
-- The checklist ends with the comment-protocol table below: the `QC:` and `Claude, QC pass` rows
-  always, the spin-up and tear-down rows only when a remote preview exists (profile `## QC preview`).
+- The checklist ends with the QC handoff block (how to give feedback and how to pass, below), then the
+  profile's `## Project extras` QC commands table if it has one.
 
 To edit the comment later, find it by its marker, re-read its body, and confirm the marker before
 patching: an id captured earlier may now belong to a different comment.
@@ -42,25 +42,29 @@ If checking the change needs specific data the QC seed lacks, don't make the hum
 
 Skip all of this when the seed already covers the checklist.
 
-## Comment protocol
+## The handoff: labels and reviews
 
-Trusted commenters (repo OWNER, MEMBER or COLLABORATOR) drive QC from PR comments. A comment must
-**start with** one of these. `QC:` and `Claude, QC pass` work wherever the orchestrator runs
-(its watcher handles them; no preview service needed). The spin-up and tear-down triggers exist
-only where the profile's `## QC preview` describes a preview service.
+The engine's QC handoff uses only GitHub labels and PR reviews, so it works for any project, with or
+without extra tooling. Label names are the defaults; the project env may rename them
+(`LABEL_QC_READY`, `LABEL_QC_DONE`).
 
-| Comment | Needs | What happens |
+| Step | Who | How |
 |---|---|---|
-| `QC: <findings or answers>` | the orchestrator | Feedback, or answers to questions, for the agent that built this PR. The engine's watcher delivers it; the agent replies **on the PR**. |
-| `Claude, QC pass` | the orchestrator | Marks QC complete (`ready for QC` → `QC complete - ready to review`); the watcher swaps the labels and replies. |
-| `Claude, spin up QC` | a preview service | The preview service builds this PR into a preview and replies with the link and login (both per the profile's `## QC preview`). Takes a few minutes. |
-| `Claude, tear down` | a preview service | Stops the preview and frees its slot. Idle previews also stop on their own after the profile's idle limit. |
+| Ready | the agent | labels the PR `ready for QC` after review and triage, posts the checklist, stops. The PR now waits on the human. |
+| Feedback | the human | in the agent's session (local QC), or a GitHub PR review with **Request changes** (state `CHANGES_REQUESTED`). The orchestrator's watcher raises each new review from a trusted author (repo OWNER, MEMBER or COLLABORATOR) as `qc_feedback`, and the agent is resumed with it. |
+| Pass | the human | adds `QC complete - ready to review` (and removes `ready for QC`). The watcher's `qc_complete` fires on the label and the agent wraps up. Only a human applies it. |
 
-Agents answering remote QC: the reporter reads GitHub, not your session. Reply on the PR, ask any
-question there with an `@<author>` mention, and wait for their next `QC:` comment. After fixing:
+GitHub won't let a PR's author request changes on their own PR: an author gives feedback in the
+agent's session (or via `/project-qc-review` on an engine install) instead.
+
+Agents answering remote QC: the reviewer reads GitHub, not your session. Reply on the PR, ask any
+question there with an `@<author>` mention, and wait for their next review or reply. After fixing:
 push, reply on the PR with what changed, re-apply `ready for QC`.
 
-Projects without a preview service keep the `QC:` and `Claude, QC pass` rows; the human QCs
-locally (`/project-qc-review` on an engine install), from the evidence in the PR (headless repos),
-or however the profile describes. With no orchestrator at all, `QC:` comments wait until someone
-points the PR's agent at them, and a human applies `QC complete - ready to review` by hand.
+**Project extras.** A project may add its own conventions on top, for example PR-comment commands
+for a hosted preview service, or comment-based feedback, implemented by its `WATCH_EVENT_HOOK` or by a
+service of its own. They are documented in the profile's `## Project extras`; follow them there. The
+engine itself never reads PR comments.
+
+With no orchestrator at all, reviews wait until someone points the PR's agent at them, and a human
+applies `QC complete - ready to review` by hand.

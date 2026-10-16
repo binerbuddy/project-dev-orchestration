@@ -27,8 +27,9 @@ It ships as one plugin with two parts:
 4. **Agent.** One per issue, in its own worktree. It checks whether the work is already done, plans, builds, gets a
    multi-agent review, and asks its human the questions only a human can answer.
 5. **PR.** It opens a PR that closes the issue, labels it `ready for QC`, and posts one **QC Checklist** comment.
-6. **QC.** A human works the checklist, locally or in a hosted preview, and answers with PR comments. Feedback goes
-   back to the same agent, which fixes and re-labels. A pass sets `QC complete - ready to review`.
+6. **QC.** A human works the checklist and answers in the agent's session or with a PR review requesting changes.
+   Feedback goes back to the same agent, which fixes and re-labels. The human passes QC by adding the
+   `QC complete - ready to review` label.
 7. **Merge.** A human merges. Agents never do.
 
 ## Guides

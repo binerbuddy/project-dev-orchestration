@@ -19,10 +19,10 @@ No. Humans merge, always.
 On the repo's never-merged `qc-fixtures` branch, linked from the PR's QC checklist. Never on the PR branch: it would
 merge with the PR.
 
-**I don't see a preview link when I comment `Claude, spin up QC`.**
-That only works where the repo runs a QC preview service; its human guide says whether it does. Without one, QC
-locally as the guide describes and leave `QC:` comments; `Claude, QC pass` still works where the team runs the
-orchestrator.
+**How do I give QC feedback or pass QC from the browser?**
+Feedback: a PR review with **Request changes** (on a PR you opened yourself GitHub won't allow that; tell the agent
+in its session). Pass: add the `QC complete - ready to review` label. Anything beyond that, such as a hosted preview
+or comment commands, is specific to the repo; its human guide lists them.
 
 **My agent found a bug unrelated to its task. Should it fix it?**
 No. It files it (a `needs-triage` issue, or a report to the intake agent where there is one) and stays on task.

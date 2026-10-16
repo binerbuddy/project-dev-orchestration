@@ -38,7 +38,7 @@ Per event, act as `references/events.md` says. Summary: `urgent` → spawn now (
 the build; `pr_conflict` → nothing (step 2b); `pr_cap_reached` → report once; `qc_feedback` /
 `qc_complete` → resume the owning agent; `pr_merged` → check the issue and card; `stalled` → read the
 tail, nudge once or report; `agent_gone` → report; `usage_ceiling` → stop spawning, report;
-`closed_out` / `hibernated` / `hibernate_failed` / `qc_pass_recorded` / `qc_pass_ignored` → one informational
+`closed_out` / `hibernated` / `hibernate_failed` / `event_hook_failed` / hook events marked quiet → one informational
 line; `first_run` / `heartbeat` →
 continue.
 

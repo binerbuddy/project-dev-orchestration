@@ -28,14 +28,21 @@ It also reports weekly/5-hour usage from the oh-my-claudecode HUD cache, and the
 
 Events are transitions against the previous snapshot (state file), so each fires once:
   slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, new_claude_work_this,
-  usage_ceiling, heartbeat. Quiet events (hibernated, hibernate_failed, qc_pass_recorded,
-  qc_pass_ignored) ride along with the next wake and never end --until-event on their own.
+  usage_ceiling, heartbeat. Quiet events (hibernated, closed_out, hibernate_failed,
+  event_hook_failed, and any hook event marked "quiet") ride along with the next wake and never
+  end --until-event on their own.
 
-QC pass: unless --peek, a trusted PR comment starting "Claude, QC pass" on a managed repo's open
-PR labelled 'ready for QC' swaps that label for 'QC complete - ready to review' and replies on the
-PR (quiet event qc_pass_recorded; qc_complete then fires on the next snapshot). No preview service
-is needed. QC_PASS_HANDLER=external in the project env leaves these comments to another service;
-QC_PASS_EXTERNAL_REPOS="<repo> ..." does that for just those repos.
+QC handoff is label- and review-based. 'ready for QC' (LABEL_QC_READY) means the PR waits on the
+human; the human adding 'QC complete - ready to review' (LABEL_QC_DONE) is the pass, and fires
+qc_complete. A GitHub PR review with state CHANGES_REQUESTED from a trusted author (association
+OWNER, MEMBER or COLLABORATOR) on an open PR becomes a qc_feedback event.
+
+WATCH_EVENT_HOOK (project env): an executable run on each snapshot with a JSON context on stdin
+(org, repos, since, the trusted associations, the open-PR index). It prints a JSON array of events
+in the shapes above; they are merged as if the watcher had found them. It is timed out
+(WATCH_EVENT_HOOK_TIMEOUT, default 120 s); a failure is a warning and a quiet event_hook_failed,
+never a crash. With --peek the context says "peek": true and the hook must change nothing.
+Contract: docs/design.md, "Watcher event hook".
 
 PR priority: unless --peek, every queue refresh also runs bin/pr-priority, so open PRs carry
 the highest P-label of the issues they close (it never downgrades).
@@ -69,7 +76,10 @@ WEEKLY_CEILING = 80   # keep 20% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
 HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'
-QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed", "qc_pass_recorded", "qc_pass_ignored"}  # reported on the next wake; never wake by themselves
+QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed", "event_hook_failed"}  # reported on the next wake; never wake by themselves
+SEEN_KEEP = 500  # review ids remembered for dedupe (ids only grow, so the newest are kept)
+SINCE_MAX_AGE_SEC = 7 * 86400  # a carried "since" older than this is clamped (bounds the hook's first fetch)
+HOOK_MAX_EVENTS = 200
 WAIT_MIN = 10  # a non-parked agent idle this long, with no question, is probably waiting on a human gate
 QUEUE_EVERY_SEC = 300  # bin/queue costs ~7 API calls; don't run it every poll
 QC_READY, QC_DONE = "ready for QC", "QC complete - ready to review"  # LABEL_QC_READY / LABEL_QC_DONE
@@ -283,7 +293,7 @@ def auto_hibernate(project, ag):
         # finished: merged, or QC passed and the agent printed its wrap-up marker
         closed_out = (state == "MERGED" or (QC_DONE in labels and a.get("wrapup_done"))
                       or (a.get("issue_state") == "closed" and state != "OPEN"))  # likely-fixed / won't-fix
-        parked_qc = state == "OPEN" and QC_READY in labels
+        parked_qc = state == "OPEN" and QC_READY in labels and QC_DONE not in labels  # both labels = passed
         if not (closed_out or parked_qc):
             continue
         cmd = [os.path.join(HERE, "bin", "hibernate"), a["repo"], str(a["number"]), "--project", project]
@@ -318,7 +328,7 @@ def waiting_on_you(ag):
             why = "UX gate"
         elif a["question_pending"]:
             why = "question"
-        elif QC_READY in labels:
+        elif QC_READY in labels and QC_DONE not in labels:  # a human may add the pass label without removing ready
             why = "QC"
         elif a["likely_fixed"]:
             why = "confirm likely-fixed"
@@ -341,69 +351,111 @@ def waiting_on_you(ag):
     return sorted(out, key=lambda x: (order[x["why"]], -x["waiting_min"]))
 
 
-QC_RE = re.compile(r"^\s*QC:", re.I)
-QC_PASS_RE = re.compile(r"^\s*Claude,?\s+QC pass\b", re.I)
-TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}  # author associations whose reviews (and hook-read comments) count
 
 
-def qc_comments(org, repos, prev):
-    """New trusted PR comments since the last check: ("QC:" feedback, "Claude, QC pass" requests).
-    One repo-wide call per repo; ids dedupe across overlaps."""
-    since = prev.get("qc_since") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
-    seen = set(prev.get("qc_seen", []))
-    found, passes, now = [], [], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    for repo in sorted(repos):
-        out = run(["gh", "api", f"repos/{org}/{repo}/issues/comments?since={since}&per_page=100", "--paginate",
-                   "--jq", '.[] | {id, body, html_url, issue_url, user: .user.login, assoc: .author_association}'])
-        for line in out.splitlines():
-            try:
-                c = json.loads(line)
-            except ValueError:
+def iso(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
+def carried_since(prev, key, now_t):
+    """The previous snapshot's cursor for key, else 10 min ago; never older than SINCE_MAX_AGE_SEC.
+    "event_since" also accepts "qc_since" (the cursor of watchers before 0.5), so an upgrade misses nothing."""
+    since = prev.get(key) or (prev.get("qc_since") if key == "event_since" else None)
+    floor = iso(now_t - SINCE_MAX_AGE_SEC)
+    return max(since, floor) if since else iso(now_t - 600)
+
+
+def review_feedback(prev, now_t):
+    """New CHANGES_REQUESTED reviews from trusted authors on open PRs, read from the PR index
+    (no extra API call). Returns (feedback, since for next time, seen ids)."""
+    since = carried_since(prev, "review_since", now_t)
+    seen = set(prev.get("review_seen", []))
+    found = []
+    for (repo, number), revs in sorted(PR_REVIEWS.items()):
+        for r in revs:
+            rid = r.get("databaseId")
+            if not rid or rid in seen or r.get("authorAssociation") not in TRUSTED:
                 continue
-            body = c["body"] or ""
-            if c["id"] in seen or c["assoc"] not in TRUSTED:
+            if (r.get("submittedAt") or "") < since:
                 continue
-            kind = "feedback" if QC_RE.match(body) else "pass" if QC_PASS_RE.match(body) else None
-            if not kind:
-                continue
-            seen.add(c["id"])
-            (found if kind == "feedback" else passes).append(
-                {"repo": repo, "number": int(c["issue_url"].rsplit("/", 1)[1]), "id": c["id"],
-                 "author": c["user"], "url": c["html_url"], "body": body})
-    return found, passes, now, sorted(seen)[-500:]
+            seen.add(rid)
+            body = (r.get("body") or "").strip() or "(no summary: read the review's inline comments)"
+            found.append({"repo": repo, "number": number, "id": rid, "author": (r.get("author") or {}).get("login"),
+                          "url": r.get("url"), "body": body, "source": "review"})
+    return found, iso(now_t), sorted(seen)[-SEEN_KEEP:]
 
 
-def apply_qc_passes(org, passes):
-    """Swap 'ready for QC' for 'QC complete' on each PR a trusted "Claude, QC pass" names, if it
-    is open and still labelled ready. Returns quiet events."""
-    out = []
-    for c in passes:
-        pr = next((p for (r, _), p in PR_INDEX.items() if r == c["repo"] and p["number"] == c["number"]), None)
-        ref = f"{c['repo']}#{c['number']}"
-        if not pr or pr["state"] != "OPEN" or QC_READY not in pr["labels"] or QC_DONE in pr["labels"]:
-            why = "not an open PR" if not pr or pr["state"] != "OPEN" else \
-                "already QC complete" if QC_DONE in pr["labels"] else f"not labelled '{QC_READY}'"
-            out.append({"type": "qc_pass_ignored", "pr": ref, "author": c["author"], "why": why, "url": c["url"]})
+def hook_context(project, org, repos, since, now, peek):
+    prs = sorted(({"repo": r, "number": p["number"], "url": p["url"], "head": b, "head_sha": p.get("head_sha"),
+                   "base": p.get("base"), "labels": p["labels"], "draft": p.get("draft"), "mergeable": p.get("mergeable")}
+                  for (r, b), p in PR_INDEX.items() if p["state"] == "OPEN"), key=lambda x: (x["repo"], x["number"]))
+    return {"version": 1, "project": project, "org": org, "repos": sorted(repos), "since": since, "now": now,
+            "peek": peek, "trusted_associations": sorted(TRUSTED), "state_dir": STATE_DIR,
+            "labels": {"qc_ready": QC_READY, "qc_done": QC_DONE}, "prs": prs}
+
+
+def event_hook(project, prev, cur, peek):
+    """Run WATCH_EVENT_HOOK (if set) and return (wake events, quiet events). Sets cur["event_since"]:
+    it advances only when the hook ran cleanly, so a failed or skipped run is retried from the same
+    point next time (hooks dedupe by their own ids)."""
+    hook = CFG.get("watch_event_hook") or ""
+    org, repos = CFG["org"], set(CFG["repo_root"]) - set(CFG["self_managed_repos"])
+    prs_ok = cur["github"]["prs_ok"]
+    now_t = cur.get("polled_at") or time.time()
+    since = carried_since(prev, "event_since", now_t)
+    cur["event_since"] = prev.get("event_since") or prev.get("qc_since")  # carried until a hook consumes it
+    if not hook:
+        return [], []
+
+    def failed(why):
+        print(f"watch: WATCH_EVENT_HOOK {hook}: {why}", file=sys.stderr)
+        return [], [{"type": "event_hook_failed", "hook": hook, "detail": why[:300]}]
+    if not prs_ok:
+        return failed("skipped: the PR index could not be read from GitHub")
+    if not os.access(hook, os.X_OK):
+        return failed("not an executable file")
+    ctx = hook_context(project, org, repos, since, iso(now_t), peek)
+    env = dict(os.environ, PDO_WATCH_PEEK="1" if peek else "")
+    try:
+        r = subprocess.run([hook], input=json.dumps(ctx), capture_output=True, text=True, env=env,
+                           timeout=CFG.get("watch_event_hook_timeout") or 120)
+    except subprocess.TimeoutExpired:
+        return failed(f"timed out after {CFG.get('watch_event_hook_timeout') or 120}s")
+    except OSError as e:
+        return failed(f"could not run: {e}")
+    for line in (r.stderr or "").strip().splitlines()[-5:]:
+        print(f"watch: hook: {line}", file=sys.stderr)
+    if r.returncode != 0:
+        return failed(f"exit {r.returncode}: {(r.stderr or '').strip()[-200:]}")
+    try:
+        out = json.loads(r.stdout or "[]")
+    except ValueError as e:
+        return failed(f"stdout is not JSON: {e}")
+    if not isinstance(out, list):
+        return failed("stdout is not a JSON array")
+    wake, quiet, bad = [], [], 0
+    for e in out[:HOOK_MAX_EVENTS]:
+        if not isinstance(e, dict) or not isinstance(e.get("type"), str) or not e["type"]:
+            bad += 1
             continue
-        r = subprocess.run(["gh", "pr", "edit", str(c["number"]), "-R", f"{org}/{c['repo']}",
-                            "--remove-label", QC_READY, "--add-label", QC_DONE], capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            out.append({"type": "qc_pass_ignored", "pr": ref, "author": c["author"], "url": c["url"],
-                        "why": f"label edit failed: {(r.stderr or '').strip()[:200]}"})
-            continue
-        pr["labels"] = [l for l in pr["labels"] if l != QC_READY] + [QC_DONE]
-        run(["gh", "pr", "comment", str(c["number"]), "-R", f"{org}/{c['repo']}", "--body",
-             f"QC pass recorded (from @{c['author']}): removed `{QC_READY}`, added `{QC_DONE}`."])
-        out.append({"type": "qc_pass_recorded", "pr": ref, "author": c["author"], "url": c["url"]})
-    return out
+        (quiet if e.get("quiet") or e["type"] in QUIET_EVENTS else wake).append(e)
+    if bad or len(out) > HOOK_MAX_EVENTS:
+        print(f"watch: WATCH_EVENT_HOOK {hook}: dropped {bad + max(0, len(out) - HOOK_MAX_EVENTS)} malformed or excess event(s)",
+              file=sys.stderr)
+    if not peek:
+        cur["event_since"] = iso(now_t)
+    return wake, quiet
 
 
 PR_INDEX = {}  # (repo, headRefName) -> pr dict; filled once per snapshot by load_pr_index()
+PR_REVIEWS = {}  # (repo, number) -> recent CHANGES_REQUESTED reviews of open PRs; filled with PR_INDEX
 GRAPHQL_RESERVE = 600  # below this many GraphQL points left, skip optional calls (queue, pr-priority)
 PRS_Q = """query($o:String!,$r:String!){repository(owner:$o,name:$r){
-  open: pullRequests(states:OPEN,first:100){nodes{...f}}
+  open: pullRequests(states:OPEN,first:100){nodes{...f
+    reviews(states:CHANGES_REQUESTED,last:5){nodes{databaseId url body submittedAt authorAssociation author{login}}}}}
   done: pullRequests(states:[MERGED,CLOSED],first:40,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{...f}}}}
-fragment f on PullRequest{number state isDraft url headRefName baseRefName mergeable labels(first:30){nodes{name}}}"""
+fragment f on PullRequest{number state isDraft url headRefName headRefOid baseRefName mergeable labels(first:30){nodes{name}}}"""
 
 
 def load_pr_index(org, repos):
@@ -411,6 +463,7 @@ def load_pr_index(org, repos):
     `gh pr list --head` per agent, which (with ~25 tracked agents) exhausted the shared 5000/h
     GraphQL budget."""
     idx, ok = {}, True
+    PR_REVIEWS.clear()
     for repo in sorted(repos):
         out = run(["gh", "api", "graphql", "-f", f"query={PRS_Q}", "-F", f"o={org}", "-F", f"r={repo}"])
         try:
@@ -422,7 +475,11 @@ def load_pr_index(org, repos):
             idx[(repo, n["headRefName"])] = {
                 "number": n["number"], "state": n["state"], "draft": n["isDraft"], "url": n["url"],
                 "labels": [l["name"] for l in n["labels"]["nodes"]], "mergeable": n.get("mergeable"),
-                "base": n.get("baseRefName")}
+                "base": n.get("baseRefName"), "head_sha": n.get("headRefOid")}
+        for n in d["open"]["nodes"]:
+            revs = (n.get("reviews") or {}).get("nodes") or []
+            if revs:
+                PR_REVIEWS[(repo, n["number"])] = revs
     return idx, ok
 
 
@@ -477,6 +534,7 @@ def conflicting(ag):
 
 
 def snapshot(project, prev):
+    polled_at = time.time()  # cursors advance to the start of this poll, so nothing between polls is missed
     org, repos = load_repos(project)
     global PR_INDEX
     PR_INDEX, prs_ok = load_pr_index(org, repos)
@@ -491,7 +549,10 @@ def snapshot(project, prev):
     ag = agents(org, repos, prev.get("agents", {}))
     q, q_at = (prev.get("queue", []), prev.get("queue_at", 0)) if rate_low else queue_top(project, prev)
     floor = run([os.path.join(HERE, "bin", "floor"), "--project", project]).strip() or "none"
-    qcn, qcp, qc_since, qc_seen = qc_comments(org, repos, prev)
+    if prs_ok:
+        reviews, review_since, review_seen = review_feedback(prev, polled_at)
+    else:  # no fresh review data: keep the cursor so nothing is skipped
+        reviews, review_since, review_seen = [], prev.get("review_since"), prev.get("review_seen", [])
     active = [k for k, v in ag.items() if not v["parked"] and not v["merged"] and v["status"] != "gone"]
     u = usage()
     over = (u.get("weekly") or 0) >= WEEKLY_CEILING or (u.get("five_hour") or 0) >= FIVE_HOUR_CEILING
@@ -507,7 +568,8 @@ def snapshot(project, prev):
         # P1-urgent + Claude Work This: spawned regardless of free_slots and the usage ceiling
         "urgent": [r for r in q if r.get("urgent_bypass")],
         "usage": u, "usage_over_ceiling": over, "queue": q, "queue_at": q_at,
-        "qc_new": qcn, "qc_pass_new": qcp, "qc_since": qc_since, "qc_seen": qc_seen,
+        "review_feedback": reviews, "review_since": review_since, "review_seen": review_seen,
+        "polled_at": polled_at,  # the cursor time for event_since (bin/watch's own bookkeeping)
         "spawn_floor": floor,  # bin/floor; report it in the status line
         "max_active": MAX_ACTIVE, "fleet": CFG.get("_fleet"),  # portfolio advice, when fresh
     }
@@ -537,7 +599,7 @@ def events(prev, cur):
     for r in cur["queue"]:
         if r.get("cwt") and r["ref"] not in old_cwt:
             ev.append({"type": "new_claude_work_this", "ref": r["ref"], "title": r["title"]})
-    for c in cur.get("qc_new", []):
+    for c in cur.get("review_feedback", []):
         ev.append({"type": "qc_feedback", **c})
     if cur["pr_cap"]["reached"] and not (prev.get("pr_cap") or {}).get("reached"):
         ev.append({"type": "pr_cap_reached", **cur["pr_cap"]})
@@ -638,16 +700,14 @@ def main():
                                capture_output=True, text=True, timeout=180)
             except subprocess.TimeoutExpired:
                 pass
-        ext = set(CFG.get("qc_pass_external_repos") or [])
-        passes = [c for c in (cur.get("qc_pass_new") or []) if c["repo"] not in ext]
-        if not a.peek and passes and (CFG.get("qc_pass_handler") or "watch") == "watch":
-            quiet += apply_qc_passes(CFG["org"], passes)
+        hook_wake, hook_quiet = event_hook(a.project, prev, cur, a.peek)
+        quiet += hook_quiet
         if not a.peek:
             fresh = auto_hibernate(a.project, cur["agents"])
             if fresh:  # waiting_on_you was built before these closed: rebuild it without dead panes
                 cur["waiting_on_you"] = waiting_on_you(cur["agents"])
             quiet += fresh
-        ev = events(prev, cur) if prev else [{"type": "first_run"}]
+        ev = (events(prev, cur) if prev else [{"type": "first_run"}]) + hook_wake  # the hook dedupes itself
         if not a.peek:
             tmp = state_file + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:

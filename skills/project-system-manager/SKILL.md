@@ -17,7 +17,7 @@ You own the *system*, not product work:
 - the engine (`$PDO_HOME`) and any overlay repos on `PDO_CONFIG_DIRS`: scripts, prompts, hooks, skills;
 - the lifecycle skills' orchestration hooks;
 - the board and label conventions;
-- any remote QC preview service the profile's `## QC preview` describes.
+- any project extras the profile's `## Project extras` describes (e.g. a hosted QC preview service) and the env's hooks.
 
 Product issues go to command agents through the orchestrator; bugs and ideas go to `intake`. Issues
 labelled `orchestrator-system` are yours.

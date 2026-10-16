@@ -123,7 +123,10 @@ token-free probe; the model only reads what changed.
   still sees what changed while it was down: `slot_freed`, `urgent`, `qc_feedback`, `pr_conflict`,
   `pr_cap_reached`, `design_ready`, `qc_complete`, `pr_merged`, `agent_gone`, `stalled`,
   `new_claude_work_this`, `usage_ceiling`, `heartbeat`. Quiet events (`hibernated`, `closed_out`,
-  `hibernate_failed`) ride along with the next wake.
+  `hibernate_failed`, `event_hook_failed`, and hook events marked `"quiet": true`) ride along with the
+  next wake.
+- **Project events.** `WATCH_EVENT_HOOK` adds project-specific events to each snapshot (contract under
+  Hooks, "Watcher event hook").
 - `--until-event` polls (default every 300 s) until an event, or emits `heartbeat` at `--max`. The
   orchestrator runs it in the background with `--max 21600`, and an hourly scheduled wakeup is the
   fallback heartbeat, so the two don't both wake it every hour.
@@ -166,15 +169,21 @@ watcher).
   `bin/resume-agent`; `ready for QC` comes off, and the agent re-applies it after fixing.
 - **Pass** flips the label to `QC complete - ready to review` (`LABEL_QC_DONE`); the agent wraps up and
   says "wrap-up done", and the watcher closes it out.
-- **Remote QC.** Trusted PR comments starting `QC:` become `qc_feedback` events, so a reviewer who only
-  uses a browser (e.g. against a hosted preview service, the profile's "QC preview" section) can drive the
-  same loop. Agents answer remote reviewers on the PR, never only in their session.
-- **QC pass by comment.** A trusted comment starting `Claude, QC pass` on an open PR labelled `ready for QC`
-  makes the watcher (not `--peek`) swap the label for `QC complete - ready to review` and reply on the PR (quiet
-  event `qc_pass_recorded`; `qc_complete` follows). No preview service is involved; only the spin-up and tear-down
-  triggers need one. `QC_PASS_HANDLER=external` leaves the comment to another service.
+- **The handoff is labels and reviews.** `ready for QC` (`LABEL_QC_READY`) means the PR waits on the human.
+  The human adding `QC complete - ready to review` (`LABEL_QC_DONE`) is the pass: the watcher's `qc_complete`
+  fires on that label, whoever added it. A PR carrying both labels counts as passed.
+- **Remote QC feedback** is a standard GitHub PR review with state *Request changes* (`CHANGES_REQUESTED`)
+  from a trusted author (association OWNER, MEMBER or COLLABORATOR). The watcher reads the newest reviews
+  of each open PR in its existing PR query (no extra call), and raises each new one once as `qc_feedback`
+  (`source: "review"`), which the orchestrator routes to the PR's agent. A reviewer who only uses a browser
+  can therefore drive the whole loop. Agents answer remote reviewers on the PR, never only in their
+  session. GitHub doesn't let a PR's author request changes on it, so the author gives feedback in the
+  agent's session (or with local QC) instead.
+- **Project conventions on top** (PR-comment triggers, a hosted preview service, chat commands) belong to
+  the project: its `WATCH_EVENT_HOOK` turns them into the same events, and the profile's
+  `## Project extras` tells humans and agents how to use them.
 - **Headless repos** (no UI): QC cases are fixture inputs with expected outputs and the command that checks them
-  (profile "QC data"); the same checklist, fixture branch and comment protocol apply.
+  (profile "QC data"); the same checklist, fixture branch and handoff apply.
 - **Fixtures.** GitHub's API can't attach files to comments. `bin/qc-fixture-push <pr#> <file>` stores test
   data on a never-merged branch (`FIXTURE_BRANCH`, default `qc-fixtures`) with git plumbing (no checkout),
   and prints the link for the checklist. Fixtures never go on the PR branch, or they merge with it.
@@ -247,8 +256,8 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QC_PORTS` | (none) | ports hibernation never stops |
 | `FIXTURE_EXT` | (none) | the project's fixture extension (a mismatch warns) |
 | `FIXTURE_EXT_BY_REPO` | `()` | `declare -A`: repo → its fixture extension, for repos whose format differs; `qc-fixture-push --repo` uses it before `FIXTURE_EXT` |
-| `QC_PASS_HANDLER` | `watch` | `watch`: the watcher acts on `Claude, QC pass` comments; `external`: another service does |
-| `QC_PASS_EXTERNAL_REPOS` | (empty) | Repos whose `Claude, QC pass` another service handles (e.g. a preview manager); the watcher handles the rest |
+| `WATCH_EVENT_HOOK` | (none) | executable the watcher runs each snapshot for project-specific events (contract below) |
+| `WATCH_EVENT_HOOK_TIMEOUT` | `120` | seconds before the watcher abandons a hook run |
 | `FIXTURE_BRANCH` | `qc-fixtures` | never-merged fixture branch |
 | `SCREENSHOT_DIR` | `.omc/qa` | screenshot root inside a worktree |
 | `CARRY_LABELS` | `client-requested` | issue labels copied onto PRs |
@@ -295,6 +304,41 @@ dependency install) and `PDO_QC_KEY` (`pr:<n>` or `ref:<branch>`, e.g. to decide
 database). The hook should never use a database that command agents start and stop, and should clone a
 seed per served PR rather than roll migrations back.
 
+**Watcher event hook (`WATCH_EVENT_HOOK`).** The extension point for project-specific signals (PR-comment
+commands, another service's state). `bin/watch` runs it once per snapshot, after the PR index is read,
+with no arguments and a JSON context on stdin:
+
+```json
+{"version": 1, "project": "acme", "org": "acme", "repos": ["widget"],
+ "since": "2026-10-16T18:00:00Z", "now": "2026-10-16T18:05:00Z", "peek": false,
+ "trusted_associations": ["COLLABORATOR", "MEMBER", "OWNER"], "state_dir": "/home/u/.local/state/pdo",
+ "labels": {"qc_ready": "ready for QC", "qc_done": "QC complete - ready to review"},
+ "prs": [{"repo": "widget", "number": 5, "url": "https://github.com/acme/widget/pull/5", "head": "feat/5",
+          "head_sha": "abc123", "base": "main", "labels": ["ready for QC"], "draft": false,
+          "mergeable": "MERGEABLE"}]}
+```
+
+- `repos` are the managed repos (`REPO_ROOT` minus `SELF_MANAGED_REPOS`); `prs` are their open PRs.
+- `since` is where the previous successful run's `now` left off (10 minutes ago on a first run, never more
+  than 7 days back). It advances only after a clean run, so a failed run is retried over the same window:
+  the hook must dedupe by its own ids (kept under `state_dir`, in a file named after the hook).
+- `peek: true` (also `PDO_WATCH_PEEK=1`) is `watch --peek`: report what you find, but change nothing (no
+  labels, comments or state writes).
+- Only `trusted_associations` authors should count, the same rule the watcher applies to reviews.
+- The usual hook environment applies (`PDO_STATE_DIR`, `PDO_PROJECT`, …) and the watcher's `gh` login.
+
+It prints a JSON array of events on stdout, in the watcher's own shapes, e.g.
+`{"type": "qc_feedback", "repo": "widget", "number": 5, "id": 901, "author": "boss", "url": "…", "body": "…"}`.
+The watcher merges them as if it had found them: a wake event ends `--until-event`, and an event with
+`"quiet": true` (or a quiet type) rides along with the next wake. Hook events skip the snapshot diff,
+so each must be emitted once. Items that aren't objects with a string `type` are dropped with a warning;
+at most 200 are taken per run.
+
+Robustness: a run is killed after `WATCH_EVENT_HOOK_TIMEOUT` seconds (default 120). A timeout, a non-zero
+exit, output that isn't a JSON array, a missing file, or a GitHub outage (the hook is skipped when the PR
+index can't be read) prints a warning on stderr and adds the quiet event `event_hook_failed`; the watcher
+carries on. The hook's last few stderr lines are echoed with a `watch: hook:` prefix.
+
 ## The project profile
 
 The engine env above is for scripts. What agents need to know about a product repo lives in that repo,
@@ -306,7 +350,7 @@ in **`.agents/project-profile.md`** on the default branch; the skills cite its s
   (package.json scripts, `*.sln`, pyproject, Cargo, go.mod), carries on with that, and offers to write one
   from [`templates/project-profile.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/project-profile.md).
 - **Sections** (exact `##` headings): `Identity`, `Layout`, `Build & checks`, `Tests`, `Dev servers`,
-  `QC data`, `QC preview`, `Changelog`, `Review roles`, `Docs`, `Conventions`, `Do not`. What each holds is
+  `QC data`, `Changelog`, `Review roles`, `Docs`, `Conventions`, `Project extras` (optional), `Do not`. What each holds is
   in [profile.md](profile.md) and the template.
 - The repo's `AGENTS.md` gets a short "How work flows here" section from
   [`templates/AGENTS-workflow-section.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/AGENTS-workflow-section.md); `CLAUDE.md` can be

@@ -25,11 +25,11 @@ Skills cite these `##` sections by name, so keep the headings exactly:
 | `Tests` | how to run unit and end-to-end tests |
 | `Dev servers` | how to run them, the ports (including the human's reserved QC ports and the per-issue ports agents use), database rules, and a "Human run" line for people |
 | `QC data` | the fixture format, how to export one, and that it's published with `pdo qc-fixture-push`; for a repo with no UI, what a QC case is (inputs with expected outputs) |
-| `QC preview` | an optional hosted preview service: its PR-comment triggers and login |
 | `Changelog` | changesets or another convention, and the CI check that enforces it (skip label, exempt paths) |
 | `Review roles` | extra reviewer roles, e.g. a UI designer for your component library |
 | `Docs` | the user guide and design-doc locations |
 | `Conventions` | anything else agents must follow |
+| `Project extras` | optional: the project's own conventions on top of the engine (PR-comment commands its `WATCH_EVENT_HOOK` or a service acts on, a hosted preview, extra QC steps); a `### QC commands` table there ends every QC checklist |
 | `Do not` | hard prohibitions |
 
 The profile is project knowledge for agents. Engine settings (repo roots, the board, hooks) live in the

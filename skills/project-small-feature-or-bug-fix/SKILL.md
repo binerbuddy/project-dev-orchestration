@@ -129,7 +129,7 @@ concrete steps in the running app covering every user-visible behaviour the chan
 verifiable statically or headlessly; GitHub task-list format; starts with `<!-- ux-qc-checklist -->` then the heading
 `## QC Checklist`; names data by project name and UI path, never by localhost/host links, ports or ids; a "Test data"
 item linking a fixture published with `pdo qc-fixture-push` to the never-merged `qc-fixtures` branch when the seed data
-doesn't cover the cases; and it ends with the QC commands block. Save it to the scratchpad; phase 8 posts it.
+doesn't cover the cases; and it ends with the QC handoff block (plus any §Project extras QC commands). Save it to the scratchpad; phase 8 posts it.
 
 ## 8. Changelog, push, PR
 

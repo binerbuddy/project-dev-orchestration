@@ -21,11 +21,11 @@ through an app. Each item is a QC case named by its input (a fixture input file,
 expected output and the command from §QC data that checks it, e.g. "`npm run replay -- 412/rounding.json`: the
 total is 10.05, not 10.04". Put the evidence you already gathered (the actual output, a diff against the base
 branch) under the case, so a human can pass it by reading. The rules below still apply: no host URLs, ports or
-ids; inputs go on `qc-fixtures`, never on the PR branch; the same marker, heading and commands block.
+ids; inputs go on `qc-fixtures`, never on the PR branch; the same marker, heading and handoff block.
 
 ## Name data by project, never by link
 
-The human may QC on a local dev server, a remote preview, or any other host, so the checklist never contains a
+The human may QC on a local dev server, a hosted preview, or any other host, so the checklist never contains a
 localhost (or any host) URL, port, or record id. Refer to data by **project name** (or the app's equivalent top-level
 record, as §QC data names it) and UI path instead: e.g. "open Projects → *Acme Demo* → Map", or "import the fixture,
 then open the project *QC kept arcs*". Name the exact project, and the records inside it where it matters.
@@ -47,27 +47,25 @@ lacks, don't make the human build it:
 
 Skip all of this when the seed data already covers the checklist.
 
-## QC commands block
+## QC handoff block
 
-End the checklist comment with this block, verbatim except for the PR-specific placeholders. Fill each `<…>` from
-§QC preview (its comment triggers, preview link pattern, login, build time and idle timeout). If the profile has no
-QC preview service, drop the two preview rows (spin up, tear down) and the "(no local setup)" words from the heading:
-the `QC:` and `Claude, QC pass` rows stay, because the orchestrator's watcher handles them, preview or not. Only
-where no orchestrator runs (a collaborator's repo with no engine), replace the `Claude, QC pass` row with "Apply the
-`QC complete - ready to review` label when QC passes".
+End the checklist comment with this block, verbatim except for the label names (the project env's
+`LABEL_QC_READY` / `LABEL_QC_DONE`; `pdo project-env <KEY>` prints them):
 
 ```markdown
 ---
-#### QC from a browser (no local setup)
-Reply on this PR with a comment that starts with one of these:
-
-| Comment | What happens |
-|---|---|
-| `<spin-up trigger>` | Builds this PR into a preview (about <build time>). A reply posts the link, <preview link pattern>. Log in <login>. |
-| `QC: <findings or answers>` | Sends feedback, or answers to questions, to the agent that built this PR. It replies here. |
-| `Claude, QC pass` | Marks QC complete (`QC complete - ready to review`). |
-| `<tear-down trigger>` | Stops the preview and frees its slot. Idle previews stop on their own after <idle timeout>. |
+#### When you've worked through it
+- **Feedback or answers:** submit a PR review with **Request changes** (line comments welcome). The agent that built
+  this PR picks it up and replies here.
+- **Pass:** add the `QC complete - ready to review` label (and remove `ready for QC`).
 ```
+
+Where no orchestrator runs (a collaborator's repo with no engine), replace the feedback line with "Feedback or
+answers: a PR review or comment; point the agent that built this PR at it."
+
+**Optional QC commands.** If the profile's §Project extras has a `### QC commands` section (comment commands, a hosted
+preview, its link pattern and login), append that table after the block, filling any `<…>` placeholders for this PR.
+No §Project extras, or none for QC: the block above is the whole ending.
 
 ## Updating the posted checklist
 

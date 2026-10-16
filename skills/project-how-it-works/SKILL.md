@@ -1,6 +1,6 @@
 ---
 name: project-how-it-works
-description: How work flows in a repo that uses project-dev-orchestration — issue → board → orchestrator → command agent → PR → QC → merge; which labels, routes (route:small/design/build), P-levels and board statuses ("Claude Work This") mean; the spawn floor; how to file bugs (intake-submit, or a needs-triage issue); the QC Checklist and project-name rules, qc-fixtures, and the QC comment protocol. Load it whenever you ask how work flows here, which labels or priority to use, how to file a bug or idea, how to hand off to QC, or what you may and may not touch — including on a collaborator's machine with no orchestrator running.
+description: How work flows in a repo that uses project-dev-orchestration — issue → board → orchestrator → command agent → PR → QC → merge; which labels, routes (route:small/design/build), P-levels and board statuses ("Claude Work This") mean; the spawn floor; how to file bugs (intake-submit, or a needs-triage issue); the QC Checklist and project-name rules, qc-fixtures, and the QC handoff (labels and PR reviews). Load it whenever you ask how work flows here, which labels or priority to use, how to file a bug or idea, how to hand off to QC, or what you may and may not touch — including on a collaborator's machine with no orchestrator running.
 ---
 
 # How work flows here
@@ -14,8 +14,8 @@ orchestrator running. The rules are the same; only the tools differ.
 **This project's specifics win.** Read, in this order, and let them override the defaults here:
 1. `AGENTS.md` at the repo root, its "How work flows here" section;
 2. `.agents/project-profile.md` (worktree top level, else `git show origin/HEAD:.agents/project-profile.md`):
-   `## Identity` (repos, board), `## Build & checks`, `## QC data`, `## QC preview`, `## Conventions`,
-   `## Do not`;
+   `## Identity` (repos, board), `## Build & checks`, `## QC data`, `## Conventions`,
+   `## Project extras` (the project's own commands and conventions, if any), `## Do not`;
 3. the project-dev-orchestration README for the engine itself.
 
 ## First session in a clone: the human guide (once)
@@ -54,10 +54,10 @@ gitignored; never commit it).
 5. **PR.** It opens a PR (`Closes #n`), which gets the P-label of its issues, gets a consortium review,
    and is labelled **`ready for QC`** with a **QC Checklist** comment. The agent then idles (and is
    hibernated) until QC.
-6. **QC.** A human QCs locally, through an optional remote preview, or (in a headless repo) by
-   checking the fixture inputs' outputs. Feedback comes back to the same
-   agent, which fixes, pushes and re-labels. On pass the label becomes
-   **`QC complete - ready to review`** and the agent wraps up.
+6. **QC.** A human QCs locally, with whatever the profile's `## Project extras` offers, or (in a
+   headless repo) by checking the fixture inputs' outputs. Feedback (in the agent's session, or a PR
+   review with *Request changes*) comes back to the same agent, which fixes, pushes and re-labels. The
+   human passes QC by adding **`QC complete - ready to review`**, and the agent wraps up.
 7. **Merge.** A human merges by hand. Finished agents close out on their own.
 
 Labels, routes, P-levels, board statuses, the queue rules and the spawn floor in full:
@@ -119,24 +119,22 @@ the queue status, the P-labels and the two QC labels.
 - Don't bind the project's reserved QC ports or kill what's on them (profile `## Dev servers`).
 - Anything in the profile's `## Do not`.
 
-## QC comment protocol
+## QC handoff
 
-Trusted commenters start a PR comment with:
-
-- `QC: <findings or answers>`: feedback for the PR's agent, which replies on the PR (needs the
-  orchestrator, not a preview);
-- `Claude, QC pass`: mark QC complete (the orchestrator's watcher swaps the labels; no preview
-  needed);
-- `Claude, spin up QC`: build a preview of this PR; a reply posts the link and login (only where the
-  profile's `## QC preview` describes a preview service);
-- `Claude, tear down`: stop the preview (idle ones stop on their own; preview service only).
+- `ready for QC`: the agent is done; the PR waits on the human.
+- Feedback: in the agent's session, or a GitHub PR review with **Request changes** from a trusted
+  author (OWNER, MEMBER or COLLABORATOR); the orchestrator resumes the PR's agent with it, and the
+  agent replies on the PR.
+- Pass: the human adds `QC complete - ready to review`; the agent wraps up.
+- Anything else (comment commands, a hosted preview) is project-specific: the profile's
+  `## Project extras`.
 
 Full table, wording for the checklist, and how agents answer: `references/qc-protocol.md`.
 
 ## Where to read more
 
 - `AGENTS.md` (this repo): the project's own "How work flows here".
-- `.agents/project-profile.md`: build commands, QC data and preview, conventions, do-nots.
+- `.agents/project-profile.md`: build commands, QC data, conventions, project extras, do-nots.
 - `docs/agent-workflow.md` (this repo, generated by `/project-setup`): the human-facing guide to the
   same rules.
 - The general guide: https://binerbuddy.github.io/project-dev-orchestration/.

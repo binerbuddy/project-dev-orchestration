@@ -17,7 +17,7 @@ Label and status names are the engine defaults ("Claude Work This", `ready for Q
 | `design_ready` | A design run finished and labelled its epic `route:build`. Don't wait for any human design review. Close the design workspace you spawned (`herdr workspace close <workspace_id>`), then immediately `pdo spawn <repo> <n> --route build --brief "<2-3 words> build"`. It doesn't count against the tick's slot budget: it replaces the design run. If spawn refuses because a workspace still exists, report it. If the design PR already merged and its branch is stale, pass `--base origin/<base branch>` (spawn defaults `--base` to the design branch). |
 | `pr_conflict` | An agent's PR became CONFLICTING. Don't act on the event; step 2b handles every entry in `conflicting`. |
 | `pr_cap_reached` | `open_awaiting_human` PRs ≥ `cap` (default 10, file `$PDO_STATE_DIR/<p>-pr-cap`). `free_slots` is now 0, so nothing new spawns (urgent bypass excepted). Report it once with the count, and say that merging or closing PRs resumes new work. |
-| `qc_feedback` | A trusted `QC:` comment on a PR (from remote QC, see the profile's `## QC preview`). Find the agent with `pdo pr-agent <number>`, then send the **remote QC feedback prompt** (below) with `pdo resume-agent <repo> <issue#> --prompt "…"`. Then `gh pr edit <n> --remove-label "ready for QC"`. Exit 3 (question pending): leave the label, report it, retry next tick. No agent metadata (someone else's PR): report it. |
+| `qc_feedback` | Remote QC feedback on a PR: a trusted PR review with *Request changes* (`source: "review"`), or a project's own feedback convention raised by its `WATCH_EVENT_HOOK` (profile `## Project extras`). Find the agent with `pdo pr-agent <number>`, then send the **remote QC feedback prompt** (below) with `pdo resume-agent <repo> <issue#> --prompt "…"`. Then `gh pr edit <n> --remove-label "ready for QC"`. Exit 3 (question pending): leave the label, report it, retry next tick. No agent metadata (someone else's PR): report it. |
 | `qc_complete` | The human approved QC. If `$PDO_STATE_DIR/qc/handled/<Repo>-<pr#>` exists, `/project-qc-review` already told the agent: do nothing. Otherwise send the **QC approved prompt** with `pdo resume-agent`. It works whether the agent is open or hibernated. Exit 3: leave it for the human. |
 | `pr_merged` | Check the issue closed (`gh issue view`). If its board card isn't Done, set it (`pdo claim` refuses a closed issue and self-heals its card to Done). Report that the workspace can be closed and `/project-cleanup-worktrees` run. Don't close workspaces yourself. |
 | `stalled` | Read the last ~60 lines with `herdr agent read <pane_id>`. If it's clearly waiting on something that has finished (a background agent, CI), or ended a turn mid-phase with no question, nudge it once with the **check-in prompt** (`herdr agent prompt <pane_id> "…"`). If it looks confused or errored, don't nudge: report it. |
@@ -25,7 +25,8 @@ Label and status names are the engine defaults ("Claude Work This", `ready for Q
 | `usage_ceiling` | Stop spawning. Report the weekly and 5-hour figures. The weekly reserve is for manual or hot work. |
 | `closed_out` | Informational. The watcher released a finished agent: PR merged, QC passed and it printed "wrap-up done", or its issue closed with no open PR (likely-fixed confirmed, won't-fix). Session kept. One line. |
 | `hibernated` / `hibernate_failed` | Informational; they ride along with other events. The watcher released an agent parked at `ready for QC` (side processes stopped, workspace closed, session kept for `pdo resume-agent`). One line; for a failure include the reason and don't retry by hand. |
-| `qc_pass_recorded` / `qc_pass_ignored` | Informational; they ride along with other events. A trusted `Claude, QC pass` comment: the watcher swapped `ready for QC` for `QC complete - ready to review` and replied (`qc_complete` follows on the next tick), or ignored it (`why`: not an open PR, not labelled ready, already complete, or the label edit failed). One line; for an ignored pass, include the reason so the human can apply the label by hand. |
+| `event_hook_failed` | Informational; rides along. The project's `WATCH_EVENT_HOOK` failed or timed out (`detail`); the watcher retries next poll over the same window. One line; if it repeats, report it for the System Manager. |
+| other hook events marked `"quiet": true` | Informational; they ride along. A project's `WATCH_EVENT_HOOK` reported something it did (e.g. applied a label for a project command). One line each, with any `why`, so the human can act by hand when it was ignored. |
 | `first_run` / `heartbeat` | Nothing special. Continue to step 3. |
 
 ## Prompts
@@ -35,7 +36,7 @@ Label and status names are the engine defaults ("Claude Work This", `ready for Q
 ```
 Remote QC feedback from @<author> on PR #<n> (<url>):
 <body>
-The reporter reads GitHub, not this session: reply ON THE PR. If anything is unclear, ask there with an @<author> mention, then wait for their next 'QC:' comment. Fix, push, reply on the PR with what changed, then re-apply 'ready for QC'.
+The reporter reads GitHub, not this session: reply ON THE PR. If anything is unclear, ask there with an @<author> mention, then wait for their next review or reply. Fix, push, reply on the PR with what changed, then re-apply 'ready for QC'.
 ```
 
 **QC approved** (`qc_complete`):
