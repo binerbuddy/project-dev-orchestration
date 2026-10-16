@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 ENGINE_HOME = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 BIN = os.path.join(ENGINE_HOME, "bin")
@@ -36,3 +37,52 @@ def load(project=None, prog=None):
 def ref(cfg, repo, number):
     """'#n' for the primary repo, '<repo>#n' otherwise."""
     return f"#{number}" if repo == cfg.get("primary_repo") else f"{repo}#{number}"
+
+
+def try_load(project):
+    """(cfg, None) or (None, error) for one project, without exiting and without changing this
+    process's environment (bin/fleet reads every project, and one project's state dir must not
+    leak into the next one's resolution)."""
+    r = subprocess.run([os.path.join(BIN, "pdo-config"), "--json", "--project", project],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None, (r.stderr.strip() or f"cannot resolve project {project}")
+    try:
+        return json.loads(r.stdout), None
+    except ValueError as e:
+        return None, f"bad config JSON for {project}: {e}"
+
+
+def projects():
+    """Every known project name along PDO_CONFIG_DIRS (first config dir wins per name)."""
+    r = subprocess.run([os.path.join(BIN, "pdo-config"), "--list"], capture_output=True, text=True)
+    return [ln.split(" ", 1)[0] for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def global_state_dir():
+    """The install-wide state dir, as lib.sh resolves it (config.env included)."""
+    r = subprocess.run([os.path.join(BIN, "pdo-config"), "--state-dir"], capture_output=True, text=True)
+    return r.stdout.strip() or state_dir()
+
+
+FLEET_ADVICE_MAX_AGE_SEC = 2 * 3600
+
+
+def fleet_advice(cfg, now=None):
+    """The portfolio manager's advice for this project, from $PDO_STATE_DIR/fleet-advice.json
+    (written by `fleet --write-advice`), or None when absent, stale (2 h+) or unreadable.
+    The dict carries advice (go|slow|hold), reason, suggested_max_active, age_min, and
+    honoured: whether the project opted in with FLEET_ADVICE=honour."""
+    path = os.path.join(cfg.get("state_dir") or state_dir(), "fleet-advice.json")
+    try:
+        d = json.load(open(path, encoding="utf-8"))
+        at = float(d["generated_at"])
+        entry = dict(d["projects"][cfg["project"]])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    age = (now if now is not None else time.time()) - at
+    if age < 0 or age >= FLEET_ADVICE_MAX_AGE_SEC:
+        return None
+    entry["age_min"] = int(age / 60)
+    entry["honoured"] = (cfg.get("fleet_advice") or "ignore").lower() in ("honour", "honor")
+    return entry

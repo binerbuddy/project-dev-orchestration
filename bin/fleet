@@ -1,0 +1,768 @@
+#!/usr/bin/env python3
+"""fleet — read-only portfolio view of every project, with allocation advice (the portfolio manager's probe).
+
+Usage: fleet [--json] [--project P] [--write-advice] [--no-queue]
+       fleet deps add "<org/repo#n>" blocks "<org/repo#m>" [--note TEXT]
+       fleet deps list [--all] [--json]
+       fleet deps done <id> | "<org/repo#n>" blocks "<org/repo#m>"
+
+Enumerates every project env along PDO_CONFIG_DIRS and reports, per project: its manager (MANAGER,
+and REPO_MANAGER for SELF_MANAGED_REPOS) and how to reach it; active, hibernated, stalled and
+standing agents (agent metadata in the state dir, herdr's workspace/agent lists, the watcher's last
+saved snapshot); what waits on the human (ready-for-QC and QC-complete PRs, awaiting-ux-gate issues,
+agents with a question pending, the intake inbox); the queue's eligible count; open PRs awaiting
+the human against the PR cap. System constraints: weekly and 5-hour usage (USAGE_CACHE), free memory
+and swap, disk free on the state dir and repo roots, gh GraphQL/core rate limits per GH_USER, and
+the overall agent count.
+
+Allocation advice per project: go | slow | hold, a reason and a soft suggested_max_active, from
+PORTFOLIO_PRIORITY (1 = highest), RESOURCE_PROFILE (light | medium | heavy, or AGENT_MB /
+AGENT_USAGE_WEIGHT) and the constraints. --write-advice writes it to <state dir>/fleet-advice.json,
+which bin/queue and bin/watch honour only for projects with FLEET_ADVICE=honour. Without
+--write-advice nothing is written. Missing herdr, a missing board or a failing gh are warnings.
+
+--project P limits the per-project sections to P (the advice still weighs every project).
+--no-queue skips the per-project bin/queue run (saves GitHub calls; queue depth shows as unknown).
+
+Test overrides: PDO_FLEET_MEM_AVAIL_MB, PDO_FLEET_MEM_TOTAL_MB, PDO_FLEET_SWAP_TOTAL_MB,
+PDO_FLEET_SWAP_USED_MB, PDO_FLEET_DISK_FREE_MB, PDO_FLEET_WEEKLY, PDO_FLEET_FIVE_HOUR.
+Thresholds (environment): FLEET_MEM_HOLD_MB (3072), FLEET_MEM_RESERVE_MB (2048), FLEET_DISK_HOLD_MB
+(5120), FLEET_SWAP_SLOW_PCT (50), FLEET_WEEKLY_MARGIN (10), FLEET_GH_LOW (600).
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+WARN = []
+
+# RESOURCE_PROFILE defaults: RAM one active agent holds (agent CLI, MCP servers, dev servers,
+# browser) and its relative draw on the shared usage budget. AGENT_MB / AGENT_USAGE_WEIGHT override.
+PROFILES = {"light": (400, 0.5), "medium": (900, 1.0), "heavy": (1800, 2.0)}
+PR_CAP_DEFAULT = 10
+STALL_MIN = 45
+QUESTION_MARKERS = ("Enter to select", "Do you want to proceed")
+
+
+def env_num(name, default):
+    v = os.environ.get(name)
+    try:
+        return float(v) if v not in (None, "") else default
+    except ValueError:
+        return default
+
+
+MEM_HOLD_MB = env_num("FLEET_MEM_HOLD_MB", 3072)       # below this: hold heavy, slow the rest
+MEM_RESERVE_MB = env_num("FLEET_MEM_RESERVE_MB", 2048)  # never allocated to new agents
+DISK_HOLD_MB = env_num("FLEET_DISK_HOLD_MB", 5120)      # below this on a project's disk: hold it
+SWAP_SLOW_PCT = env_num("FLEET_SWAP_SLOW_PCT", 50)      # swap this full: memory is already short
+WEEKLY_MARGIN = env_num("FLEET_WEEKLY_MARGIN", 10)      # points of weekly headroom per usage weight
+GH_LOW = env_num("FLEET_GH_LOW", 600)                   # GraphQL points left below which a project slows
+
+
+def warn(msg):
+    if msg not in WARN:
+        WARN.append(msg)
+
+
+def run(args, timeout=60, env=None):
+    """stdout, or None on failure (missing binary, non-zero exit, timeout)."""
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+# ---------- system constraints ----------
+
+def memory():
+    info = {}
+    try:
+        for ln in open("/proc/meminfo", encoding="utf-8"):
+            k, v = ln.split(":", 1)
+            info[k] = int(v.split()[0]) // 1024  # kB -> MB
+    except (OSError, ValueError):
+        warn("memory: /proc/meminfo unreadable")
+    m = {"avail_mb": info.get("MemAvailable"), "total_mb": info.get("MemTotal"),
+         "swap_total_mb": info.get("SwapTotal"),
+         "swap_used_mb": (info["SwapTotal"] - info["SwapFree"]) if "SwapTotal" in info and "SwapFree" in info else None}
+    for key, env in (("avail_mb", "PDO_FLEET_MEM_AVAIL_MB"), ("total_mb", "PDO_FLEET_MEM_TOTAL_MB"),
+                     ("swap_total_mb", "PDO_FLEET_SWAP_TOTAL_MB"), ("swap_used_mb", "PDO_FLEET_SWAP_USED_MB")):
+        if os.environ.get(env):
+            m[key] = int(env_num(env, 0))
+    st, su = m["swap_total_mb"], m["swap_used_mb"]
+    m["swap_used_pct"] = round(100 * su / st) if st and su is not None else 0
+    return m
+
+
+def disk(paths):
+    """Free space per filesystem: [{path, free_mb, total_mb, labels}], one entry per device."""
+    by_dev, out = {}, []
+    for label, p in paths:
+        q = p
+        while q and not os.path.exists(q):
+            q = os.path.dirname(q)
+        if not q:
+            continue
+        try:
+            dev = os.stat(q).st_dev
+            if dev in by_dev:
+                by_dev[dev]["labels"].append(label)
+                continue
+            u = shutil.disk_usage(q)
+        except OSError as e:
+            warn(f"disk: {p}: {e}")
+            continue
+        e = {"path": q, "free_mb": u.free // 2**20, "total_mb": u.total // 2**20, "labels": [label]}
+        if os.environ.get("PDO_FLEET_DISK_FREE_MB"):
+            e["free_mb"] = int(env_num("PDO_FLEET_DISK_FREE_MB", 0))
+        by_dev[dev] = e
+        out.append(e)
+    return out
+
+
+def usage(cfgs):
+    path = os.environ.get("USAGE_CACHE") or next((c.get("usage_cache") for c in cfgs if c.get("usage_cache")), "") \
+        or os.path.expanduser("~/.claude/plugins/oh-my-claudecode/.usage-cache-anthropic.json")
+    u = {"weekly": None, "five_hour": None, "age_min": None, "weekly_resets": None, "source": path}
+    try:
+        d = json.load(open(path, encoding="utf-8"))
+        u.update(weekly=d["data"].get("weeklyPercent"), five_hour=d["data"].get("fiveHourPercent"),
+                 weekly_resets=d["data"].get("weeklyResetsAt"),
+                 age_min=int((time.time() * 1000 - d["timestamp"]) / 60000))
+    except Exception as e:  # unknown, never silently "fine"
+        if not (os.environ.get("PDO_FLEET_WEEKLY") and os.environ.get("PDO_FLEET_FIVE_HOUR")):
+            warn(f"usage: no usage data ({type(e).__name__}); usage limits not applied")
+    if os.environ.get("PDO_FLEET_WEEKLY"):
+        u["weekly"], u["source"] = env_num("PDO_FLEET_WEEKLY", 0), "PDO_FLEET_WEEKLY"
+    if os.environ.get("PDO_FLEET_FIVE_HOUR"):
+        u["five_hour"] = env_num("PDO_FLEET_FIVE_HOUR", 0)
+    return u
+
+
+def gh_env(user):
+    """An environment whose gh runs as <user> (GH_TOKEN from `gh auth token -u`), without
+    touching gh's machine-wide active account. None when the token can't be had."""
+    env = dict(os.environ)
+    if not user:
+        return env
+    tok = run(["gh", "auth", "token", "-u", user], timeout=15)
+    if not tok or not tok.strip():
+        return None
+    env["GH_TOKEN"] = tok.strip()
+    return env
+
+
+def rate_limits(users):
+    out = []
+    for user in users:
+        e = {"user": user or "(active gh account)", "graphql": None, "core": None}
+        env = gh_env(user)
+        raw = run(["gh", "api", "rate_limit"], timeout=20, env=env) if env is not None else None
+        try:
+            res = json.loads(raw)["resources"]
+            for k in ("graphql", "core"):
+                r = res[k]
+                e[k] = {"remaining": r["remaining"], "limit": r["limit"],
+                        "reset_min": max(0, int((r["reset"] - time.time()) / 60))}
+        except Exception:
+            warn(f"gh: rate_limit unavailable for {e['user']}" + ("" if env is not None else " (no token)"))
+        out.append(e)
+    return out
+
+
+# ---------- herdr (read-only) ----------
+
+def herdr_state():
+    """(workspaces, agents) from herdr's list commands, or ([], []) with a warning."""
+    if not shutil.which("herdr"):
+        warn("herdr: not found; live agent status unknown (metadata only)")
+        return [], [], False
+    ws = run(["herdr", "workspace", "list"], timeout=15)
+    ag = run(["herdr", "agent", "list"], timeout=15)
+    try:
+        return json.loads(ws)["result"]["workspaces"], json.loads(ag)["result"]["agents"], True
+    except Exception:
+        warn("herdr: workspace/agent list failed; live agent status unknown (metadata only)")
+        return [], [], False
+
+
+# ---------- GitHub per repo ----------
+
+FLEET_Q = """query fleet($o:String!,$r:String!){repository(owner:$o,name:$r){
+  pullRequests(states:OPEN,first:100){totalCount nodes{number title url isDraft headRefName labels(first:30){nodes{name}}}}
+  gates: issues(states:OPEN,labels:["awaiting-ux-gate"],first:50){nodes{number title url}}}}"""
+
+
+def repo_facts(org, repo, env):
+    raw = run(["gh", "api", "graphql", "-f", f"query={FLEET_Q}", "-F", f"o={org}", "-F", f"r={repo}"],
+              timeout=30, env=env) if env is not None else None
+    try:
+        d = json.loads(raw)["data"]["repository"]
+        prs = [{"number": n["number"], "title": n["title"], "url": n["url"], "draft": n["isDraft"],
+                "branch": n["headRefName"], "labels": [l["name"] for l in n["labels"]["nodes"]]}
+               for n in d["pullRequests"]["nodes"]]
+        gates = [{"number": n["number"], "title": n["title"], "url": n["url"]} for n in d["gates"]["nodes"]]
+        return {"prs": prs, "open_total": d["pullRequests"]["totalCount"], "gates": gates}
+    except Exception:
+        warn(f"gh: PR/gate fetch failed for {org}/{repo}")
+        return None
+
+
+# ---------- per project ----------
+
+def read_json(path, default=None):
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def profile_of(cfg):
+    name = (cfg.get("resource_profile") or "medium").lower()
+    if name not in PROFILES:
+        warn(f"{cfg['project']}: unknown RESOURCE_PROFILE '{name}', using medium")
+        name = "medium"
+    mb, weight = PROFILES[name]
+    return name, int(cfg.get("agent_mb") or mb), float(cfg.get("agent_usage_weight") or weight)
+
+
+def manager_of(cfg, workspaces, agents_by_ws):
+    name = cfg.get("manager") or ""
+    m = {"name": name or None, "live": False, "agent": None, "status": None,
+         "reach": "the human (no MANAGER set)" if not name else None}
+    if name:
+        w = next((w for w in workspaces if (w.get("label") or "") == name), None)
+        if w:
+            a = agents_by_ws.get(w.get("workspace_id"), {})
+            m.update(live=True, agent=a.get("name"), status=a.get("agent_status") or w.get("agent_status"))
+            m["reach"] = ("peer message (tool's peer messaging), else "
+                          + (f"herdr agent prompt {a['name']}" if a.get("name") else f"herdr workspace '{name}'")
+                          + (" (question pending: tell the human instead)" if m["status"] == "blocked" else ""))
+        else:
+            m["reach"] = f"not running: ask the human to start '{name}'"
+    return m
+
+
+def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
+    p = cfg["project"]
+    state = cfg["state_dir"]
+    repos = set(cfg["repo_root"])
+    self_managed = set(cfg["self_managed_repos"])
+    managed = repos - self_managed
+    labels_ready, labels_done = cfg["label_qc_ready"], cfg["label_qc_done"]
+    prof, agent_mb, weight = profile_of(cfg)
+    max_active = cfg.get("max_active") or 3
+
+    # PR index by (repo, branch), and what waits on the human
+    pr_by_branch, qc_ready, qc_done, gates, open_total, awaiting = {}, [], [], [], 0, 0
+    for repo in sorted(repos):
+        f = gh_facts.get((cfg["org"], repo))
+        if not f:
+            continue
+        open_total += f["open_total"]
+        for pr in f["prs"]:
+            pr_by_branch[(repo, pr["branch"])] = pr
+            item = {"repo": repo, "number": pr["number"], "title": pr["title"], "url": pr["url"]}
+            if labels_done in pr["labels"]:
+                qc_done.append(item)
+            elif labels_ready in pr["labels"]:
+                qc_ready.append(item)
+            if repo in managed and {labels_ready, labels_done} & set(pr["labels"]):
+                awaiting += 1
+        gates += [dict(g, repo=repo) for g in f["gates"]]
+    try:
+        cap = int(open(os.path.join(state, f"{p}-pr-cap"), encoding="utf-8").read().strip())
+    except (OSError, ValueError):
+        cap = PR_CAP_DEFAULT
+
+    # agents: live workspaces labelled <Repo>-<n> <brief>, then hibernated metadata
+    snap = read_json(os.path.join(state, f"{p}-watch.json"), {}) or {}
+    snap_agents = snap.get("agents") or {}
+    snap_age = None
+    try:
+        snap_age = int((time.time() - os.path.getmtime(os.path.join(state, f"{p}-watch.json"))) / 60)
+    except OSError:
+        pass
+    gate_keys = {f"{g['repo']}#{g['number']}" for g in gates}
+    active, parked, hibernated, stalled, questions, standing = [], [], [], [], [], []
+    seen = set()
+    standing_names = {f"Orchestrator ({p})": "orchestrator", f"QC ({p})": "qc"}
+    for w in workspaces:
+        label = w.get("label") or ""
+        a = agents_by_ws.get(w.get("workspace_id"), {})
+        status = a.get("agent_status") or w.get("agent_status") or "unknown"
+        if label in standing_names or (label and label == cfg.get("manager")):
+            standing.append({"workspace": label, "role": standing_names.get(label, "manager"), "status": status})
+            if status == "blocked":
+                questions.append({"workspace": label, "agent": None, "why": "question"})
+            continue
+        m = re.match(r"^(\S+)-(\d+) (.+)$", label)
+        if not m or m.group(1) not in repos:
+            continue
+        key = f"{m.group(1)}#{m.group(2)}"
+        seen.add(key)
+        meta = read_json(os.path.join(state, "agents", f"{m.group(1)}-{m.group(2)}.json"), {}) or {}
+        pr = pr_by_branch.get((m.group(1), meta.get("branch")))
+        sa = snap_agents.get(key, {})
+        is_parked = bool(pr and {labels_ready, labels_done} & set(pr["labels"])) \
+            or (key in gate_keys and status != "working") or bool(sa.get("parked") and status != "working")
+        row = {"agent": key, "workspace": label, "status": status, "self_managed": m.group(1) in self_managed,
+               "pr": pr["number"] if pr else None}
+        if status == "blocked" or sa.get("question_pending"):
+            questions.append({"workspace": label, "agent": key, "why": "question"})
+        if sa.get("stalled") and status in ("idle", "done"):
+            stalled.append(row)
+        (parked if is_parked else active).append(row)
+    agents_dir = os.path.join(state, "agents")
+    for f in sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []:
+        meta = read_json(os.path.join(agents_dir, f), {}) or {}
+        repo, num = meta.get("repo"), meta.get("number")
+        key = f"{repo}#{num}"
+        if repo not in repos or key in seen or meta.get("done_tracking") or not meta.get("hibernated_at"):
+            continue
+        pr = pr_by_branch.get((repo, meta.get("branch")))
+        # with no open PR it is most likely finished (merged, closed out by hand, or a self-managed
+        # repo the watcher never closes out); with one it waits on QC or review
+        hibernated.append({"agent": key, "workspace": meta.get("name"), "pr": pr["number"] if pr else None,
+                           "open_pr": bool(pr), "hours": round((time.time() - meta["hibernated_at"]) / 3600, 1)})
+    if not herdr_ok:  # no live view: metadata says who was running last
+        for f in sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []:
+            meta = read_json(os.path.join(agents_dir, f), {}) or {}
+            if meta.get("repo") in repos and not meta.get("hibernated_at") and not meta.get("done_tracking") \
+                    and meta.get("workspace_id"):
+                active.append({"agent": f"{meta['repo']}#{meta.get('number')}", "workspace": meta.get("name"),
+                               "status": "unknown (no herdr)", "self_managed": meta["repo"] in self_managed,
+                               "pr": None})
+
+    # queue depth (needs a board and a managed repo)
+    queue = {"eligible": None, "auto_spawn": None, "error": None}
+    if not cfg.get("project_number"):
+        queue["error"] = "no board (PROJECT_NUMBER unset)"
+    elif not managed:
+        queue["error"] = "every repo is self-managed"
+    elif not run_queue:
+        queue["error"] = "skipped (--no-queue)"
+    else:
+        env = gh_env(cfg.get("gh_user"))
+        raw = run([os.path.join(HERE, "bin", "queue"), "--project", p, "--json", "--limit", "1000"],
+                  timeout=240, env=env) if env is not None else None
+        try:
+            q = json.loads(raw)
+            queue.update(eligible=len(q["ranked"]), auto_spawn=sum(1 for r in q["ranked"] if r.get("auto_spawn")),
+                         urgent=sum(1 for r in q["ranked"] if r.get("urgent_bypass")))
+        except Exception:
+            queue["error"] = "queue failed"
+            warn(f"{p}: bin/queue failed; queue depth unknown")
+
+    return {
+        "project": p, "org": cfg["org"], "priority": cfg.get("portfolio_priority") or 3,
+        "profile": prof, "agent_mb": agent_mb, "usage_weight": weight, "max_active": max_active,
+        "fleet_advice_mode": cfg.get("fleet_advice") or "ignore",
+        "weekly_ceiling": cfg.get("weekly_ceiling") or 80, "five_hour_ceiling": cfg.get("five_hour_ceiling") or 90,
+        "gh_user": cfg.get("gh_user") or None, "state_dir": state, "inbox": cfg["inbox"],
+        "manager": manager_of(cfg, workspaces, agents_by_ws),
+        "self_managed": [{"repo": r, "manager": (cfg.get("repo_manager") or {}).get(r)} for r in sorted(self_managed)],
+        "agents": {"active": active, "parked": parked, "hibernated": hibernated, "stalled": stalled,
+                   "standing": standing},
+        "questions": questions, "qc_ready": qc_ready, "qc_done": qc_done, "ux_gates": gates,
+        "queue": queue,
+        "prs": {"open": open_total, "awaiting_human": awaiting, "cap": cap, "reached": awaiting >= cap},
+        "watch_snapshot_age_min": snap_age,
+        "spawn_floor": (open(os.path.join(state, f"{p}-floor"), encoding="utf-8").read().strip()
+                        if os.path.exists(os.path.join(state, f"{p}-floor")) else None),
+    }
+
+
+# ---------- allocation advice ----------
+
+def advise(views, system):
+    """Per project: {advice, reason, suggested_max_active}. Deterministic; documented in
+    docs/design.md (Portfolio manager). Hard constraints first (disk, usage, memory floor), then
+    the spare memory is shared out to projects in PORTFOLIO_PRIORITY order, each new agent costing
+    its profile's MB, so a heavy project can take fewer new agents than a light one."""
+    mem = system["memory"]
+    avail = mem.get("avail_mb")
+    u = system["usage"]
+    weekly, five = u.get("weekly"), u.get("five_hour")
+    gh_left = {e["user"]: (e["graphql"] or {}).get("remaining") for e in system["gh"]}
+    disks = system["disk"]
+    out = {}
+    def startable(v):  # queue items that could start now (auto_spawn); None = unknown (no board)
+        q = v["queue"]
+        return q.get("auto_spawn") if q.get("auto_spawn") is not None else q.get("eligible")
+
+    order = sorted(views, key=lambda v: (v["priority"], -(startable(v) or 0), v["project"]))
+    spare = None if avail is None else max(0, avail - MEM_RESERVE_MB)
+    for v in order:
+        n_active = len(v["agents"]["active"])
+        cap = v["max_active"]
+        prio, prof, wt = v["priority"], v["profile"], v["usage_weight"]
+        adv, reason, sugg = "go", [], cap
+
+        def hold(why):
+            nonlocal adv, sugg
+            adv, sugg = "hold", min(sugg, n_active)
+            reason.append(why)
+
+        def slow(why, extra=0):
+            nonlocal adv, sugg
+            if adv != "hold":
+                adv = "slow"
+            sugg = min(sugg, n_active + extra)
+            reason.append(why)
+
+        low_disk = [d for d in disks if d["free_mb"] < DISK_HOLD_MB
+                    and any(l == "state" or l.startswith(f"{v['project']}:") for l in d["labels"])]
+        if low_disk:
+            hold(f"disk {low_disk[0]['free_mb'] // 1024} GB free at {low_disk[0]['path']}")
+        if weekly is not None and weekly >= v["weekly_ceiling"]:
+            if prio > 1:
+                hold(f"weekly {weekly:g}% >= {v['weekly_ceiling']}%: only P1 projects")
+            else:
+                reason.append(f"weekly {weekly:g}% over ceiling; P1 keeps going (engine ceiling still applies)")
+        elif weekly is not None and prio > 1 and v["weekly_ceiling"] - weekly < WEEKLY_MARGIN * wt:
+            slow(f"weekly {weekly:g}% is within {WEEKLY_MARGIN * wt:g} pts of {v['weekly_ceiling']}% for a {prof} project")
+        if five is not None and five >= v["five_hour_ceiling"]:
+            if prio > 1 and prof == "heavy":
+                hold(f"5h {five:g}% >= {v['five_hour_ceiling']}%")
+            else:
+                slow(f"5h {five:g}% >= {v['five_hour_ceiling']}%")
+        if avail is not None and avail < MEM_HOLD_MB:
+            if prof == "heavy":
+                hold(f"memory {avail / 1024:.1f} GB available < {MEM_HOLD_MB / 1024:g} GB: heavy project")
+            elif prof == "medium" or prio > 1:
+                slow(f"memory {avail / 1024:.1f} GB available < {MEM_HOLD_MB / 1024:g} GB")
+        if mem.get("swap_used_pct", 0) >= SWAP_SLOW_PCT and prof != "light":
+            slow(f"swap {mem['swap_used_pct']}% used")
+        left = gh_left.get(v["gh_user"] or "(active gh account)")
+        if left is not None and left < GH_LOW:
+            slow(f"gh GraphQL {left} points left for {v['gh_user'] or 'the active account'}")
+        # share spare memory out by priority: each new agent costs this project's MB
+        if spare is not None and adv != "hold":
+            want = max(0, min(cap, n_active + startable(v)) - n_active) \
+                if startable(v) is not None else max(0, cap - n_active)
+            fit = int(spare // v["agent_mb"]) if v["agent_mb"] else want
+            take = min(want, fit, max(0, sugg - n_active))
+            spare -= take * v["agent_mb"]
+            if take < min(want, max(0, sugg - n_active)):
+                slow(f"memory budget: room for {take} more {prof} agent(s) after higher-priority projects", take)
+            elif want == 0 and not reason:
+                reason.append("no startable work in its queue" if startable(v) == 0 else "at its own MAX_ACTIVE")
+        if v["prs"]["reached"]:
+            reason.append(f"PR cap reached ({v['prs']['awaiting_human']}/{v['prs']['cap']}): the engine holds new work")
+        if not reason:
+            reason.append("within every constraint")
+        out[v["project"]] = {"advice": adv, "reason": "; ".join(reason), "suggested_max_active": max(0, sugg),
+                             "priority": prio, "profile": prof, "active": n_active}
+    return out
+
+
+# ---------- cross-project dependencies ----------
+
+REF_RE = re.compile(r"^([\w.-]+)/([\w.-]+)#(\d+)$")
+
+
+def deps_path():
+    return os.path.join(pdo_config.global_state_dir(), "fleet-deps.json")
+
+
+def deps_load():
+    d = read_json(deps_path(), {}) or {}
+    return d.get("deps", []) if isinstance(d, dict) else []
+
+
+def deps_save(deps):
+    p = deps_path()
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump({"deps": deps}, fh, indent=1)
+        fh.write("\n")
+    os.replace(p + ".tmp", p)
+
+
+def ref_state(ref, envs):
+    """'open' | 'closed' | 'merged' | None for an org/repo#n issue or PR."""
+    m = REF_RE.match(ref)
+    if not m:
+        return None
+    raw = run(["gh", "api", f"repos/{m.group(1)}/{m.group(2)}/issues/{m.group(3)}"], timeout=20,
+              env=envs.get(m.group(1).lower()))
+    try:
+        d = json.loads(raw)
+    except Exception:
+        warn(f"deps: cannot read {ref}")
+        return None
+    if (d.get("pull_request") or {}).get("merged_at"):
+        return "merged"
+    return d.get("state")
+
+
+def deps_cmd(argv):
+    ap = argparse.ArgumentParser(prog="fleet deps")
+    ap.add_argument("action", choices=["add", "list", "done"])
+    ap.add_argument("refs", nargs="*")
+    ap.add_argument("--note", default="")
+    ap.add_argument("--all", action="store_true", help="list: include done dependencies")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    deps = deps_load()
+
+    def pair():
+        if len(a.refs) != 3 or a.refs[1] != "blocks" or not all(REF_RE.match(r) for r in (a.refs[0], a.refs[2])):
+            sys.exit('fleet deps: expected "<org/repo#n>" blocks "<org/repo#m>"')
+        return a.refs[0], a.refs[2]
+
+    if a.action == "add":
+        blocker, blocked = pair()
+        if blocker == blocked:
+            sys.exit("fleet deps: an item can't block itself")
+        dup = next((d for d in deps if d["blocker"] == blocker and d["blocked"] == blocked and not d.get("done_at")), None)
+        if dup:
+            print(f"already recorded: #{dup['id']} {blocker} blocks {blocked}")
+            return
+        nid = max([d["id"] for d in deps] or [0]) + 1
+        deps.append({"id": nid, "blocker": blocker, "blocked": blocked, "note": a.note,
+                     "added_at": int(time.time()), "done_at": None})
+        deps_save(deps)
+        print(f"added #{nid}: {blocker} blocks {blocked}")
+    elif a.action == "done":
+        if len(a.refs) == 1 and a.refs[0].lstrip("#").isdigit():
+            hits = [d for d in deps if d["id"] == int(a.refs[0].lstrip("#")) and not d.get("done_at")]
+        else:
+            blocker, blocked = pair()
+            hits = [d for d in deps if d["blocker"] == blocker and d["blocked"] == blocked and not d.get("done_at")]
+        if not hits:
+            sys.exit("fleet deps: no open dependency matches")
+        for d in hits:
+            d["done_at"] = int(time.time())
+            print(f"done #{d['id']}: {d['blocker']} blocks {d['blocked']}")
+        deps_save(deps)
+    else:
+        rows = [d for d in deps if a.all or not d.get("done_at")]
+        if a.json:
+            json.dump(rows, sys.stdout, indent=1)
+            print()
+            return
+        for d in rows:
+            print(f"#{d['id']} {d['blocker']} blocks {d['blocked']}{' [done]' if d.get('done_at') else ''}"
+                  f"{'  - ' + d['note'] if d.get('note') else ''}")
+        if not rows:
+            print("no open cross-project dependencies")
+
+
+# ---------- main ----------
+
+def waiting_list(views, inboxes):
+    """One list across projects, ranked: merge blockers (QC passed, awaiting review/merge), questions,
+    UX gates, QC, then the intake inbox."""
+    out = []
+    for v in views:
+        p = v["project"]
+        for x in v["qc_done"]:
+            out.append({"rank": 0, "why": "merge (QC passed)", "project": p,
+                        "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
+        for x in v["questions"]:
+            out.append({"rank": 1, "why": "question", "project": p, "item": x["workspace"], "title": "", "url": None})
+        for x in v["ux_gates"]:
+            out.append({"rank": 2, "why": "UX gate", "project": p,
+                        "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
+        for x in v["qc_ready"]:
+            out.append({"rank": 3, "why": "QC", "project": p,
+                        "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
+    for path, (count, projects) in inboxes.items():
+        if count:
+            out.append({"rank": 4, "why": "intake inbox", "project": ",".join(projects), "item": f"{count} report(s)",
+                        "title": "", "url": None, "count": count})
+    return sorted(out, key=lambda x: (x["rank"], x["project"], x["item"]))
+
+
+def inbox_count(path):
+    try:
+        return sum(1 for f in os.listdir(path) if f.endswith(".md") and not f.startswith("."))
+    except OSError:
+        return 0
+
+
+def gb(mb):
+    return "?" if mb is None else f"{mb / 1024:.1f} GB"
+
+
+def text_report(r, only):
+    s = r["system"]
+    m, u = s["memory"], s["usage"]
+    print(f"== fleet {r['at']}  ({len(r['projects'])} project(s))")
+    print(f"== memory: {gb(m['avail_mb'])} available of {gb(m['total_mb'])}; swap {gb(m['swap_used_mb'])} used"
+          f" of {gb(m['swap_total_mb'])} ({m['swap_used_pct']}%)")
+    def where(labels):
+        roots = [l for l in labels if not l.endswith("state") and ":" in l]
+        st = [l for l in labels if l.endswith("state")]
+        return " + ".join(st + ([f"{len(roots)} repo root(s)"] if roots else []))
+    print("== disk: " + "; ".join(f"{gb(d['free_mb'])} free ({where(d['labels'])}, {d['path']})" for d in s["disk"]))
+    wk = "?" if u["weekly"] is None else f"{u['weekly']:g}%"
+    fh = "?" if u["five_hour"] is None else f"{u['five_hour']:g}%"
+    print(f"== usage: weekly {wk}, 5h {fh}" + (f" ({u['age_min']} min old)" if u.get("age_min") is not None else ""))
+    for e in s["gh"]:
+        g, c = e["graphql"] or {}, e["core"] or {}
+        print(f"== gh {e['user']}: graphql {g.get('remaining', '?')}/{g.get('limit', '?')}, "
+              f"core {c.get('remaining', '?')}/{c.get('limit', '?')}"
+              + (f" (resets in {g['reset_min']} min)" if g.get("reset_min") is not None else ""))
+    a = s["agents"]
+    print(f"== agents: {a['herdr_total']} herdr agent(s) ({a['claude']} claude), "
+          f"{a['project_active']} active and {a['project_hibernated']} hibernated project agent(s)")
+    print("== waiting on you (all projects, by impact)")
+    if not r["waiting_on_you"]:
+        print("  nothing")
+    for w in r["waiting_on_you"]:
+        print(f"  {w['why']}: [{w['project']}] {w['item']}" + (f" {w['title'][:60]}" if w["title"] else "")
+              + (f" {w['url']}" if w.get("url") else ""))
+    for v in r["projects"]:
+        if only and v["project"] != only:
+            continue
+        mg = v["manager"]
+        ag = v["agents"]
+        print(f"== {v['project']} (P{v['priority']}, {v['profile']}: {v['agent_mb']} MB/agent, weight {v['usage_weight']:g})"
+              f"  manager: {mg['name'] or '(none)'}" + (f" [{mg['status']}]" if mg["live"] else ""))
+        print(f"  reach: {mg['reach']}")
+        for sm in v["self_managed"]:
+            print(f"  self-managed: {sm['repo']} -> {sm['manager'] or '(REPO_MANAGER unset: ask the human)'}")
+        def nm(rows, n=6):
+            names = [x.get("workspace") or x["agent"] for x in rows]
+            return (", ".join(names[:n]) + (f" +{len(names) - n} more" if len(names) > n else "")) or "-"
+        print(f"  active {len(ag['active'])}/{v['max_active']}: {nm(ag['active'])}")
+        if ag["parked"]:
+            print(f"  parked {len(ag['parked'])}: {nm(ag['parked'])}")
+        hw = [x for x in ag["hibernated"] if x["open_pr"]]
+        hd = len(ag["hibernated"]) - len(hw)
+        print(f"  hibernated {len(ag['hibernated'])}" + (f", {len(hw)} with an open PR: {nm(hw)}" if hw else "")
+              + (f"; {hd} with no open PR (probably finished)" if hd else ""))
+        if ag["stalled"]:
+            print(f"  stalled: {nm(ag['stalled'])}")
+        if ag["standing"]:
+            print("  standing: " + ", ".join(f"{x['workspace']} [{x['status']}]" for x in ag["standing"]))
+        q = v["queue"]
+        qd = f"{q['eligible']} eligible ({q['auto_spawn']} auto-spawn)" if q["eligible"] is not None else f"unknown ({q['error']})"
+        print(f"  queue: {qd}; PRs: {v['prs']['awaiting_human']} awaiting human / cap {v['prs']['cap']}"
+              f"{' (REACHED)' if v['prs']['reached'] else ''}, {v['prs']['open']} open"
+              + (f"; floor {v['spawn_floor']}" if v["spawn_floor"] else ""))
+        ad = r["advice"][v["project"]]
+        print(f"  advice: {ad['advice']} (suggested max active {ad['suggested_max_active']}): {ad['reason']}"
+              f"  [FLEET_ADVICE={v['fleet_advice_mode']}]")
+    print("== cross-project dependencies")
+    if not r["deps"]:
+        print("  none open")
+    for d in r["deps"]:
+        flag = f"  <- blocker {d['blocker_state'].upper()}: mark done (pdo fleet deps done {d['id']})" \
+            if d.get("blocker_state") in ("closed", "merged") else ""
+        print(f"  #{d['id']} {d['blocker']} blocks {d['blocked']}{'  - ' + d['note'] if d.get('note') else ''}{flag}")
+    if r["advice_written"]:
+        print("== advice written: " + ", ".join(r["advice_written"]))
+    if r["warnings"]:
+        print("== warnings")
+        for w in r["warnings"]:
+            print(f"  {w}")
+
+
+def main():
+    if sys.argv[1:2] == ["deps"]:
+        deps_cmd(sys.argv[2:])
+        return
+    ap = argparse.ArgumentParser(prog="fleet")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--project")
+    ap.add_argument("--write-advice", action="store_true")
+    ap.add_argument("--no-queue", action="store_true")
+    a = ap.parse_args()
+
+    cfgs = []
+    for name in pdo_config.projects():
+        cfg, err = pdo_config.try_load(name)
+        if cfg:
+            cfgs.append(cfg)
+        else:
+            warn(f"{name}: {err}")
+    if a.project and a.project not in {c["project"] for c in cfgs}:
+        sys.exit(f"fleet: unknown project '{a.project}'. Known projects: {' '.join(c['project'] for c in cfgs)}")
+    gstate = pdo_config.global_state_dir()
+
+    workspaces, agents, herdr_ok = herdr_state()
+    agents_by_ws = {x.get("workspace_id"): x for x in agents}
+
+    users = sorted({c.get("gh_user") or "" for c in cfgs})
+    envs = {u: gh_env(u) for u in users}
+    for u, e in envs.items():
+        if e is None:
+            warn(f"gh: no token for {u}")
+    org_env = {}
+    for c in cfgs:
+        org_env.setdefault((c["org"] or "").lower(), envs.get(c.get("gh_user") or ""))
+    facts = {}
+    for c in cfgs:
+        for repo in sorted(c["repo_root"]):
+            if (c["org"], repo) not in facts:
+                facts[(c["org"], repo)] = repo_facts(c["org"], repo, envs.get(c.get("gh_user") or ""))
+
+    views = [project_view(c, workspaces, agents_by_ws, herdr_ok, facts, not a.no_queue) for c in cfgs]
+
+    paths = [("state", gstate)] + [(f"{c['project']}:state", c["state_dir"]) for c in cfgs if c["state_dir"] != gstate]
+    for c in cfgs:
+        paths += [(f"{c['project']}:{r}", root) for r, root in sorted(c["repo_root"].items())]
+    system = {
+        "memory": memory(), "disk": disk(paths), "usage": usage(cfgs), "gh": rate_limits(users),
+        "agents": {"herdr_total": len(agents), "claude": sum(1 for x in agents if x.get("agent") == "claude"),
+                   "project_active": sum(len(v["agents"]["active"]) for v in views),
+                   "project_hibernated": sum(len(v["agents"]["hibernated"]) for v in views)},
+    }
+    advice = advise(views, system)
+
+    inboxes = {}
+    for v in views:
+        cnt, ps = inboxes.get(v["inbox"], (inbox_count(v["inbox"]), []))
+        inboxes[v["inbox"]] = (cnt, ps + [v["project"]])
+    deps = [d for d in deps_load() if not d.get("done_at")]
+    for d in deps:
+        d["blocker_state"] = ref_state(d["blocker"], org_env)
+
+    written = []
+    if a.write_advice:
+        doc = {"generated_at": int(time.time()), "generated_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               "constraints": {"mem_avail_mb": system["memory"]["avail_mb"],
+                               "swap_used_pct": system["memory"]["swap_used_pct"],
+                               "weekly": system["usage"]["weekly"], "five_hour": system["usage"]["five_hour"],
+                               "min_disk_free_mb": min((d["free_mb"] for d in system["disk"]), default=None)},
+               "projects": advice}
+        for sd in sorted({gstate} | {c["state_dir"] for c in cfgs}):
+            try:
+                os.makedirs(sd, exist_ok=True)
+                with open(os.path.join(sd, "fleet-advice.json.tmp"), "w", encoding="utf-8") as fh:
+                    json.dump(doc, fh, indent=1)
+                    fh.write("\n")
+                os.replace(os.path.join(sd, "fleet-advice.json.tmp"), os.path.join(sd, "fleet-advice.json"))
+                written.append(os.path.join(sd, "fleet-advice.json"))
+            except OSError as e:
+                warn(f"advice: cannot write {sd}: {e}")
+
+    report = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "system": system,
+              "projects": [v for v in views if not a.project or v["project"] == a.project],
+              "waiting_on_you": waiting_list([v for v in views if not a.project or v["project"] == a.project],
+                                             inboxes),
+              "advice": advice, "deps": deps, "advice_written": written, "warnings": WARN}
+    if a.json:
+        json.dump(report, sys.stdout, indent=1)
+        print()
+    else:
+        text_report(report, a.project)
+
+
+if __name__ == "__main__":
+    main()

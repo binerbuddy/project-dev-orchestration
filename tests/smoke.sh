@@ -37,7 +37,19 @@ case "$*" in
   "api repos/acme/widget/issues/12") cat "$SMOKE_DIR/issue12.json" ;;
   "api repos/acme/widget/issues/12/comments"*) ;;
   "pr view 5 -R acme/widget"*) cat "$SMOKE_DIR/pr5.json" ;;
+  "project item-list 9 --owner alpha"*) echo '{"items":[{"content":{"number":2},"repository":"alpha/tool","status":"Claude Work This"}]}' ;;
   "project item-list"*) echo '{"items":[]}' ;;
+  "api repos/alpha/tool/issues?state=open"*) cat "$SMOKE_DIR/alpha-issues.jsonl" ;;
+  "api repos/alpha/tool/issues/5") echo '{"state":"closed"}' ;;
+  "api repos/alpha/tool/issues/8") echo '{"state":"closed","pull_request":{"merged_at":"2026-01-01T00:00:00Z"}}' ;;
+  "api repos/gamma/lib/issues/7") echo '{"state":"open"}' ;;
+  "api rate_limit --jq"*) echo 4000 ;;
+  "api rate_limit")
+    [[ -n "${SMOKE_GH_RATE_FAIL:-}" ]] && exit 1
+    echo '{"resources":{"graphql":{"limit":5000,"remaining":4000,"reset":4102444800},"core":{"limit":5000,"remaining":4900,"reset":4102444800}}}' ;;
+  "api graphql"*"query fleet"*)
+    if [[ "$*" == *"r=tool"* ]]; then cat "$SMOKE_DIR/fleet-tool.json"
+    else echo '{"data":{"repository":{"pullRequests":{"totalCount":0,"nodes":[]},"gates":{"nodes":[]}}}}'; fi ;;
   "api repos/acme/"*"/issues?state=open"*) ;;
   "api graphql"*"open: pullRequests"*) echo '{"data":{"repository":{"open":{"nodes":[]},"done":{"nodes":[]}}}}' ;;
   "api graphql"*) echo '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}' ;;
@@ -47,9 +59,10 @@ EOF
 cat >"$T/fakebin/herdr" <<'EOF'
 #!/usr/bin/env bash
 echo "herdr $*" >>"$SMOKE_LOG"
+[[ -n "${SMOKE_HERDR_FAIL:-}" ]] && exit 1
 case "$1 ${2:-}" in
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "agent list") echo '{"result":{"agents":[]}}' ;;
+  "workspace list") if [[ -n "${SMOKE_HERDR_WS:-}" ]]; then cat "$SMOKE_HERDR_WS"; else echo '{"result":{"workspaces":[]}}'; fi ;;
+  "agent list") if [[ -n "${SMOKE_HERDR_AGENTS:-}" ]]; then cat "$SMOKE_HERDR_AGENTS"; else echo '{"result":{"agents":[]}}'; fi ;;
   *) echo '{"result":{}}' ;;
 esac
 EOF
@@ -120,7 +133,7 @@ for f in "$BIN"/* "$ENGINE"/tests/*.sh; do
 done
 check "bash -n lib.sh" bash -n "$BIN/lib.sh"
 check "python compile pdo_config.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$BIN/pdo_config.py"
-for p in queue watch hibernate pr-priority pr-agent; do check "$p --help" "$BIN/$p" --help; done
+for p in queue watch hibernate pr-priority pr-agent fleet; do check "$p --help" "$BIN/$p" --help; done
 
 # --- project resolution ---
 cd "$T/repos/widget.git/7-feature" || exit 1
@@ -233,6 +246,118 @@ has "fixture README uses FIXTURE_EXT" "$(git -C "$T/origin.git" show qc-fixtures
 echo other >"$T/other.bin"
 out="$("$BIN/qc-fixture-push" 5 "$T/other.bin" 2>&1)"; has "fixture extension warning" "$out" "does not end in .acme"
 eq "re-push unchanged" "$("$BIN/qc-fixture-push" 5 "$T/sample.acme" 2>/dev/null | head -1)" unchanged
+
+# --- fleet: two more projects in their own config dir and state dir ---
+FC="$T/fleet-cfg" FS="$T/fleet-state"
+mkdir -p "$FC/projects" "$FS/agents" "$FS/inbox"
+cat >"$FC/projects/alpha.env" <<EOF
+ORG="alpha"
+PROJECT_NUMBER=9
+declare -A REPO_ROOT=([tool]="$T/repos/docs")
+MANAGER="Orchestrator (alpha)"
+PORTFOLIO_PRIORITY=1
+RESOURCE_PROFILE=heavy
+FLEET_ADVICE="\${SMOKE_FLEET_ADVICE:-ignore}"
+EOF
+cat >"$FC/projects/gamma.env" <<EOF
+ORG="gamma"
+declare -A REPO_ROOT=([lib]="$T/repos/widget.git")
+SELF_MANAGED_REPOS=(lib)
+declare -A REPO_MANAGER=([lib]="Lib Lead")
+MANAGER="Gamma Lead"
+PORTFOLIO_PRIORITY=2
+RESOURCE_PROFILE=light
+GH_USER=gbot
+EOF
+iss() { jq -nc --argjson n "$1" --arg t "$2" --arg l "$3" '{number: $n, title: $t, labels: [{name: $l}], assignees: [],
+  type: {name: "Task"}, html_url: "https://github.com/alpha/tool/issues/\($n)", url: "https://api.github.com/repos/alpha/tool/issues/\($n)",
+  created_at: "2026-01-0\($n)T00:00:00Z", body: "", issue_dependencies_summary: {}}'; }
+{ iss 1 "ordinary work" P2-high; iss 2 "urgent work" P1-urgent; } >"$T/alpha-issues.jsonl"
+jq -n '{data: {repository: {pullRequests: {totalCount: 2, nodes: [
+  {number: 10, title: "agent three", url: "https://github.com/alpha/tool/pull/10", isDraft: false, headRefName: "feat/3", labels: {nodes: [{name: "ready for QC"}]}},
+  {number: 11, title: "agent four", url: "https://github.com/alpha/tool/pull/11", isDraft: false, headRefName: "feat/4", labels: {nodes: [{name: "QC complete - ready to review"}]}}]},
+  gates: {nodes: [{number: 6, title: "a prototype", url: "https://github.com/alpha/tool/issues/6"}]}}}}' >"$T/fleet-tool.json"
+echo '{"repo":"tool","number":3,"name":"tool-3 agent three","branch":"feat/3","hibernated_at":1700000000}' >"$FS/agents/tool-3.json"
+echo '{"result":{"workspaces":[{"label":"Orchestrator (alpha)","workspace_id":"wA","agent_status":"idle"},{"label":"tool-4 other work","workspace_id":"wB","agent_status":"blocked"}]}}' >"$T/herdr-ws.json"
+echo '{"result":{"agents":[{"agent":"claude","name":null,"workspace_id":"wA","pane_id":"wA:p1","agent_status":"idle"},{"agent":"claude","name":"tool-4","workspace_id":"wB","pane_id":"wB:p1","agent_status":"blocked"}]}}' >"$T/herdr-agents.json"
+echo r >"$FS/inbox/one.md"
+F=(env PDO_CONFIG_DIRS="$FC" PDO_STATE_DIR="$FS" PDO_INBOX="$FS/inbox" SMOKE_HERDR_WS="$T/herdr-ws.json" SMOKE_HERDR_AGENTS="$T/herdr-agents.json"
+   PDO_FLEET_WEEKLY=10 PDO_FLEET_FIVE_HOUR=5 PDO_FLEET_DISK_FREE_MB=100000 PDO_FLEET_SWAP_TOTAL_MB=0 PDO_FLEET_SWAP_USED_MB=0)
+
+eq "project-env MANAGER" "$("${F[@]}" "$BIN/project-env" --project gamma MANAGER)" "Gamma Lead"
+eq "project-env REPO_MANAGER entry" "$("${F[@]}" "$BIN/project-env" --project gamma 'REPO_MANAGER[lib]')" "Lib Lead"
+eq "default MANAGER with a board" "$("$BIN/project-env" --project acme MANAGER)" "Orchestrator (acme)"
+eq "default MANAGER without a board" "$("$BIN/project-env" --project beta MANAGER)" ""
+eq "portfolio env key defaults" "$("$BIN/pdo-config" --project acme --json | jq -c '[.portfolio_priority, .resource_profile, .fleet_advice]')" '[3,"medium","ignore"]'
+
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --json 2>&1)"
+eq "fleet: both projects" "$(jq -c '[.projects[].project]' <<<"$out" 2>/dev/null)" '["alpha","gamma"]'
+eq "fleet: plenty of room = go" "$(jq -c '[.advice.alpha.advice, .advice.gamma.advice]' <<<"$out" 2>/dev/null)" '["go","go"]'
+eq "fleet: alpha manager live" "$(jq -r '.projects[0].manager | "\(.live) \(.status)"' <<<"$out" 2>/dev/null)" "true idle"
+has "fleet: gamma manager not running" "$(jq -r '.projects[1].manager.reach' <<<"$out" 2>/dev/null)" "not running"
+eq "fleet: REPO_MANAGER for a self-managed repo" "$(jq -c '.projects[1].self_managed' <<<"$out" 2>/dev/null)" '[{"repo":"lib","manager":"Lib Lead"}]'
+eq "fleet: active / hibernated agents" "$(jq -c '.projects[0].agents | [(.active | map(.agent)), (.hibernated | map(.agent + ":" + (.open_pr | tostring)))]' <<<"$out" 2>/dev/null)" '[["tool#4"],["tool#3:true"]]'
+eq "fleet: queue depth" "$(jq -c '.projects[0].queue | [.eligible, .urgent]' <<<"$out" 2>/dev/null)" '[2,1]'
+has "fleet: no board is reported, not fatal" "$(jq -r '.projects[1].queue.error' <<<"$out" 2>/dev/null)" "no board"
+eq "fleet: PRs vs cap" "$(jq -c '.projects[0].prs | [.open, .awaiting_human, .cap]' <<<"$out" 2>/dev/null)" '[2,2,10]'
+eq "fleet: waiting on you ranked by impact" "$(jq -c '[.waiting_on_you[].why]' <<<"$out" 2>/dev/null)" '["merge (QC passed)","question","UX gate","QC","intake inbox"]'
+eq "fleet: rate limits per GH_USER identity" "$(jq -c '[.system.gh[] | "\(.user)=\(.graphql.remaining)"]' <<<"$out" 2>/dev/null)" '["(active gh account)=4000","gbot=4000"]'
+eq "fleet: agent count" "$(jq -c '.system.agents | [.herdr_total, .claude]' <<<"$out" 2>/dev/null)" '[2,2]'
+check "fleet: gbot's calls used its own token" grep -q "gh auth token -u gbot" "$SMOKE_LOG"
+check "fleet without --write-advice writes nothing" test ! -e "$FS/fleet-advice.json"
+
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=2000 "$BIN/fleet" --json 2>/dev/null)"
+eq "fleet: low memory holds heavy, slows the rest" "$(jq -c '[.advice.alpha.advice, .advice.gamma.advice]' <<<"$out" 2>/dev/null)" '["hold","slow"]'
+has "fleet: hold reason names memory" "$(jq -r .advice.alpha.reason <<<"$out" 2>/dev/null)" "heavy project"
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 PDO_FLEET_WEEKLY=85 "$BIN/fleet" --json 2>/dev/null)"
+eq "fleet: weekly over ceiling = only P1" "$(jq -c '[.advice.alpha.advice, .advice.gamma.advice]' <<<"$out" 2>/dev/null)" '["go","hold"]'
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=3900 "$BIN/fleet" --json 2>/dev/null)"
+eq "fleet: memory budget goes by priority and profile MB" "$(jq -c '[.advice.alpha.advice, .advice.alpha.suggested_max_active, .advice.gamma.advice, .advice.gamma.suggested_max_active]' <<<"$out" 2>/dev/null)" '["slow",2,"slow",0]'
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 PDO_FLEET_DISK_FREE_MB=1000 "$BIN/fleet" --json 2>/dev/null)"
+eq "fleet: low disk holds" "$(jq -r .advice.gamma.advice <<<"$out" 2>/dev/null)" hold
+
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 SMOKE_HERDR_FAIL=1 SMOKE_GH_RATE_FAIL=1 "$BIN/fleet" 2>&1)"; rc=$?
+eq "fleet: herdr and gh failures don't crash" "$rc" 0
+has "fleet: herdr failure is a warning" "$out" "herdr: workspace/agent list failed"
+has "fleet: gh failure is a warning" "$out" "gh: rate_limit unavailable"
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --project gamma --json 2>/dev/null)"
+eq "fleet --project limits the sections" "$(jq -c '[.projects[].project, (.advice | keys)]' <<<"$out" 2>/dev/null)" '["gamma",["alpha","gamma"]]'
+"${F[@]}" "$BIN/fleet" --project nope >/dev/null 2>&1; eq "fleet --project unknown fails" "$?" 1
+
+# cross-project dependencies
+eq "deps add" "$("${F[@]}" "$BIN/fleet" deps add alpha/tool#5 blocks gamma/lib#7 --note "needs the API")" "added #1: alpha/tool#5 blocks gamma/lib#7"
+"${F[@]}" "$BIN/fleet" deps add alpha/tool#8 blocks gamma/lib#7 >/dev/null
+"${F[@]}" "$BIN/fleet" deps add gamma/lib#7 blocks alpha/tool#1 >/dev/null
+has "deps add duplicate" "$("${F[@]}" "$BIN/fleet" deps add alpha/tool#5 blocks gamma/lib#7)" "already recorded"
+"${F[@]}" "$BIN/fleet" deps add "tool#5" blocks gamma/lib#7 >/dev/null 2>&1; eq "deps add rejects a bare ref" "$?" 1
+has "deps list" "$("${F[@]}" "$BIN/fleet" deps list)" "#1 alpha/tool#5 blocks gamma/lib#7  - needs the API"
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --json 2>/dev/null)"
+eq "fleet flags closed and merged blockers" "$(jq -c '[.deps[] | "\(.id):\(.blocker_state)"]' <<<"$out" 2>/dev/null)" '["1:closed","2:merged","3:open"]'
+has "fleet text says mark done" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" 2>/dev/null)" "blocker CLOSED: mark done (pdo fleet deps done 1)"
+eq "deps done by pair" "$("${F[@]}" "$BIN/fleet" deps done alpha/tool#5 blocks gamma/lib#7)" "done #1: alpha/tool#5 blocks gamma/lib#7"
+eq "deps done by id" "$("${F[@]}" "$BIN/fleet" deps done 2)" "done #2: alpha/tool#8 blocks gamma/lib#7"
+eq "deps list shows open only" "$("${F[@]}" "$BIN/fleet" deps list --json | jq -c 'map(.id)')" "[3]"
+eq "deps list --all" "$("${F[@]}" "$BIN/fleet" deps list --all --json | jq -c 'map(.id)')" "[1,2,3]"
+"${F[@]}" "$BIN/fleet" deps done 2 >/dev/null 2>&1; eq "deps done twice fails" "$?" 1
+
+# the advice file, and queue / watch honouring it
+"${F[@]}" PDO_FLEET_MEM_AVAIL_MB=2000 "$BIN/fleet" --write-advice >/dev/null 2>&1
+eq "fleet --write-advice" "$(jq -r .projects.alpha.advice "$FS/fleet-advice.json" 2>/dev/null)" hold
+qa() { "${F[@]}" "$@" "$BIN/queue" --project alpha --json 2>/dev/null; }
+out="$(qa SMOKE_FLEET_ADVICE=ignore)"
+eq "queue ignores advice by default" "$(jq -c '[.ranked[] | "\(.number):\(.auto_spawn)"]' <<<"$out")" '["2:true","1:true"]'
+eq "queue reports advisory advice" "$(jq -c '[.fleet.advice, .fleet.honoured, .max_active]' <<<"$out")" '["hold",false,3]'
+out="$(qa SMOKE_FLEET_ADVICE=honour)"
+eq "queue honours hold; urgent bypass still wins" "$(jq -c '[.ranked[] | "\(.number):\(.auto_spawn):\(.fleet_hold)"]' <<<"$out")" '["2:true:false","1:false:true"]'
+eq "queue: suggested_max_active bounds max_active" "$(jq -c '[.fleet.honoured, .max_active]' <<<"$out")" '[true,1]'
+out="$("${F[@]}" SMOKE_FLEET_ADVICE=honour "$BIN/queue" --project alpha 2>/dev/null)"
+has "queue summary shows the advice" "$out" "fleet: hold, max 1"
+has "queue marks fleet-held rows" "$out" "(fleet hold)"
+out="$("${F[@]}" SMOKE_FLEET_ADVICE=honour "$BIN/watch" --project alpha --peek 2>/dev/null)"
+eq "watch: honoured advice bounds the slots" "$(jq -c '[.max_active, .free_slots, .fleet.advice]' <<<"$out" 2>/dev/null)" '[1,0,"hold"]'
+jq '.generated_at -= 3 * 3600' "$FS/fleet-advice.json" >"$FS/x.json" && mv "$FS/x.json" "$FS/fleet-advice.json"
+out="$(qa SMOKE_FLEET_ADVICE=honour)"
+eq "queue ignores stale advice" "$(jq -c '[.fleet, .max_active, ([.ranked[].auto_spawn] | all)]' <<<"$out")" '[null,3,true]'
 
 # --- pdo dispatcher ---
 has "pdo help lists commands" "$("$BIN/pdo" help)" "intake-submit"

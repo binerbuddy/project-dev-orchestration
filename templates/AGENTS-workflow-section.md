@@ -50,7 +50,8 @@ Otherwise, at the start of work, check for `.agents/local/guide-ack` (per clone,
 **Other repos.** Check with your manager (the agent that started you) or a human before touching any repo outside
 this one. Reading another repo for context is fine; editing its files, creating branches, pushing, opening PRs or
 issues, commenting, labelling or closing anything there (a `Closes <org>/<other-repo>#<n>` line included: merging
-closes that issue) waits for their yes.
+closes that issue) waits for their yes. When another project's manager owns that repo, your manager checks with the
+portfolio manager, which asks the owner.
 
 **Intake rule.** Don't fix or file bugs and ideas you notice outside your task. Queue them for the intake agent:
 `pdo intake-submit "<your workspace name>" "<what, where, repro>"` (one report per call). The human triages the queue with

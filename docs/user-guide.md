@@ -118,6 +118,29 @@ With `bin/install --bin`, every script runs as `pdo <script>`; from a checkout, 
 | `file-issue`, `claim`, `board-status` | board and issue helpers |
 | `pr-agent <pr#>`, `pr-priority`, `shots <pr#>`, `agent-meta backfill` | PR helpers |
 | `project-env [KEY]` | the current project's resolved settings |
+| `fleet [--json] [--write-advice]` | every project at once, the machine's constraints, allocation advice (read-only by default) |
+| `fleet deps add\|list\|done …` | cross-project dependencies |
+
+## Portfolio manager (several projects)
+
+When one machine runs several projects, open one more session and type
+`/project-portfolio-manager`. It runs `pdo fleet` and gives you **one** "Waiting on you" list for
+every project, ranked by impact (PRs ready to merge, questions, UX gates, then QC and the intake
+inbox), plus the constraint that binds most right now (memory, usage, disk, GitHub calls).
+
+| Say | What happens |
+|---|---|
+| `status` | The unified list, plus each project's manager, agents, queue and PRs. |
+| `which project should get resources?` | It explains the go / slow / hold advice and the trade-off. |
+| `apply the advice` | After your yes, `pdo fleet --write-advice`; projects with `FLEET_ADVICE=honour` follow it. |
+| `team A needs a change in team B's repo` | It asks B's manager and brings the answer back. |
+| `loop` | An hourly check that reports only changes and escalations. |
+
+It never does project work and never stops another project's agents; it asks that project's
+manager. Projects opt in to its advice with `FLEET_ADVICE=honour` in their env file, and set
+`PORTFOLIO_PRIORITY` (1 = highest), `RESOURCE_PROFILE` (`light`, `medium`, `heavy`), `MANAGER`
+(the manager's workspace name) and, for self-managed repos, `REPO_MANAGER`. Cross-project
+dependencies: `pdo fleet deps add "<org/repo#n>" blocks "<org/repo#m>"`.
 
 ## When something looks wrong
 

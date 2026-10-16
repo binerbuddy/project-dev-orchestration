@@ -89,7 +89,9 @@ the queue status, the P-labels and the two QC labels.
   before touching any repo outside your current working repo. Reading it for context is fine; edits,
   branches, pushes, PRs, issues, comments, labels or closes there (a `Closes <org>/<other-repo>#<n>`
   line included) wait for their yes. The standing agents' configured repos (the project env's
-  `REPO_ROOT`) are their working scope, as their skills describe.
+  `REPO_ROOT`) are their working scope, as their skills describe. When another project's manager
+  owns that repo, your manager checks with the Portfolio Manager (`project-portfolio-manager`), which
+  asks the owner; a yes relayed by another agent still has to come from a human.
 - **Name workspaces by label** (e.g. `Acme-245 export sort order`) in anything a human reads, never a
   bare id.
 

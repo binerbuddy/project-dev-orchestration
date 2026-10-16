@@ -15,6 +15,10 @@ Spawn floor: bin/floor P2 (persisted) or --floor makes auto_spawn false for ever
 floor, Claude Work This included; below_floor marks those rows. The urgent bypass is unaffected.
 Urgent bypass: an item that is P1-urgent AND on Claude Work This is flagged urgent_bypass; the
 orchestrator starts it even with no free slot and over the usage ceiling.
+Fleet advice (soft): with FLEET_ADVICE=honour in the project env and a fresh (< 2 h)
+$PDO_STATE_DIR/fleet-advice.json from `fleet --write-advice`, "hold" makes auto_spawn false
+(fleet_hold) for everything except the urgent bypass, and suggested_max_active caps max_active
+below MAX_ACTIVE. With the default FLEET_ADVICE=ignore the advice is only shown in the summary.
 Further tie-breaks: parent epic In Progress, oldest first
 (original creation date when the issue was migrated from another tracker).
 
@@ -258,11 +262,19 @@ def main():
     ranked = [r for r in ranked if not r["excluded"]]
 
     floor = read_floor(CFG["project"], a.floor)
+    advice = pdo_config.fleet_advice(CFG)
+    fleet_held = bool(advice and advice["honoured"] and advice.get("advice") == "hold")
+    own_max = CFG.get("max_active") or 3
+    max_active = own_max
+    if advice and advice["honoured"] and isinstance(advice.get("suggested_max_active"), int):
+        max_active = max(0, min(own_max, advice["suggested_max_active"]))  # a bound on top, never a raise
     for r in ranked + excluded:
         r["p"] = p_name(r["p_level"])
         # the floor binds CWT too (human's rule); the urgent bypass is separate and unaffected
         r["below_floor"] = r["p_level"] > floor
-        r["auto_spawn"] = (r["cwt"] or r["p_level"] <= AUTO_MAX_P) and not r["below_floor"]
+        # fleet "hold" (only when honoured) is soft: the urgent bypass still wins
+        r["fleet_hold"] = fleet_held and not r["urgent_bypass"]
+        r["auto_spawn"] = (r["cwt"] or r["p_level"] <= AUTO_MAX_P) and not r["below_floor"] and not r["fleet_hold"]
 
     key = lambda r: (not r["cwt"], r["p_level"], not r["security"], not r["bug"], not r["parent_active"],
                      r["created"], r["repo"], r["number"])
@@ -270,7 +282,9 @@ def main():
     excluded.sort(key=key)
 
     if a.json:
-        out = {"ranked": ranked[: a.limit], "floor": p_name(floor) if floor < NO_PRIORITY else None}
+        out = {"ranked": ranked[: a.limit], "floor": p_name(floor) if floor < NO_PRIORITY else None,
+               "eligible": len(ranked), "excluded_count": len(excluded), "max_active": max_active,
+               "fleet": advice}
         if a.all:
             out["excluded"] = excluded
         json.dump(out, sys.stdout, indent=2)
@@ -284,10 +298,16 @@ def main():
             f" route:{r['route']}" if r["route"] else "",
             f" unblocks:{','.join(r['unblocks'])} ({p_name(r['own_p_level'])}->{r['p']})" if lifted else "",
             " epic-active" if r["parent_active"] else "",
-            "" if r["auto_spawn"] else (" (below floor)" if r["below_floor"] else " (waits for drain)")])
+            "" if r["auto_spawn"] else (" (below floor)" if r["below_floor"] else
+                                        " (fleet hold)" if r["fleet_hold"] else " (waits for drain)")])
         print(f"{pos:>3}. {r['p']:<2} {'CWT' if r['cwt'] else '   '} {r['ref']:<22} {r['type']:<7} {r['title'][:70]}{flags}")
     fl = f"; spawn floor {p_name(floor)} (nothing below it starts, CWT included)" if floor < NO_PRIORITY else ""
-    print(f"     ({len(ranked)} eligible, {len(excluded)} excluded; P1-P3 and CWT auto-spawn, P4/P- wait for drain{fl})")
+    fa = ""
+    if advice:
+        fa = (f"; fleet: {advice.get('advice')}, max {advice.get('suggested_max_active')}"
+              f" ({advice.get('reason', '')}; {advice['age_min']} min old, "
+              f"{'honoured, max_active ' + str(max_active) if advice['honoured'] else 'advisory: FLEET_ADVICE=ignore'})")
+    print(f"     ({len(ranked)} eligible, {len(excluded)} excluded; P1-P3 and CWT auto-spawn, P4/P- wait for drain{fl}{fa})")
     if a.all:
         print("\nExcluded:")
         for r in excluded:

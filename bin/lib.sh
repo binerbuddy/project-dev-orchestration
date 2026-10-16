@@ -169,17 +169,29 @@ pdo_finalize() {
   LABEL_QC_DONE="${LABEL_QC_DONE:-QC complete - ready to review}"
   CARRY_LABELS="${CARRY_LABELS:-client-requested}"
   SCREENSHOT_DIR="${SCREENSHOT_DIR:-.omc/qa}"
+  # portfolio (bin/fleet): who manages this project, its rank and resource weight across projects
+  if [[ -z "${MANAGER+x}" ]]; then
+    if [[ -n "${PROJECT_NUMBER:-}" ]]; then MANAGER="Orchestrator ($PROJECT)"; else MANAGER=""; fi
+  fi
+  PORTFOLIO_PRIORITY="${PORTFOLIO_PRIORITY:-3}"   # 1 = highest
+  RESOURCE_PROFILE="${RESOURCE_PROFILE:-medium}"  # light | medium | heavy (bin/fleet has the weights)
+  AGENT_MB="${AGENT_MB:-}"                        # override the profile's MB per active agent
+  AGENT_USAGE_WEIGHT="${AGENT_USAGE_WEIGHT:-}"    # override the profile's usage weight
+  FLEET_ADVICE="${FLEET_ADVICE:-ignore}"          # honour | ignore (fleet-advice.json in queue/watch)
   export ORG PRIMARY_REPO
 }
 
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
-  local k roots="{}" routes="{}" managed="[]"
+  local k roots="{}" routes="{}" managed="[]" repo_mgr="{}"
   if declare -p REPO_ROOT >/dev/null 2>&1; then
     for k in "${!REPO_ROOT[@]}"; do roots="$(jq -c --arg k "$k" --arg v "${REPO_ROOT[$k]}" '. + {($k): $v}' <<<"$roots")"; done
   fi
   if declare -p ROUTE_SKILL >/dev/null 2>&1; then
     for k in "${!ROUTE_SKILL[@]}"; do routes="$(jq -c --arg k "$k" --arg v "${ROUTE_SKILL[$k]}" '. + {($k): $v}' <<<"$routes")"; done
+  fi
+  if declare -p REPO_MANAGER >/dev/null 2>&1; then
+    for k in "${!REPO_MANAGER[@]}"; do repo_mgr="$(jq -c --arg k "$k" --arg v "${REPO_MANAGER[$k]}" '. + {($k): $v}' <<<"$repo_mgr")"; done
   fi
   if declare -p SELF_MANAGED_REPOS >/dev/null 2>&1; then
     managed="$(printf '%s\n' ${SELF_MANAGED_REPOS[@]+"${SELF_MANAGED_REPOS[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')"
@@ -197,6 +209,9 @@ pdo_config_json() {
     --arg cwt "$CWT_STATUS" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
     --arg max_active "${MAX_ACTIVE:-}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
+    --arg manager "${MANAGER:-}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
+    --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
+    --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
     '{project: $project, env_file: $env_file, env_dir: $env_dir, engine_home: $home, state_dir: $state,
       inbox: $inbox, org: $org, project_number: $num, repo_root: $roots, route_skill: $routes,
       self_managed_repos: $managed, default_model: $model, brief_template: $brief, gh_user: $gh_user,
@@ -211,7 +226,11 @@ pdo_config_json() {
       carry_labels: ($carry | split(" ") | map(select(length > 0))), screenshot_dir: $shots,
       max_active: ($max_active | if . == "" then null else tonumber end),
       weekly_ceiling: ($weekly | if . == "" then null else tonumber end),
-      five_hour_ceiling: ($five | if . == "" then null else tonumber end)}'
+      five_hour_ceiling: ($five | if . == "" then null else tonumber end),
+      manager: $manager, repo_manager: $repo_mgr, portfolio_priority: ($prio | tonumber? // 3),
+      resource_profile: $profile, agent_mb: ($agent_mb | if . == "" then null else (tonumber? // null) end),
+      agent_usage_weight: ($weight | if . == "" then null else (tonumber? // null) end),
+      fleet_advice: $fleet, usage_cache: $usage_cache}'
 }
 
 # identity_wrapper <dir>: the command prefix that gives an agent working in <dir> its GitHub identity.

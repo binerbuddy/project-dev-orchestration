@@ -169,6 +169,10 @@ GH_USER="<login>"               # the gh login this project's agents use
 # PROJECT_NUMBER=<n>            # only with a board (below)
 # FIXTURE_EXT=".<ext>"          # from step 5
 # QC_PORTS="<ports>"            # the human's reserved QC ports, from §Dev servers
+# MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
+# PORTFOLIO_PRIORITY=3          # portfolio manager (pdo fleet): 1 = highest
+# RESOURCE_PROFILE=medium       # light | medium | heavy
+# FLEET_ADVICE=ignore           # honour = follow pdo fleet's go/slow/hold advice
 ```
 
 - **`GH_USER`:** show the logins `gh auth status` lists and ask which one this project's agents use. Leave it unset

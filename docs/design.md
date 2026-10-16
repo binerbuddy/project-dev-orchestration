@@ -20,6 +20,10 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
   project's QC servers for the human's hands-on QC, and relays feedback to the PR's command agent.
 - **Intake agent.** The standing `intake` workspace (`project-intake`). It turns reports into typed,
   prioritised issues. Other agents queue reports with `bin/intake-submit`; the human drains the queue.
+- **Portfolio Manager.** Optional, one level above the per-project managers (`project-portfolio-manager`
+  skill). It observes every project and the machine they share, gives the human one ranked "waiting on
+  you" list, brokers cross-project requests and dependencies, and advises how resources are split. It
+  never does project work. See [Portfolio manager](#portfolio-manager).
 - **Human.** Answers questions directly in a command agent's workspace, does UX and QC review, and merges
   by hand.
 
@@ -76,6 +80,9 @@ without `--allow-phase`: the epic's build agent works every phase. Independent f
 - **Spawn floor:** `bin/floor P2` (persisted per project) stops anything below it from auto-spawning,
   CWT included.
 - **Urgent bypass:** P1 AND on CWT starts even with no free slot and over the usage ceiling.
+- **Fleet advice (opt-in):** with `FLEET_ADVICE=honour` and a fresh `fleet-advice.json`, a `hold`
+  makes everything but the urgent bypass `auto_spawn: false`, and `suggested_max_active` caps
+  `max_active` (see [Portfolio manager](#portfolio-manager)).
 - **Priority inheritance:** an issue that blocks others runs at the best P-level (and CWT) among the
   issues it transitively holds up, when being blocked is their only exclusion. A P4 blocking a P2 runs
   as P2; otherwise it would deadlock behind `drain`.
@@ -205,6 +212,12 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `PROJECT_NUMBER` | (none) | org project board number; the queue and claim need it |
 | `REPO_ROOT` | (required) | `declare -A`: repo name → local clone root |
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
+| `REPO_MANAGER` | `()` | `declare -A`: self-managed repo → its manager's workspace/session name (`fleet`) |
+| `MANAGER` | `Orchestrator (<p>)` with a board, else empty | the project manager's workspace/session name; empty = the human |
+| `PORTFOLIO_PRIORITY` | `3` | rank across projects, 1 = highest (`fleet` advice) |
+| `RESOURCE_PROFILE` | `medium` | `light` / `medium` / `heavy`: MB and usage weight per active agent |
+| `AGENT_MB` / `AGENT_USAGE_WEIGHT` | from the profile | override the profile's per-agent MB / usage weight |
+| `FLEET_ADVICE` | `ignore` | `honour`: queue and watch apply fresh `fleet-advice.json` |
 | `ROUTE_SKILL` | (required for spawn) | `declare -A`: route → first-prompt skill |
 | `DEFAULT_MODEL` | `opus` | model alias for launched agents |
 | `BRIEF_TEMPLATE` | see Spawning | dispatch brief template |
@@ -280,6 +293,44 @@ in **`.agents/project-profile.md`** on the default branch; the skills cite its s
 - The repo's `AGENTS.md` gets a short "How work flows here" section from
   [`templates/AGENTS-workflow-section.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/AGENTS-workflow-section.md); `CLAUDE.md` can be
   `@AGENTS.md` plus any Claude-only notes.
+
+## Portfolio manager
+
+One level above the per-project managers. "Observe and coordinate, observe the system's
+constraints, and prioritise the managers' allocations; not a strict slot queue, since projects need
+different amounts of resources." It never does project work.
+
+- **`bin/fleet`** (read-only) enumerates every project env along `PDO_CONFIG_DIRS` and reports, per
+  project: its manager (`MANAGER`; `REPO_MANAGER` for `SELF_MANAGED_REPOS`) and how to reach it
+  (peer messaging, else the herdr agent, else the human); active, parked, hibernated (split by
+  whether an open PR remains), stalled and standing agents, from the agent metadata, herdr's
+  workspace/agent lists and the watcher's last saved snapshot; what waits on the human (QC-passed
+  PRs, `awaiting-ux-gate` issues, pending questions, `ready for QC` PRs, the intake inbox); the
+  queue's eligible and auto-spawn counts; open PRs awaiting the human against the PR cap. System
+  constraints: weekly and 5-hour usage (`USAGE_CACHE`), free memory and swap, disk free on the
+  state dir and repo roots (one line per filesystem), GraphQL and core rate limits per distinct
+  `GH_USER` (a token from `gh auth token -u`, never a switch), and the herdr agent count.
+- **Allocation advice:** per project `go`, `slow` or `hold`, a reason and a soft
+  `suggested_max_active`. Hard limits first (disk under 5 GB, weekly usage over the ceiling = only
+  `PORTFOLIO_PRIORITY` 1, 5-hour ceiling, memory under 3 GB available = hold heavy projects, swap
+  half full, fewer than 600 GraphQL points); then the spare memory (available minus a 2 GB reserve)
+  is shared out in priority order, each new agent costing its `RESOURCE_PROFILE` MB (light 400,
+  medium 900, heavy 1800; usage weights 0.5 / 1 / 2). The full rules and thresholds are in
+  `skills/project-portfolio-manager/references/allocation.md`.
+- **Advice file.** Only `fleet --write-advice` writes `fleet-advice.json` (into each project's state
+  dir). A project with `FLEET_ADVICE=honour` and advice under 2 h old: `queue` makes `hold` rows
+  `auto_spawn: false` (`fleet_hold`) except the urgent bypass, and bounds `max_active` by
+  `suggested_max_active`; `watch` computes `free_slots` with that bound. The default, `ignore`,
+  changes nothing; `queue` shows the advice in its summary line either way. Stale advice is ignored.
+- **Cross-project dependencies:** `fleet deps add|list|done "<org/repo#n>" blocks "<org/repo#m>"`
+  in `$PDO_STATE_DIR/fleet-deps.json`. `fleet` lists the open ones and flags any whose blocker has
+  closed or merged.
+- **Degrades gracefully.** No herdr (metadata only), no board (queue depth unknown), a gh failure
+  or no usage data: each is a warning in the report, never a crash and never "fine".
+- **Escalation.** The other-repos rule escalates through it: an agent asks its manager; when another
+  project's manager owns the repo, that manager asks the Portfolio Manager, which brokers with the
+  owner. Peers never grant approvals; holding a project needs the human's yes, and it asks a
+  project's manager rather than hibernating that project's agents itself.
 
 ## Overlays
 

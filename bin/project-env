@@ -4,7 +4,8 @@
 #
 # Usage: project-env [--project P]          every key as KEY=value lines
 #        project-env [--project P] KEY      just KEY's value (empty line + exit 1 when unknown)
-# Maps print one line per entry: REPO_ROOT[<repo>]=<path>, ROUTE_SKILL[<route>]=<skill>.
+# Maps print one line per entry: REPO_ROOT[<repo>]=<path>, ROUTE_SKILL[<route>]=<skill>,
+# REPO_MANAGER[<repo>]=<manager>.
 # `project-env REPO_ROOT` prints "<repo>=<path>" lines; `project-env 'REPO_ROOT[x]'` one value.
 # Project: --project, else $PDO_PROJECT, else the project whose REPO_ROOT holds the cwd's repo.
 set -euo pipefail
@@ -29,6 +30,7 @@ SCALARS=(PROJECT ORG PROJECT_NUMBER PRIMARY_REPO DEFAULT_MODEL GH_USER AGENT_CLI
   IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK QC_REPO QC_WORKTREE QC_PORTS FIXTURE_EXT FIXTURE_BRANCH
   SYSTEM_MANAGER_WORKSPACE ORCHESTRATE_SKILL QC_SKILL INTAKE_SKILL PDO_SKILL_PREFIX CWT_STATUS P_LABELS
   LABEL_QC_READY LABEL_QC_DONE CARRY_LABELS SCREENSHOT_DIR MAX_ACTIVE WEEKLY_CEILING FIVE_HOUR_CEILING
+  MANAGER PORTFOLIO_PRIORITY RESOURCE_PROFILE AGENT_MB AGENT_USAGE_WEIGHT FLEET_ADVICE
   PDO_ENV_FILE PDO_ENV_DIR PDO_STATE_DIR PDO_INBOX PDO_HOME)
 map_lines() {  # map_lines <name> <prefix-style>: style "full" = NAME[k]=v, "short" = k=v
   declare -p "$1" >/dev/null 2>&1 || return 0
@@ -42,13 +44,14 @@ managed() { declare -p SELF_MANAGED_REPOS >/dev/null 2>&1 && echo "${SELF_MANAGE
 if [[ -z "$KEY" ]]; then
   for k in "${SCALARS[@]}"; do printf '%s=%s\n' "$k" "${!k:-}"; done
   printf 'SELF_MANAGED_REPOS=%s\n' "$(managed)"
-  map_lines REPO_ROOT full; map_lines ROUTE_SKILL full
+  map_lines REPO_ROOT full; map_lines ROUTE_SKILL full; map_lines REPO_MANAGER full
   exit 0
 fi
 case "$KEY" in
-  REPO_ROOT|ROUTE_SKILL) map_lines "$KEY" short ;;
-  REPO_ROOT\[*\]|ROUTE_SKILL\[*\])
+  REPO_ROOT|ROUTE_SKILL|REPO_MANAGER) map_lines "$KEY" short ;;
+  REPO_ROOT\[*\]|ROUTE_SKILL\[*\]|REPO_MANAGER\[*\])
     n="${KEY%%[*}" k="${KEY#*[}"; k="${k%]}"
+    declare -p "$n" >/dev/null 2>&1 || { echo; exit 1; }
     declare -n mm="$n"; [[ -n "${mm[$k]+x}" ]] || { echo; exit 1; }; echo "${mm[$k]}" ;;
   SELF_MANAGED_REPOS) managed ;;
   *)

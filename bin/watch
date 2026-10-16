@@ -58,7 +58,7 @@ HERE = pdo_config.ENGINE_HOME
 STATE_DIR = pdo_config.state_dir()  # replaced by the project's resolved state dir in load_repos()
 CFG = {}
 USAGE_CACHE = os.environ.get("USAGE_CACHE") or os.path.expanduser("~/.claude/plugins/oh-my-claudecode/.usage-cache-anthropic.json")
-MAX_ACTIVE = 3
+MAX_ACTIVE_DEFAULT = MAX_ACTIVE = 3
 WEEKLY_CEILING = 80   # keep 20% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
@@ -90,7 +90,14 @@ def load_repos(project):
         CFG.clear()
         CFG.update(pdo_config.load(project, "watch"), _asked=project)
     STATE_DIR = CFG["state_dir"]
-    MAX_ACTIVE = CFG["max_active"] or MAX_ACTIVE
+    MAX_ACTIVE = CFG["max_active"] or MAX_ACTIVE_DEFAULT
+    # fleet advice (FLEET_ADVICE=honour + fresh fleet-advice.json): suggested_max_active is a soft
+    # upper bound on top of MAX_ACTIVE; "hold" itself is applied by bin/queue (auto_spawn false).
+    # The urgent bypass ignores free_slots, so it still wins.
+    adv = pdo_config.fleet_advice(CFG)
+    CFG["_fleet"] = adv
+    if adv and adv["honoured"] and isinstance(adv.get("suggested_max_active"), int):
+        MAX_ACTIVE = max(0, min(MAX_ACTIVE, adv["suggested_max_active"]))
     WEEKLY_CEILING = CFG["weekly_ceiling"] or WEEKLY_CEILING
     FIVE_HOUR_CEILING = CFG["five_hour_ceiling"] or FIVE_HOUR_CEILING
     QC_READY, QC_DONE = CFG["label_qc_ready"], CFG["label_qc_done"]
@@ -465,6 +472,7 @@ def snapshot(project, prev):
         "usage": u, "usage_over_ceiling": over, "queue": q, "queue_at": q_at,
         "qc_new": qcn, "qc_since": qc_since, "qc_seen": qc_seen,
         "spawn_floor": floor,  # bin/floor; report it in the status line
+        "max_active": MAX_ACTIVE, "fleet": CFG.get("_fleet"),  # portfolio advice, when fresh
     }
 
 

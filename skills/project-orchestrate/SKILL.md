@@ -95,6 +95,11 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling or the PR cap) and
   5. If spawn fails, **move on** to the next candidate in the same tick. Spawn logs the failure and the
      queue skips that issue for 24h. Try at most 5 candidates per tick; report each failure in one line.
 - Spawn at most `free_slots` agents per tick.
+- **Fleet advice.** When the project honours the portfolio advice (`FLEET_ADVICE=honour`), `queue`
+  rows carry `fleet_hold: true` (and `auto_spawn: false`) while the advice is `hold`, and the
+  snapshot's `max_active` / `free_slots` already include `suggested_max_active`. Don't spawn
+  around it; the urgent bypass still wins. Add the advice (`fleet.advice`) to your status line
+  when present.
 
 ## 4. Re-arm and report
 
