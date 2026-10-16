@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# pdo — one entry point for the engine scripts, so only this name goes on PATH (several script
+# names, such as `watch`, would shadow system commands).
+#
+# Usage: pdo <command> [args...]     e.g. pdo queue --all, pdo intake-submit "<ws>" "<report>"
+#        pdo help                    list the commands
+set -euo pipefail
+BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  help|-h|--help)
+    echo "usage: pdo <command> [args...]; commands:"
+    for f in "$BIN"/*; do
+      n="$(basename "$f")"
+      [[ -x "$f" && -f "$f" && "$n" != pdo && "$n" != install && "$n" != *.* ]] || continue
+      printf '  %-20s %s\n' "$n" "$(sed -n '2{s/^# *//;s/^"""//;p}' "$f" | cut -c1-90)"
+    done ;;
+  */*|.*|lib.sh|pdo_config.py|pdo) echo "pdo: not a command: $cmd" >&2; exit 2 ;;
+  *)
+    [[ -x "$BIN/$cmd" && -f "$BIN/$cmd" ]] || { echo "pdo: unknown command '$cmd' (pdo help)" >&2; exit 2; }
+    exec "$BIN/$cmd" "$@" ;;
+esac

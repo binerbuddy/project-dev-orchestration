@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""pr-agent — which command agent owns a PR, and is it alive?
+
+Usage: pr-agent <pr#> [--repo R] [--project P]   (--repo defaults to the project's PRIMARY_REPO)
+Prints JSON: pr (number, url, branch, head sha, labels, state), issues it closes, the matching
+agent metadata (matched by branch first, then by closed issue), and whether its herdr
+workspace is still open, plus its status and pending question.
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+
+
+def run(*a):
+    r = subprocess.run(a, capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("pr", type=lambda s: int(s.lstrip("#")))
+    ap.add_argument("--repo")
+    ap.add_argument("--project")
+    a = ap.parse_args()
+    cfg = pdo_config.load(a.project, "pr-agent")
+    org = cfg["org"]
+    a.repo = a.repo or cfg["primary_repo"]
+    if not a.repo:
+        raise SystemExit("pr-agent: pass --repo (the project has no PRIMARY_REPO)")
+    AGENTS = os.path.join(cfg["state_dir"], "agents")
+
+    pr = json.loads(run("gh", "pr", "view", str(a.pr), "-R", f"{org}/{a.repo}", "--json",
+                        "number,url,title,headRefName,headRefOid,state,labels,closingIssuesReferences") or "{}")
+    if not pr:
+        raise SystemExit(f"pr-agent: cannot read PR #{a.pr}")
+    issues = [i["number"] for i in pr.get("closingIssuesReferences", [])]
+    metas = []
+    for f in glob.glob(os.path.join(AGENTS, f"{a.repo}-*.json")):
+        try:
+            metas.append(json.load(open(f, encoding="utf-8")))
+        except ValueError:
+            pass
+    agent = next((m for m in metas if m.get("branch") == pr["headRefName"]), None) \
+        or next((m for m in metas if m.get("number") in issues), None)
+
+    alive = status = None
+    question = False
+    if agent:
+        # herdr reuses workspace ids: an id only counts while its label is still this agent's name
+        labels = {w["workspace_id"]: w.get("label") for w in json.loads(run("herdr", "workspace", "list") or '{"result":{"workspaces":[]}}')["result"]["workspaces"]}
+        agents = json.loads(run("herdr", "agent", "list") or '{"result":{"agents":[]}}')["result"]["agents"]
+        pane = next((x for x in agents if x.get("workspace_id") == agent.get("workspace_id")
+                     and labels.get(agent.get("workspace_id")) == agent.get("name")
+                     and x.get("agent") == "claude"), None)
+        alive = bool(pane)
+        if pane:
+            status = pane.get("agent_status")
+            tail = "\n".join(run("herdr", "pane", "read", pane["pane_id"]).splitlines()[-40:])
+            question = status == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed"))
+    print(json.dumps({
+        "pr": {"number": pr["number"], "url": pr["url"], "title": pr["title"], "branch": pr["headRefName"],
+               "sha": pr["headRefOid"], "state": pr["state"], "labels": [l["name"] for l in pr["labels"]]},
+        "issues": issues, "agent": agent, "alive": alive, "status": status, "question_pending": question,
+    }, indent=1))
+
+
+if __name__ == "__main__":
+    main()

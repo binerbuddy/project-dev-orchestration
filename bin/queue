@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""queue — deterministic work queue for the orchestrator (no model judgement).
+
+Usage: queue [--project P] [--repo NAME] [--limit N] [--json] [--all]
+
+Ranking uses only the human's vocabulary: P-levels (P1-urgent … P4-low; unlabelled sorts
+after P4) and Claude Work This (CWT).
+  - CWT items come first, then by P-level.
+  - Within a P-level: Security-labelled, then Bugs (logic bugs), then the rest.
+Auto-spawn (auto_spawn: true): CWT, P1, P2, P3. Only P4 and unprioritised items wait for `drain`.
+Priority inheritance: an issue that blocks others runs at the best P-level (and CWT) among the
+issues it transitively holds up, when being blocked is their only exclusion: "a P4 blocking a
+P2 runs as P2". Such rows show "unblocks:#N (P4->P2)".
+Spawn floor: bin/floor P2 (persisted) or --floor makes auto_spawn false for everything below the
+floor, Claude Work This included; below_floor marks those rows. The urgent bypass is unaffected.
+Urgent bypass: an item that is P1-urgent AND on Claude Work This is flagged urgent_bypass; the
+orchestrator starts it even with no free slot and over the usage ceiling.
+Further tie-breaks: parent epic In Progress, oldest first
+(original creation date when the issue was migrated from another tracker).
+
+Excluded (listed with --all): assigned (human/interactive lock), on-hold, likely-fixed, epic-phase (a phase is run by its
+parent Epic's build agent, never on its own), a spawn failure in the last 24h, needs-triage, blocked by
+an open issue, already In Progress / In Review / Done on the board, an open herdr workspace
+for the issue, Epics without a route:* label (containers, not work items), and
+orchestrator-system issues (work on the orchestrator itself; the System Manager owns those,
+named by SYSTEM_MANAGER_WORKSPACE).
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+CFG = {}  # the resolved project config, set by load_env()
+BOARD_LIMIT = 2000
+# defaults; the project's P_LABELS (best first) and CWT_STATUS replace them in load_env()
+PRIORITIES = {"P1-urgent": 1, "P2-high": 2, "P3-medium": 3, "P4-low": 4}
+CWT = "Claude Work This"
+NO_PRIORITY = 5   # sorts after P4; shown as "P-" (unprioritised)
+AUTO_MAX_P = 3    # P1–P3 auto-spawn; P4 and unprioritised wait for `drain`
+
+
+def read_floor(project, override=None):
+    """The spawn floor as a P-level number (5 = none). --floor overrides the persisted bin/floor value."""
+    v = override
+    if v is None:
+        try:
+            v = open(os.path.join(pdo_config.state_dir(), f"{project}-floor"), encoding="utf-8").read().strip()
+        except OSError:
+            v = ""
+    v = (v or "").upper()
+    return int(v[1]) if re.fullmatch(r"P[1-4]", v) else NO_PRIORITY
+
+
+def p_name(level):
+    return f"P{level}" if level < NO_PRIORITY else "P-"
+IN_FLIGHT = {"In Progress", "In Review", "Done"}
+
+
+def sh(*args):
+    r = subprocess.run(args, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"queue: {' '.join(args[:3])}… failed: {r.stderr.strip()}")
+    return r.stdout
+
+
+def load_env(project):
+    """ORG, PROJECT_NUMBER and the repos this orchestrator manages (REPO_ROOT minus
+    SELF_MANAGED_REPOS, which another manager owns end to end)."""
+    global PRIORITIES, CWT
+    CFG.update(pdo_config.load(project, "queue"))
+    PRIORITIES = {l: i + 1 for i, l in enumerate(CFG["p_labels"])}
+    CWT = CFG["cwt_status"]
+    if not re.fullmatch(r"\d+", CFG["project_number"] or ""):
+        sys.exit(f"queue: project '{CFG['project']}' has no PROJECT_NUMBER (the queue ranks a project board)")
+    managed = set(CFG["self_managed_repos"])
+    return CFG["org"], CFG["project_number"], [r for r in CFG["repo_root"] if r not in managed]
+
+
+def board_items(org, num):
+    data = json.loads(sh("gh", "project", "item-list", num, "--owner", org,
+                         "--format", "json", "--limit", str(BOARD_LIMIT)))
+    items = data["items"]
+    if len(items) >= BOARD_LIMIT:
+        sys.exit(f"queue: board returned {len(items)} items = limit; raise BOARD_LIMIT (truncation guard)")
+    out = {}
+    for it in items:
+        c = it.get("content") or {}
+        repo = (it.get("repository") or "").rsplit("/", 1)[-1]
+        if c.get("number"):
+            out[(repo, c["number"])] = it.get("status")
+    return out
+
+
+def open_issues(org, repo):
+    raw = sh("gh", "api", f"repos/{org}/{repo}/issues?state=open&per_page=100", "--paginate",
+             "--jq", ".[] | select(.pull_request | not)")
+    return [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+
+def herdr_workspaces():
+    try:
+        r = subprocess.run(["herdr", "workspace", "list"], capture_output=True, text=True, timeout=10)
+        return [w["label"] for w in json.loads(r.stdout)["result"]["workspaces"]]
+    except Exception:
+        return []  # herdr not running: no workspace-based exclusion
+
+
+FAIL_LOG = None  # $PDO_STATE_DIR/spawn-failures.jsonl, set in main() once the state dir is known
+FAIL_SKIP_SEC = 24 * 3600
+
+
+def recent_failures():
+    """(repo, number) -> last error, for spawn failures within FAIL_SKIP_SEC."""
+    out, now = {}, time.time()
+    try:
+        for line in open(FAIL_LOG or os.path.join(pdo_config.state_dir(), "spawn-failures.jsonl"), encoding="utf-8"):
+            try:
+                f = json.loads(line)
+            except ValueError:
+                continue
+            if now - f.get("at", 0) < FAIL_SKIP_SEC:
+                out[(f["repo"], f["number"])] = f.get("error", "")
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def inherit_priority(org, rows):
+    """Priority inheritance: a blocker runs at the best P-level (and CWT) of what it holds up.
+
+    Without this, a P4 blocking a P2 deadlocks: the P2 is excluded as blocked, and the P4 only
+    runs with `drain`. A blocked issue passes its level on only when being blocked is its sole
+    exclusion (it would run otherwise); applied transitively, so Z blocks A blocks B lifts Z.
+    """
+    by_key = {(r["repo"], r["number"]): r for r in rows}
+    blocks = {}
+    for r in rows:
+        if r["blocking"]:
+            raw = sh("gh", "api", f"repos/{org}/{r['repo']}/issues/{r['number']}/dependencies/blocking",
+                     "--jq", r'.[] | select(.state == "open") | "\(.repository_url | split("/") | .[-1]) \(.number)"')
+            blocks[(r["repo"], r["number"])] = [(ln.split()[0], int(ln.split()[1])) for ln in raw.splitlines() if ln.strip()]
+
+    def wants_to_run(r):
+        return all(x.startswith("blocked-by:") for x in r["excluded"])
+
+    changed = True
+    while changed:  # fixpoint over the (small) blocking graph
+        changed = False
+        for key, targets in blocks.items():
+            r = by_key.get(key)
+            if not r:
+                continue
+            for t in targets:
+                b = by_key.get(t)
+                if b and wants_to_run(b) and (b["p_level"] < r["p_level"] or (b["cwt"] and not r["cwt"])):
+                    r["p_level"] = min(r["p_level"], b["p_level"])
+                    r["cwt"] = r["cwt"] or b["cwt"]
+                    changed = True
+                ref = b["ref"] if b else f"{t[0]}#{t[1]}"
+                if b and wants_to_run(b) and ref not in r["unblocks"]:
+                    r["unblocks"].append(ref)
+
+
+def origin_date(issue):
+    m = re.search(r"created (\d{4}-\d{2}-\d{2}) by", issue.get("body") or "")
+    return m.group(1) if m else issue["created_at"][:10]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project")
+    ap.add_argument("--repo")
+    ap.add_argument("--limit", type=int, default=15)
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--all", action="store_true", help="also list excluded items with reasons")
+    ap.add_argument("--floor", help="spawn floor P1..P4 or none; default: the persisted bin/floor value")
+    a = ap.parse_args()
+
+    org, num, repos = load_env(a.project)
+    if a.repo:
+        repos = [a.repo]
+    board = board_items(org, num)
+    workspaces = herdr_workspaces()
+    failures = recent_failures()
+
+    issues = []
+    for repo in repos:
+        for i in open_issues(org, repo):
+            i["_repo"] = repo
+            issues.append(i)
+    by_url = {i["url"]: i for i in issues}
+
+    ranked, excluded = [], []
+    for i in issues:
+        repo, n = i["_repo"], i["number"]
+        labels = [l["name"] for l in i["labels"]]
+        lower = {l.lower() for l in labels}
+        status = board.get((repo, n))
+        itype = (i.get("type") or {}).get("name") or "none"
+        prio = next((PRIORITIES[l] for l in labels if l in PRIORITIES), None)
+        security = "security" in lower
+        route = next((l.split(":", 1)[1] for l in labels if l.startswith("route:")), None)
+        parent = by_url.get(i.get("parent_issue_url") or "")
+        parent_active = bool(parent and board.get((parent["_repo"], parent["number"])) == "In Progress")
+        deps = i.get("issue_dependencies_summary") or {}
+        blocked = deps.get("blocked_by", 0)
+        ref = pdo_config.ref(CFG, repo, n)
+
+        reasons = []
+        if i.get("assignees"):
+            reasons.append("assigned:" + ",".join(u["login"] for u in i["assignees"]))
+        if status in IN_FLIGHT:
+            reasons.append(f"board:{status}")
+        if any(w.startswith(f"{repo}-{n} ") for w in workspaces):
+            reasons.append("workspace-open")
+        if "needs-triage" in lower and status != CWT:
+            reasons.append("needs-triage")
+        if "on-hold" in lower:
+            reasons.append("on-hold")
+        if "likely-fixed" in lower:
+            reasons.append("likely-fixed")
+        if "epic-phase" in lower:
+            reasons.append("epic-phase(run parent)")
+        if (repo, n) in failures:
+            reasons.append("spawn-failed<24h")
+        if blocked:
+            reasons.append(f"blocked-by:{blocked}")
+        if itype == "Epic" and not route:
+            reasons.append("epic-without-route")
+
+        p_level = prio if prio is not None else NO_PRIORITY
+        cwt = status == CWT
+        if "orchestrator-system" in lower:
+            reasons.append(f"orchestrator-system({CFG.get('system_manager_workspace') or 'System Manager'})")
+
+        row = {
+            "ref": ref, "repo": repo, "number": n, "title": i["title"], "type": itype,
+            "priority": next((l for l in labels if l in PRIORITIES), None), "security": security,
+            "route": route, "status": status, "p_level": p_level, "cwt": cwt, "parent_active": parent_active,
+            "bug": itype == "Bug",
+            "created": origin_date(i), "url": i["html_url"], "excluded": reasons,
+            "own_p_level": p_level, "own_cwt": cwt, "blocking": deps.get("blocking", 0), "unblocks": [],
+            # human's rule (2026-09-30): P1-urgent AND on Claude Work This starts even when every
+            # slot is taken or usage is over the ceiling. Neither condition alone bypasses.
+            "urgent_bypass": status == CWT and min(PRIORITIES, key=PRIORITIES.get) in labels,
+        }
+        (excluded if reasons else ranked).append(row)
+
+    inherit_priority(org, ranked + excluded)
+    ranked = [r for r in ranked if not r["excluded"]]
+
+    floor = read_floor(CFG["project"], a.floor)
+    for r in ranked + excluded:
+        r["p"] = p_name(r["p_level"])
+        # the floor binds CWT too (human's rule); the urgent bypass is separate and unaffected
+        r["below_floor"] = r["p_level"] > floor
+        r["auto_spawn"] = (r["cwt"] or r["p_level"] <= AUTO_MAX_P) and not r["below_floor"]
+
+    key = lambda r: (not r["cwt"], r["p_level"], not r["security"], not r["bug"], not r["parent_active"],
+                     r["created"], r["repo"], r["number"])
+    ranked.sort(key=key)
+    excluded.sort(key=key)
+
+    if a.json:
+        out = {"ranked": ranked[: a.limit], "floor": p_name(floor) if floor < NO_PRIORITY else None}
+        if a.all:
+            out["excluded"] = excluded
+        json.dump(out, sys.stdout, indent=2)
+        print()
+        return
+
+    for pos, r in enumerate(ranked[: a.limit], 1):
+        lifted = r["p_level"] < r["own_p_level"] or (r["cwt"] and not r["own_cwt"])
+        flags = "".join([
+            " [URGENT-BYPASS]" if r["urgent_bypass"] else "", " [SEC]" if r["security"] else "",
+            f" route:{r['route']}" if r["route"] else "",
+            f" unblocks:{','.join(r['unblocks'])} ({p_name(r['own_p_level'])}->{r['p']})" if lifted else "",
+            " epic-active" if r["parent_active"] else "",
+            "" if r["auto_spawn"] else (" (below floor)" if r["below_floor"] else " (waits for drain)")])
+        print(f"{pos:>3}. {r['p']:<2} {'CWT' if r['cwt'] else '   '} {r['ref']:<22} {r['type']:<7} {r['title'][:70]}{flags}")
+    fl = f"; spawn floor {p_name(floor)} (nothing below it starts, CWT included)" if floor < NO_PRIORITY else ""
+    print(f"     ({len(ranked)} eligible, {len(excluded)} excluded; P1-P3 and CWT auto-spawn, P4/P- wait for drain{fl})")
+    if a.all:
+        print("\nExcluded:")
+        for r in excluded:
+            print(f"  {r['p']:<2} {'CWT' if r['cwt'] else '   '} {r['ref']:<22} {', '.join(r['excluded']):<34} {r['title'][:60]}")
+
+
+if __name__ == "__main__":
+    main()

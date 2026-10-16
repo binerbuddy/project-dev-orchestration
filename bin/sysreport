@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# sysreport — one-call live status of the orchestration system, for the System Manager.
+# Read-only: uses `bin/watch --peek`, so it never consumes the orchestrator's events.
+#
+# Usage: sysreport [--project P]
+# Ends with SYSREPORT_HOOK's lines (e.g. a remote preview host's status), when the project sets one.
+set -uo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+PDO_SCRIPT=sysreport
+PROJECT=""
+[[ "${1:-}" == "--project" ]] && PROJECT="$2"
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+STATE="$PDO_STATE_DIR"
+
+repo_line() { echo "$(git -C "$1" log --oneline -1) | $(git -C "$1" status --short | wc -l) uncommitted path(s)"; }
+echo "== engine: $(repo_line "$PDO_HOME" 2>/dev/null)"
+if [[ "$PDO_ENV_DIR" != "$PDO_HOME" ]] && git -C "$PDO_ENV_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "== config ($PDO_ENV_DIR): $(repo_line "$PDO_ENV_DIR")"
+fi
+echo "== spawn floor: $("$HERE/bin/floor" --project "$PROJECT")"
+U="${USAGE_CACHE:-$HOME/.claude/plugins/oh-my-claudecode/.usage-cache-anthropic.json}"
+[[ -f "$U" ]] && echo "== usage: weekly $(jq -r .data.weeklyPercent "$U")%, 5h $(jq -r .data.fiveHourPercent "$U")%"
+
+echo "== herdr workspaces (name | status)"
+herdr workspace list 2>/dev/null | jq -r '.result.workspaces[] | "  \(.label) | \(.agent_status)"'
+echo "== named agents: $(herdr agent list 2>/dev/null | jq -r '[.result.agents[] | .name // empty] | join(", ")')"
+
+if pgrep -f '[b]in/watch --project' >/dev/null; then
+  echo "== watcher: running (pid $(pgrep -f '[b]in/watch --project' | head -1))"
+else
+  echo "== watcher: NOT running (the orchestrator re-arms on its next tick)"
+fi
+[[ -f "$STATE/log.md" ]] && { echo "== orchestrator log (last 3)"; tail -3 "$STATE/log.md" | cut -c1-220 | sed 's/^/  /'; }
+
+echo "== snapshot (peek)"
+"$HERE/bin/watch" --project "$PROJECT" --peek 2>/dev/null | jq -r '
+  "  active: \(.active | join(", "))  free_slots: \(.free_slots)",
+  "  hibernated: \([.agents | to_entries[] | select(.value.hibernated) | .key] | join(", "))",
+  "  waiting on human: \([.waiting_on_you[] | "\(.why): \(.agent // .workspace)"] | join("; "))",
+  "  queue top: \([.queue[:3][] | "\(.p) \(.ref)\(if .auto_spawn then "" else " (held)" end)"] | join(", "))"'
+
+echo "== local QC: $("$HERE/bin/qc" status --project "$PROJECT" 2>/dev/null | head -1)"
+echo "== intake inbox: $(find "$PDO_INBOX" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l) pending"
+if [[ -n "${SYSREPORT_HOOK:-}" && -x "$SYSREPORT_HOOK" ]]; then
+  "$SYSREPORT_HOOK" || echo "== SYSREPORT_HOOK exited $?"
+fi

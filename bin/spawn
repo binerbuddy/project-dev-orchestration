@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# spawn — start a command agent for one GitHub issue in its own herdr workspace.
+#
+# Usage: spawn <repo> <issue#> [--route small|design|build] [--brief "2-3 words"]
+#              [--base <ref>] [--model <alias>] [--project P] [--no-claim] [--allow-phase] [--dry-run]
+#
+# Creates a dedicated git worktree (so each agent has its own cwd and OMC state),
+# writes a dispatch brief, opens a herdr workspace named "<Repo>-<n> <brief>", and
+# starts the agent (AGENT_CLI, default claude) there with Remote Control on and the route's lifecycle skill as the
+# first prompt. On success, claims the issue (bin/claim: assignee + board In Progress).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# Every failure (except --dry-run) is logged; bin/queue skips an issue for 24h after one,
+# so the orchestrator moves on to the next item instead of retrying a broken one.
+die() {
+  echo "spawn: $*" >&2
+  if [[ "${DRY:-0}" -eq 0 && -n "${REPO:-}" && -n "${NUM:-}" ]]; then
+    local FAIL_LOG; FAIL_LOG="$(pdo_state_dir)/spawn-failures.jsonl"
+    mkdir -p "$(dirname "$FAIL_LOG")"
+    jq -cn --arg repo "$REPO" --argjson num "${NUM//[^0-9]/0}" --arg error "$*" \
+      '{repo: $repo, number: $num, at: (now | floor), error: $error}' >>"$FAIL_LOG" || true
+  fi
+  exit 1
+}
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+
+PROJECT="" ROUTE="" BRIEF="" BASE="" MODEL="" DRY=0 CLAIM=1 ALLOW_PHASE=0
+[[ $# -ge 2 ]] || die "usage: spawn <repo> <issue#> [--route R] [--brief TEXT] [--base REF] [--model M] [--dry-run]"
+REPO="$1" NUM="${2#\#}"; shift 2
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --route) ROUTE="$2"; shift 2 ;;
+    --brief) BRIEF="$2"; shift 2 ;;
+    --base) BASE="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    --dry-run) DRY=1; shift ;;
+    --no-claim) CLAIM=0; shift ;;
+    --allow-phase) ALLOW_PHASE=1; shift ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+[[ "$NUM" =~ ^[0-9]+$ ]] || die "issue number must be numeric: $NUM"
+
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+ROOT="${REPO_ROOT[$REPO]:-}"
+[[ -n "$ROOT" && -d "$ROOT" ]] || die "no local root configured for repo '$REPO'"
+MODEL="${MODEL:-$DEFAULT_MODEL}"
+
+# --- issue facts (live, never cached: a closed issue must not be worked) ---
+ISSUE_JSON="$(gh api "repos/$ORG/$REPO/issues/$NUM")" || die "cannot read $ORG/$REPO#$NUM"
+jq -e '.pull_request == null' >/dev/null <<<"$ISSUE_JSON" || die "$REPO#$NUM is a pull request"
+[[ "$(jq -r .state <<<"$ISSUE_JSON")" == open ]] || die "$REPO#$NUM is closed"
+ME="$(gh api user --jq .login)"
+OTHERS="$(jq -r --arg me "$ME" '[.assignees[].login | select(. != $me)] | join(",")' <<<"$ISSUE_JSON")"
+[[ -z "$OTHERS" ]] || die "$REPO#$NUM is assigned to $OTHERS (human/interactive lock)"
+# An epic-phase issue is worked by its parent Epic's build agent (the feature-build skill runs
+# every phase); dispatching it alone would fork the epic's branch and duplicate work.
+if [[ $ALLOW_PHASE -eq 0 ]] && jq -e '[.labels[].name | ascii_downcase] | index("epic-phase")' >/dev/null <<<"$ISSUE_JSON"; then
+  PARENT="$(jq -r '.parent_issue_url // "" | split("/") | if length > 1 then "\(.[-3])#\(.[-1])" else "?" end' <<<"$ISSUE_JSON")"
+  die "$REPO#$NUM is an epic-phase; spawn its parent epic instead (bin/spawn <repo> ${PARENT##*#} --route build), or pass --allow-phase"
+fi
+TITLE="$(jq -r .title <<<"$ISSUE_JSON")"
+TYPE="$(jq -r '.type.name // "none"' <<<"$ISSUE_JSON")"
+LABELS="$(jq -r '[.labels[].name] | join(", ")' <<<"$ISSUE_JSON")"
+BODY="$(jq -r '.body // ""' <<<"$ISSUE_JSON")"
+# Human directives: comments starting with "Claude" / "@claude", from trusted authors only
+# (OWNER/MEMBER/COLLABORATOR), so an outside commenter can't steer a command agent.
+DIRECTIVES="$(gh api "repos/$ORG/$REPO/issues/$NUM/comments" --paginate --jq '.[]
+  | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+  | select(.body | test("^\\s*@?claude\\b"; "i"))
+  | "- **\(.user.login), \(.created_at[:10])** (\(.html_url)):\n\n  \(.body | gsub("\n"; "\n  "))\n"')"
+[[ -n "$DIRECTIVES" ]] || DIRECTIVES="_None._"
+
+# --- route: explicit > route:* label > needs-design label > Epic heuristic > small ---
+if [[ -z "$ROUTE" ]]; then
+  ROUTE="$(jq -r '[.labels[].name | select(startswith("route:")) | ltrimstr("route:")][0] // ""' <<<"$ISSUE_JSON")"
+fi
+if [[ -z "$ROUTE" ]]; then
+  if jq -e '[.labels[].name] | index("needs-design")' >/dev/null <<<"$ISSUE_JSON"; then ROUTE=design
+  elif [[ "$TYPE" == Epic ]]; then
+    if grep -qiE 'docs/design/.*\.md' <<<"$BODY" && grep -qE '\bREADY\b|ready for implementation' <<<"$BODY"; then ROUTE=build; else ROUTE=design; fi
+  else ROUTE=small; fi
+fi
+SKILL="${ROUTE_SKILL[$ROUTE]:-}"
+[[ -n "$SKILL" ]] || die "unknown route '$ROUTE'"
+
+# --- naming ---
+if [[ -z "$BRIEF" ]]; then
+  BRIEF="$(tr 'A-Z' 'a-z' <<<"$TITLE" | tr -c 'a-z0-9\n' ' ' | tr -s ' ' '\n' \
+    | grep -vxE 'a|an|the|to|of|in|on|for|with|and|or|is|are|be|not|no|from|by|at|as|it|its|add|update|fix' \
+    | grep -vxE '' | head -3 | paste -sd' ')"
+fi
+BRIEF="$(tr -s ' ' <<<"$BRIEF" | sed 's/^ //; s/ $//')"
+[[ -n "$BRIEF" ]] || die "could not derive a brief; pass --brief"
+NAME="$REPO-$NUM $BRIEF"
+AGENT="$(tr 'A-Z' 'a-z' <<<"$REPO" | tr -cd 'a-z0-9-' | cut -c1-24)-$NUM"
+SLUG="$NUM-$(tr 'A-Z ' 'a-z-' <<<"$BRIEF" | tr -cd 'a-z0-9-')"
+
+case "$ROUTE" in
+  small)
+    if [[ "$TYPE" == Bug ]]; then BRANCH="fix/$SLUG"; else BRANCH="feat/$SLUG"; fi
+    BASE="${BASE:-origin/main}" ;;
+  design)
+    BRANCH="docs/$SLUG-design"; BASE="${BASE:-origin/main}" ;;
+  build)
+    BRANCH="feat/$SLUG"
+    if [[ -z "$BASE" ]]; then
+      DESIGN_BRANCH="$(grep -oE 'docs/[A-Za-z0-9._-]+-design' <<<"$BODY" | head -1 || true)"  # one path segment: a blob URL continues with /<path>
+      [[ -n "$DESIGN_BRANCH" ]] || die "build route: no docs/*-design branch in the epic body; pass --base"
+      BASE="origin/$DESIGN_BRANCH"
+    fi ;;
+esac
+WORKTREE="$ROOT/$SLUG"
+# the design and build runs of one epic coexist briefly (design parks, build starts)
+[[ "$ROUTE" == design ]] && WORKTREE="$ROOT/$SLUG-design"
+
+# --- duplicate guards ---
+if herdr workspace list 2>/dev/null | jq -e --arg p "$REPO-$NUM " \
+     '.result.workspaces[] | select(.label | startswith($p))' >/dev/null; then
+  die "a herdr workspace for $REPO-$NUM already exists"
+fi
+[[ ! -e "$WORKTREE" ]] || die "worktree path already exists: $WORKTREE"
+if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then die "branch already exists: $BRANCH"; fi
+
+BRIEF_DIR="$PDO_STATE_DIR/briefs"
+BRIEF_FILE="$BRIEF_DIR/$REPO-$NUM.md"
+PROMPT="$SKILL Work $ORG/$REPO#$NUM. Read your dispatch brief first: $BRIEF_FILE"
+
+if [[ $DRY -eq 1 ]]; then
+  jq -n --arg name "$NAME" --arg route "$ROUTE" --arg skill "$SKILL" --arg branch "$BRANCH" \
+    --arg base "$BASE" --arg worktree "$WORKTREE" --arg model "$MODEL" --arg prompt "$PROMPT" \
+    --arg type "$TYPE" --arg labels "$LABELS" \
+    '{dry_run: true, name: $name, type: $type, labels: $labels, route: $route, skill: $skill,
+      branch: $branch, base: $base, worktree: $worktree, model: $model, prompt: $prompt}'
+  exit 0
+fi
+
+# --- worktree (rolled back, with the workspace, if a later step fails) ---
+WS_ID=""
+rollback() {
+  [[ -n "$WS_ID" ]] && herdr workspace close "$WS_ID" >/dev/null 2>&1 || true
+  git -C "$ROOT" worktree remove --force "$WORKTREE" 2>/dev/null || true
+  git -C "$ROOT" branch -D "$BRANCH" >/dev/null 2>&1 || true
+}
+trap 'rc=$?; [[ $rc -ne 0 ]] && rollback; exit $rc' EXIT
+# explicit refspec: bare clones may lack the remote-tracking fetch rule, leaving no origin/<b>
+git -C "$ROOT" fetch -q origin "+refs/heads/${BASE#origin/}:refs/remotes/origin/${BASE#origin/}"
+git -C "$ROOT" worktree add -q "$WORKTREE" -b "$BRANCH" "$BASE"
+git -C "$WORKTREE" branch -q --unset-upstream 2>/dev/null || true
+
+# --- dispatch brief ---
+mkdir -p "$BRIEF_DIR"
+ENGINE="$HERE/bin" NUMBER="$NUM" REF="$ORG/$REPO#$NUM" URL="$(jq -r .html_url <<<"$ISSUE_JSON")" \
+NAME="$NAME" WORKTREE="$WORKTREE" BRANCH="$BRANCH" BASE="$BASE" ROUTE="$ROUTE" SKILL="$SKILL" \
+TITLE="$TITLE" TYPE="$TYPE" LABELS="${LABELS:-none}" BODY="$BODY" DIRECTIVES="$DIRECTIVES" \
+python3 - "$BRIEF_TEMPLATE" "$BRIEF_FILE" <<'PY'
+import os, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+text = open(src, encoding="utf-8").read()
+text = re.sub(r"\{\{([A-Z]+)\}\}", lambda m: os.environ.get(m.group(1), m.group(0)), text)
+open(dst, "w", encoding="utf-8", newline="\n").write(text)
+PY
+
+# --- herdr workspace + agent ---
+WS_JSON="$(herdr workspace create --cwd "$WORKTREE" --label "$NAME" --no-focus)"
+WS_ID="$(jq -r '[.. | objects | .workspace_id? // empty][0]' <<<"$WS_JSON")"
+[[ -n "$WS_ID" && "$WS_ID" != null ]] || die "workspace create returned no id: $WS_JSON"
+PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
+[[ -n "$PANE_ID" && "$PANE_ID" != null ]] || die "no pane in workspace $WS_ID"
+
+set +e; launch_agent "$PANE_ID" "$WORKTREE" "$NAME" "$MODEL" "$PROMPT"; rc=$?; set -e
+if [[ $rc -eq 2 ]]; then trap - EXIT; die "agent is blocked on an unexpected prompt; left workspace \"$NAME\" open for a human"; fi
+[[ $rc -eq 0 ]] || die "agent did not become ready"
+herdr agent rename "$PANE_ID" "$AGENT" >/dev/null 2>&1 || true
+trap - EXIT
+[[ $CLAIM -eq 0 ]] || "$HERE/bin/claim" "$REPO" "$NUM" --project "$PROJECT" >&2
+# metadata the watcher, qc-review and resume-agent use
+write_meta "$REPO" "$NUM" "$(jq -n --arg repo "$REPO" --argjson num "$NUM" --arg route "$ROUTE" \
+  --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg ws "$WS_ID" --arg pane "$PANE_ID" \
+  --arg name "$NAME" --arg session "$(session_of "$PANE_ID")" \
+  '{repo: $repo, number: $num, route: $route, branch: $branch, worktree: $worktree, cwd: $worktree,
+    name: $name, workspace_id: $ws, pane_id: $pane, session_id: $session, spawned_at: (now | floor), hibernated_at: null}')"
+
+jq -n --arg name "$NAME" --arg agent "$AGENT" --arg ws "$WS_ID" --arg pane "$PANE_ID" --arg route "$ROUTE" \
+  --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg brief "$BRIEF_FILE" \
+  '{spawned: true, name: $name, agent: $agent, workspace_id: $ws, pane_id: $pane, route: $route,
+    branch: $branch, worktree: $worktree, brief: $brief}'

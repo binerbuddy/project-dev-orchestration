@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# qc — serve a PR (or a branch) for the human's hands-on QC, from one shared QC worktree.
+#
+# Usage: qc start <pr#> [--repo R] [hook options...]    check out the PR in the QC worktree, start the servers
+#        qc start --ref <branch> [hook options...]      serve a branch (e.g. main) the same way
+#        qc stop [hook options...]                       stop the servers
+#        qc status                                       what is being served, and whether it is up
+#        [--project P]
+#
+# The engine owns the worktree; the project's QC_HOOK owns the servers. One QC worktree
+# (<repo root>/$QC_WORKTREE, default "qc") is reused for every PR, detached at the PR head, so
+# dependency installs and builds stay incremental and command agents' worktrees are never touched.
+# --repo defaults to QC_REPO, else PRIMARY_REPO. Options this script doesn't know (e.g. --fresh-db)
+# are passed to the hook.
+#
+# QC_HOOK contract: `$QC_HOOK <stop|start|wait|status> [hook options...]`, run with
+#   PDO_HOME, PDO_PROJECT, PDO_ENV_DIR, PDO_STATE_DIR, ORG, PRIMARY_REPO, and
+#   PDO_QC_STATE      state dir for QC logs and markers ($PDO_STATE_DIR/qc)
+#   PDO_QC_REPO       repo name;  PDO_QC_ROOT  its local clone root
+#   PDO_QC_WORKTREE   the QC worktree, already checked out at the target (start/wait)
+#   PDO_QC_PR / PDO_QC_REF / PDO_QC_SHA / PDO_QC_BASE   what is being served (start/wait)
+#   PDO_QC_PREV_SHA   the worktree's HEAD before this checkout (empty on first use), so the
+#                     hook can skip a dependency install when the lockfile didn't change
+#   PDO_QC_KEY        "pr:<n>" or "ref:<branch>" (e.g. to decide whether to reseed a database)
+# Order on start: hook stop, fetch + checkout + clean, hook start, current.json written, hook wait.
+# `start` may add fields to current.json by writing $PDO_QC_STATE/hook-current.json (an object).
+# `status` prints extra lines after the engine's. A project without QC_HOOK gets worktree
+# management only (start checks out and prints the path).
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+PDO_SCRIPT=qc
+die() { echo "qc: $*" >&2; exit 1; }
+
+CMD="${1:-}"; shift || true
+PROJECT="" PR="" REF="" REPO="" HOOK_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --ref) REF="$2"; shift 2 ;;
+    [0-9]*|\#[0-9]*) PR="${1#\#}"; shift ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    --*=*) HOOK_ARGS+=("$1"); shift ;;
+    --*) # a hook option, with its value when the next word isn't another option
+      HOOK_ARGS+=("$1"); shift
+      if [[ $# -gt 0 && "$1" != -* && ! "$1" =~ ^#?[0-9]+$ ]]; then HOOK_ARGS+=("$1"); shift; fi ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+case "$CMD" in -h|--help|"") sed -n '2,29p' "$0"; [[ -n "$CMD" ]] && exit 0; exit 1 ;; esac
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+REPO="${REPO:-$QC_REPO}" ROOT="" WT=""
+if [[ -n "$REPO" ]]; then ROOT="${REPO_ROOT[$REPO]:-}"; fi
+if [[ -n "$ROOT" ]]; then WT="$ROOT/$QC_WORKTREE"
+elif [[ "$CMD" == start ]]; then
+  [[ -n "$REPO" ]] || die "pass --repo (the project sets neither QC_REPO nor PRIMARY_REPO)"
+  die "no local root configured for repo '$REPO'"
+fi
+STATE="$PDO_STATE_DIR/qc"
+mkdir -p "$STATE"
+export PDO_QC_STATE="$STATE" PDO_QC_REPO="$REPO" PDO_QC_ROOT="$ROOT" PDO_QC_WORKTREE="$WT"
+
+hook() {  # hook <subcommand>: run QC_HOOK if the project has one
+  [[ -n "${QC_HOOK:-}" ]] || return 0
+  [[ -x "$QC_HOOK" ]] || die "QC_HOOK is not executable: $QC_HOOK"
+  "$QC_HOOK" "$1" ${HOOK_ARGS[@]+"${HOOK_ARGS[@]}"}
+}
+
+case "$CMD" in
+  start)
+    [[ -n "$PR" || -n "$REF" ]] || die "usage: qc start <pr#> | qc start --ref <branch> [hook options]"
+    if [[ -n "$PR" ]]; then
+      PRJ="$(gh pr view "$PR" -R "$ORG/$REPO" --json number,headRefName,headRefOid,baseRefName,state,url,title)"
+      [[ "$(jq -r .state <<<"$PRJ")" == OPEN ]] || die "PR #$PR is not open"
+      SHA="$(jq -r .headRefOid <<<"$PRJ")" BASE="$(jq -r .baseRefName <<<"$PRJ")"
+    fi
+
+    hook stop || die "QC_HOOK stop failed"
+    if [[ -n "$PR" ]]; then
+      git -C "$ROOT" fetch -q origin "+refs/pull/$PR/head:refs/remotes/origin/pr/$PR" \
+        "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+    else  # a branch (e.g. main), for things like building a QC seed database
+      git -C "$ROOT" fetch -q origin "+refs/heads/$REF:refs/remotes/origin/$REF"
+      SHA="$(git -C "$ROOT" rev-parse "origin/$REF")" BASE=""
+      PRJ="$(jq -n --arg ref "$REF" '{url: "", title: ("branch " + $ref), headRefName: $ref}')"
+    fi
+    if [[ ! -d "$WT" ]]; then
+      git -C "$ROOT" worktree add -q --detach "$WT" "$SHA"
+      PREV=""
+    else
+      PREV="$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)"
+    fi
+    git -C "$WT" checkout -q -f --detach "$SHA"   # -f drops any local edit the hook made last time
+    git -C "$WT" clean -qfd   # untracked leftovers only; ignored dependency/build dirs stay
+
+    export PDO_QC_PR="$PR" PDO_QC_REF="$REF" PDO_QC_SHA="$SHA" PDO_QC_BASE="$BASE" PDO_QC_PREV_SHA="$PREV" \
+      PDO_QC_KEY="${PR:+pr:$PR}${REF:+ref:$REF}"
+    rm -f "$STATE/hook-current.json"
+    hook start || die "QC_HOOK start failed"
+
+    EXTRA='{}'; [[ -s "$STATE/hook-current.json" ]] && EXTRA="$(jq -c . "$STATE/hook-current.json")"
+    jq -n --argjson pr "${PR:-null}" --arg ref "$REF" --arg sha "$SHA" --arg url "$(jq -r .url <<<"$PRJ")" \
+      --arg title "$(jq -r .title <<<"$PRJ")" --arg branch "$(jq -r .headRefName <<<"$PRJ")" --argjson extra "$EXTRA" \
+      '{pr: $pr, ref: $ref, sha: $sha, url: $url, title: $title, branch: $branch, started: (now | floor)} + $extra' \
+      >"$STATE/current.json"
+
+    if [[ -n "${QC_HOOK:-}" ]]; then
+      hook wait || die "the QC servers failed to start"
+    else
+      echo "qc: ${PR:+PR #$PR}${REF:+branch $REF} (${SHA:0:8}) checked out at $WT (no QC_HOOK: start the servers by hand)"
+    fi
+    ;;
+  stop)
+    hook stop
+    rm -f "$STATE/current.json"
+    echo "qc: servers stopped"
+    ;;
+  status)
+    [[ -f "$STATE/current.json" ]] && jq -c . "$STATE/current.json" || echo '{"pr": null}'
+    hook status || true
+    ;;
+  *) die "usage: qc start <pr#> | start --ref <branch> | stop | status  [--project P] [hook options]" ;;
+esac

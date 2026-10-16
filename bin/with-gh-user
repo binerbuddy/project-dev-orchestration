@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# with-gh-user [--user LOGIN] <command...>: run a command (an agent's session) with gh pinned to
+# one GitHub login through GH_TOKEN. gh's active account is machine-wide, and other sessions may
+# switch it, so without a pin an agent's gh/git calls can fail mid-run ("Could not resolve
+# repository"). git over HTTPS follows, via gh's credential helper.
+# Login: --user, else $GH_USER (a project env's GH_USER is passed as --user by launch_agent).
+# With neither, it pins nothing and just runs the command.
+set -euo pipefail
+login="${GH_USER:-}"
+if [[ "${1:-}" == "--user" || "${1:-}" == "-u" ]]; then login="$2"; shift 2; fi
+[[ $# -gt 0 ]] || { echo "usage: with-gh-user [--user LOGIN] <command...>" >&2; exit 2; }
+if [[ -n "$login" ]]; then
+  GH_TOKEN="$(gh auth token -u "$login" 2>/dev/null)" || { echo "with-gh-user: no gh login for $login" >&2; exit 1; }
+  export GH_TOKEN
+fi
+exec "$@"

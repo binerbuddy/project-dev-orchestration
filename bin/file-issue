@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# file-issue — create a typed, labelled issue, attach it to a parent epic, and put it on the board.
+#
+# Usage: file-issue <repo> --title T --body-file F --type Bug|Feature|Task|Epic
+#                   [--label L]... [--parent N | --parent Repo#N] [--status Backlog]
+#                   [--project P]
+# Prints the new issue URL. Unknown labels fail loudly instead of being silently dropped.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+die() { echo "file-issue: $*" >&2; exit 1; }
+
+PROJECT="" TITLE="" BODY_FILE="" TYPE="" PARENT="" STATUS="Backlog" LABELS=()
+[[ $# -ge 1 ]] || die "usage: file-issue <repo> --title T --body-file F --type TYPE [--label L]... [--parent N] [--status S]"
+REPO="$1"; shift
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --title) TITLE="$2"; shift 2 ;;
+    --body-file) BODY_FILE="$2"; shift 2 ;;
+    --type) TYPE="$2"; shift 2 ;;
+    --label) LABELS+=("$2"); shift 2 ;;
+    --parent) PARENT="$2"; shift 2 ;;
+    --status) STATUS="$2"; shift 2 ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+[[ -n "$TITLE" && -f "$BODY_FILE" ]] || die "--title and an existing --body-file are required"
+[[ "$TYPE" =~ ^(Bug|Feature|Task|Epic)$ ]] || die "--type must be Bug, Feature, Task or Epic"
+
+# labels must already exist (case-insensitive) — never let a typo create or drop one silently
+EXISTING="$(gh label list -R "$ORG/$REPO" --limit 300 --json name --jq '.[].name')"
+for l in ${LABELS[@]+"${LABELS[@]}"}; do
+  grep -qixF -- "$l" <<<"$EXISTING" || die "label '$l' does not exist in $ORG/$REPO"
+done
+
+ARGS=(-f "title=$TITLE" -F "body=@$BODY_FILE" -f "type=$TYPE")
+for l in ${LABELS[@]+"${LABELS[@]}"}; do ARGS+=(-f "labels[]=$l"); done
+NEW="$(gh api "repos/$ORG/$REPO/issues" "${ARGS[@]}" --jq '{number, id, node_id, html_url, type: .type.name}')"
+URL="$(jq -r .html_url <<<"$NEW")"
+[[ "$(jq -r '.type // empty' <<<"$NEW")" == "$TYPE" ]] \
+  || echo "file-issue: WARNING $URL was created without issue type '$TYPE' (issue types exist only on org repos)" >&2
+
+if [[ -n "$PARENT" ]]; then
+  PREPO="$REPO" PNUM="${PARENT#\#}"
+  if [[ "$PARENT" == *#* ]]; then PREPO="${PARENT%%#*}"; PNUM="${PARENT##*#}"; fi
+  gh api "repos/$ORG/$PREPO/issues/$PNUM/sub_issues" -F "sub_issue_id=$(jq -r .id <<<"$NEW")" >/dev/null \
+    || echo "file-issue: WARNING created $URL but could not attach it to parent $PREPO#$PNUM" >&2
+fi
+
+if [[ -z "${PROJECT_NUMBER:-}" ]]; then echo "$URL"; exit 0; fi  # project without a board
+
+Q='query($o:String!,$p:Int!){organization(login:$o){projectV2(number:$p){id field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}'
+P="$(gh api graphql -f query="$Q" -F o="$ORG" -F p="$PROJECT_NUMBER")"
+PROJ_ID="$(jq -r .data.organization.projectV2.id <<<"$P")"
+FIELD_ID="$(jq -r .data.organization.projectV2.field.id <<<"$P")"
+OPT="$(jq -r --arg s "$STATUS" '.data.organization.projectV2.field.options[] | select(.name == $s) | .id' <<<"$P")"
+[[ -n "$OPT" ]] || die "created $URL but board has no Status '$STATUS'"
+ITEM="$(gh api graphql -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}' \
+  -F p="$PROJ_ID" -F c="$(jq -r .node_id <<<"$NEW")" --jq .data.addProjectV2ItemById.item.id)"
+gh api graphql -f query='mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){projectV2Item{id}}}' \
+  -F p="$PROJ_ID" -F i="$ITEM" -F f="$FIELD_ID" -F o="$OPT" >/dev/null
+
+echo "$URL"

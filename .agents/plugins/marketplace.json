@@ -1,0 +1,20 @@
+{
+  "name": "project-dev-orchestration",
+  "interface": {
+    "displayName": "Project Dev Orchestration"
+  },
+  "plugins": [
+    {
+      "name": "project-dev-orchestration",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

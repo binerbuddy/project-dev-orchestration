@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# start-qc — open the standing "QC (<project>)" herdr workspace running the QC skill
+# (QC_SKILL, default ${PDO_SKILL_PREFIX}project-qc-review) in CONTROL_DIR.
+#
+# Usage: start-qc [--project P] [--model opus] [<PR#>]
+# With a PR number the agent starts serving it immediately (<QC_SKILL> <PR#>).
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+die() { echo "start-qc: $*" >&2; exit 1; }
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+
+PROJECT="" MODEL="" PR=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    [0-9]*|\#[0-9]*) PR="${1#\#}"; shift ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+MODEL="${MODEL:-$DEFAULT_MODEL}"
+NAME="QC ($PROJECT)"
+WS_ID="$(herdr workspace list | jq -r --arg n "$NAME" '[.result.workspaces[] | select(.label == $n) | .workspace_id][0] // empty')"
+if [[ -n "$WS_ID" ]]; then
+  PANE_ID="$(herdr agent list | jq -r --arg w "$WS_ID" '[.result.agents[] | select(.workspace_id == $w and .agent == "claude") | .pane_id][0] // empty')"
+  if [[ -n "$PANE_ID" ]]; then
+    [[ -n "$PR" ]] && herdr agent prompt "$PANE_ID" "$QC_SKILL $PR" >/dev/null
+    echo "QC agent already running in workspace \"$NAME\"${PR:+; asked it to serve PR #$PR}"
+    exit 0
+  fi
+else
+  WS_ID="$(herdr workspace create --cwd "$CONTROL_DIR" --label "$NAME" --no-focus | jq -r '[.. | objects | .workspace_id? // empty][0]')"
+fi
+PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
+set +e; launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "$QC_SKILL $PR"; rc=$?; set -e
+[[ $rc -eq 0 ]] || die "QC agent did not start cleanly (rc=$rc); see workspace $WS_ID"
+herdr agent rename "$PANE_ID" "qc-$PROJECT" >/dev/null 2>&1 || true
+echo "QC agent running in workspace \"$NAME\" (id $WS_ID)"

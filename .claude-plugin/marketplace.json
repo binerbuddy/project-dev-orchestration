@@ -1,0 +1,19 @@
+{
+  "name": "project-dev-orchestration",
+  "owner": {
+    "name": "binerbuddy"
+  },
+  "metadata": {
+    "description": "project-dev-orchestration: lifecycle skills and an agent orchestration engine for GitHub projects."
+  },
+  "plugins": [
+    {
+      "name": "project-dev-orchestration",
+      "source": "./",
+      "description": "Issue-to-PR lifecycle skills (intake, design, build, review, QC, close-out) plus the orchestration engine's operator skills.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/binerbuddy/project-dev-orchestration"
+    }
+  ]
+}

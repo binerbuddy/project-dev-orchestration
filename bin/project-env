@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# project-env — print the resolved configuration of the current project, for skills and humans
+# (instead of sourcing the env file by hand).
+#
+# Usage: project-env [--project P]          every key as KEY=value lines
+#        project-env [--project P] KEY      just KEY's value (empty line + exit 1 when unknown)
+# Maps print one line per entry: REPO_ROOT[<repo>]=<path>, ROUTE_SKILL[<route>]=<skill>.
+# `project-env REPO_ROOT` prints "<repo>=<path>" lines; `project-env 'REPO_ROOT[x]'` one value.
+# Project: --project, else $PDO_PROJECT, else the project whose REPO_ROOT holds the cwd's repo.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+PDO_SCRIPT=project-env
+PROJECT="" KEY=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -*) pdo_die "unknown option: $1" ;;
+    *) KEY="$1"; shift ;;
+  esac
+done
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+
+SCALARS=(PROJECT ORG PROJECT_NUMBER PRIMARY_REPO DEFAULT_MODEL GH_USER AGENT_CLI BRIEF_TEMPLATE CONTROL_DIR
+  IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK QC_REPO QC_WORKTREE QC_PORTS FIXTURE_EXT FIXTURE_BRANCH
+  SYSTEM_MANAGER_WORKSPACE ORCHESTRATE_SKILL QC_SKILL INTAKE_SKILL PDO_SKILL_PREFIX CWT_STATUS P_LABELS
+  LABEL_QC_READY LABEL_QC_DONE CARRY_LABELS SCREENSHOT_DIR MAX_ACTIVE WEEKLY_CEILING FIVE_HOUR_CEILING
+  PDO_ENV_FILE PDO_ENV_DIR PDO_STATE_DIR PDO_INBOX PDO_HOME)
+map_lines() {  # map_lines <name> <prefix-style>: style "full" = NAME[k]=v, "short" = k=v
+  declare -p "$1" >/dev/null 2>&1 || return 0
+  local -n m="$1"; local k
+  for k in $(printf '%s\n' "${!m[@]}" | sort); do
+    if [[ "$2" == full ]]; then printf '%s[%s]=%s\n' "$1" "$k" "${m[$k]}"; else printf '%s=%s\n' "$k" "${m[$k]}"; fi
+  done
+}
+managed() { declare -p SELF_MANAGED_REPOS >/dev/null 2>&1 && echo "${SELF_MANAGED_REPOS[*]}" || echo ""; }
+
+if [[ -z "$KEY" ]]; then
+  for k in "${SCALARS[@]}"; do printf '%s=%s\n' "$k" "${!k:-}"; done
+  printf 'SELF_MANAGED_REPOS=%s\n' "$(managed)"
+  map_lines REPO_ROOT full; map_lines ROUTE_SKILL full
+  exit 0
+fi
+case "$KEY" in
+  REPO_ROOT|ROUTE_SKILL) map_lines "$KEY" short ;;
+  REPO_ROOT\[*\]|ROUTE_SKILL\[*\])
+    n="${KEY%%[*}" k="${KEY#*[}"; k="${k%]}"
+    declare -n mm="$n"; [[ -n "${mm[$k]+x}" ]] || { echo; exit 1; }; echo "${mm[$k]}" ;;
+  SELF_MANAGED_REPOS) managed ;;
+  *)
+    [[ "$KEY" =~ ^[A-Z_][A-Z0-9_]*$ ]] || pdo_die "bad key: $KEY"
+    if [[ -n "${!KEY+x}" ]]; then echo "${!KEY}"; else echo; exit 1; fi ;;
+esac

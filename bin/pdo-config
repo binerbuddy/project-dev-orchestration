@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# pdo-config — resolve and print project configuration (the single source of truth that the
+# python scripts read through bin/pdo_config.py).
+#
+# Usage: pdo-config [--project P] [--json]   the resolved project config as JSON (default)
+#        pdo-config [--project P] --name     just the project name
+#        pdo-config [--project P] --env-file the env file that defines it
+#        pdo-config --list                   every known project: "<name> <env file>"
+#        pdo-config --dirs                   the config dirs searched, in order
+#        pdo-config --state-dir | --inbox    the state dir / intake inbox (no project needed)
+#
+# Without --project: $PDO_PROJECT, else the project whose REPO_ROOT holds the cwd's repo.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+PDO_SCRIPT=pdo-config
+PROJECT="" MODE=json
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    --json) MODE=json; shift ;;
+    --name) MODE=name; shift ;;
+    --env-file) MODE=env; shift ;;
+    --list) MODE=list; shift ;;
+    --dirs) MODE=dirs; shift ;;
+    --state-dir) MODE=state; shift ;;
+    --inbox) MODE=inbox; shift ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    *) pdo_die "unknown option: $1" ;;
+  esac
+done
+case "$MODE" in
+  list) pdo_project_files | tr '\t' ' '; exit 0 ;;
+  dirs) pdo_config_dirs; exit 0 ;;
+  state) pdo_state_dir; echo; exit 0 ;;
+  inbox) pdo_inbox; echo; exit 0 ;;
+esac
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+case "$MODE" in
+  name) echo "$PROJECT" ;;
+  env) echo "$PDO_ENV_FILE" ;;
+  json) pdo_config_json ;;
+esac

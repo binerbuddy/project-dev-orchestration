@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""pr-priority — give each open PR the P-label of the highest-priority issue it closes.
+
+Usage: pr-priority [--project P] [--repo NAME] [--pr N] [--dry-run]
+
+With many PRs waiting for human review and merge, the P-label on the PR shows which matter most.
+For every open PR (or just --pr N in --repo), it reads the issues the PR closes
+(closingIssuesReferences, cross-repo included; when GitHub links none, as for stacked PRs or epic
+build PRs, the body's "Closes/Fixes/Resolves/Part of #N" references), takes the best P-label among them
+(P1-urgent > P2-high > P3-medium > P4-low), adds it to the PR, and removes any other P-label.
+
+Also copies the project's CARRY_LABELS (space-separated; default client-requested) from the
+issues onto the PR, add-only.
+
+Never downgrades: if the PR already carries a higher P-label than its issues, that label stays
+(the human's rule). Raising an issue raises its PR; lowering an issue doesn't lower the PR.
+A PR whose linked issues carry no P-label is left untouched. Idempotent; bin/watch runs it on every queue refresh, and the lifecycle
+skills run it right after `gh pr create`.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+P_LABELS = ["P1-urgent", "P2-high", "P3-medium", "P4-low"]  # default; the project's P_LABELS (best first) win
+# labels copied from issues to the PR that addresses them (added, never removed). Matched
+# case-insensitively; the PR gets the label as the PR's repo spells it. Set per project (CARRY_LABELS).
+CARRY_LABELS = ["client-requested"]
+# GitHub only links closing keywords on PRs targeting the default branch; stacked PRs (based on
+# another PR's branch) and epic build PRs ("Part of #<epic>") need the body read directly.
+BODY_REF = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|part of)\s+#(\d+)", re.I)
+Q = """query($o:String!,$r:String!,$after:String){repository(owner:$o,name:$r){
+  pullRequests(states:OPEN,first:50,after:$after){pageInfo{hasNextPage endCursor} nodes{number body
+    labels(first:40){nodes{name}}
+    closingIssuesReferences(first:25){nodes{number labels(first:40){nodes{name}}}}}}}}"""
+
+
+def gh(*args):
+    r = subprocess.run(["gh", *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip())
+    return r.stdout
+
+
+def load_env(project):
+    global CARRY_LABELS, P_LABELS
+    cfg = pdo_config.load(project, "pr-priority")
+    P_LABELS = list(cfg["p_labels"])
+    CARRY_LABELS = [c.lower() for c in cfg["carry_labels"]]
+    return cfg["org"], list(cfg["repo_root"])
+
+
+def open_prs(org, repo):
+    after, out = None, []
+    while True:
+        args = ["api", "graphql", "-f", f"query={Q}", "-F", f"o={org}", "-F", f"r={repo}"]
+        if after:
+            args += ["-F", f"after={after}"]
+        page = json.loads(gh(*args))["data"]["repository"]["pullRequests"]
+        out += page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            return out
+        after = page["pageInfo"]["endCursor"]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project")
+    ap.add_argument("--repo")
+    ap.add_argument("--pr", type=lambda s: int(s.lstrip("#")))
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+    if a.pr and not a.repo:
+        sys.exit("pr-priority: --pr needs --repo")
+    org, repos = load_env(a.project)
+    changes = 0
+    for repo in ([a.repo] if a.repo else repos):
+        try:
+            prs = open_prs(org, repo)
+        except RuntimeError as e:
+            print(f"pr-priority: {repo}: {e}", file=sys.stderr)
+            continue
+        for pr in prs:
+            if a.pr and pr["number"] != a.pr:
+                continue
+            linked = pr["closingIssuesReferences"]["nodes"]
+            if not linked:
+                for n in sorted({int(m) for m in BODY_REF.findall(pr.get("body") or "")}):
+                    try:
+                        labels = json.loads(gh("api", f"repos/{org}/{repo}/issues/{n}", "--jq", "[.labels[].name]"))
+                    except (RuntimeError, ValueError):
+                        continue
+                    linked.append({"number": n, "labels": {"nodes": [{"name": l} for l in labels]}})
+            issue_p = {l["name"] for i in linked for l in i["labels"]["nodes"] if l["name"] in P_LABELS}
+            issue_lower = {l["name"].lower() for i in linked for l in i["labels"]["nodes"]}
+            pr_lower = {l["name"].lower() for l in pr["labels"]["nodes"]}
+            carry = [c for c in CARRY_LABELS if c in issue_lower and c not in pr_lower]
+            if carry:
+                issues = ", ".join(f"#{i['number']}" for i in linked)
+                print(f"{repo}#{pr['number']}: + {', '.join(carry)} (from {issues})")
+                changes += 1
+                if not a.dry_run:
+                    try:
+                        gh("pr", "edit", str(pr["number"]), "-R", f"{org}/{repo}",
+                           *[x for c in carry for x in ("--add-label", c)])
+                    except RuntimeError as e:  # e.g. the PR's repo lacks the label
+                        print(f"pr-priority: {repo}#{pr['number']}: {e}", file=sys.stderr)
+            if not issue_p:
+                continue  # nothing to derive a P-level from: leave any hand-set label alone
+            have = {l["name"] for l in pr["labels"]["nodes"] if l["name"] in P_LABELS}
+            # never downgrade (human's rule, 2026-10-02): a higher P already on the PR stays;
+            # the result is the best of the PR's own label and its issues'
+            target = min(issue_p | have, key=P_LABELS.index)
+            remove = sorted(have - {target})
+            if target in have and not remove:
+                continue
+            issues = ", ".join(f"#{i['number']}" for i in linked)
+            print(f"{repo}#{pr['number']}: {target} (from {issues})" + (f", removing {', '.join(remove)}" if remove else ""))
+            changes += 1
+            if not a.dry_run:
+                args = ["pr", "edit", str(pr["number"]), "-R", f"{org}/{repo}", "--add-label", target]
+                for r in remove:
+                    args += ["--remove-label", r]
+                try:
+                    gh(*args)
+                except RuntimeError as e:
+                    print(f"pr-priority: {repo}#{pr['number']}: {e}", file=sys.stderr)
+    if changes == 0:
+        print("pr-priority: all open PRs already carry their issues' P-level and carried labels")
+
+
+if __name__ == "__main__":
+    main()

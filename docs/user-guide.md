@@ -1,0 +1,127 @@
+# Running the dev team: user guide
+
+The human's guide to an agent team run by project-dev-orchestration. You talk to one session, the
+**System Manager**, and it runs everything else. Examples use a made-up project, `acme`, whose main repo is
+`widget`.
+
+## The 30-second version
+
+1. Open an agent session in herdr, anywhere. Name its workspace after your `SYSTEM_MANAGER_WORKSPACE`
+   (e.g. "Acme-Ops").
+2. Type: `/project-system-manager give me the status and fire up the dev team`
+3. It reads the system's notes and checks every piece, starts anything that isn't running (intake, QC, the
+   orchestrator, and any extras your `TEAM_UP_HOOK` adds), then gives you a short status.
+
+Use the same command after `/clear`, or in a brand-new session, to get the System Manager back up to speed.
+(With the Claude Code plugin the skill may show as `/project-dev-orchestration:project-system-manager`.)
+
+## Who's who
+
+| Agent | herdr workspace | What it does | You talk to it when… |
+|---|---|---|---|
+| **System Manager** | your choice | Builds and maintains the system itself; fixes the machinery. | You want to change how the team works, or something's wrong. |
+| **Orchestrator** | Orchestrator (acme) | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its workspace. |
+| **Command agents** | `widget-<issue#> <brief>` | Each takes one issue from start to a PR labelled `ready for QC`, asks you its questions directly, then hibernates until QC. | They ask you something (Remote Control and herdr notify you). |
+| **QC agent** | QC (acme) | Serves a PR on your local QC ports for hands-on QC, and relays your feedback. | You're QC'ing on your own machine. |
+| **Intake** | intake | Turns bug reports and ideas into proper GitHub issues. Other agents queue reports in its inbox. | You have something to file, or the inbox needs a pass. |
+
+## Everyday things to say to the System Manager
+
+| Say | What happens |
+|---|---|
+| `status` | Health, who's working or hibernated, what's waiting on you, queue top, spawn floor, usage. |
+| `fire up the dev team` | Starts whatever isn't running (safe to repeat), then gives the status. |
+| `what's waiting on me` | Questions, UX sign-offs, PRs ready for QC, and the intake inbox, by workspace name. |
+| `pause new work` / `resume` | Sets the spawn floor to P1, or back. Running agents keep going. |
+| `set the floor to P2` / `clear the floor` | Changes which priorities may start automatically. |
+| `work #123 now` | Puts the issue on **Claude Work This**; the orchestrator starts it within about 5 minutes. |
+| `QC PR #264` | Has the QC agent serve that PR locally. |
+| `show me the screenshots for #374` | Opens that PR's screenshot folder (`pdo shots 374`). |
+
+You can also type into any agent's workspace directly, or reach it through Remote Control.
+
+## How work flows
+
+1. **An issue is ranked** by P-level: Claude Work This first, then P1 → P4. Security items and bugs come
+   first within a level.
+   - **Spawn floor:** nothing below the floor starts, not even CWT.
+   - **Urgent bypass:** P1 **and** on Claude Work This starts even when every slot is full.
+2. **The orchestrator starts a command agent** in its own workspace and worktree, with up to 3 active at a
+   time. Agents waiting on you at a UX sign-off, or parked at QC, don't count. New work stops when weekly
+   usage reaches 80%, keeping 20% in reserve for you.
+3. **The agent explores, plans, builds, gets a review, and opens a PR.** The PR gets the P-label of its
+   issue. If the issue turns out to be already fixed, it says so, labels it `likely-fixed`, and stops.
+4. **It labels the PR `ready for QC`** and posts a QC checklist, with test data when needed (published
+   with `qc-fixture-push`) and the PR-comment commands. About 5 minutes later the agent **hibernates**: its
+   workspace closes, its memory is freed, and its session is saved.
+5. **You (or a remote reviewer) QC it.** Feedback wakes the same agent with its full context; it fixes,
+   pushes and re-labels.
+6. **On a QC pass, the agent wraps the PR up.** You merge it by hand. Finished agents close on their own.
+
+**Big features** go design → build: a design agent writes the design doc and asks you the key decisions,
+then the orchestrator starts a build agent that works through every phase. You review working prototypes
+at UX sign-offs, never design docs.
+
+## QC
+
+**On your machine:** in the **QC (acme)** workspace, run `/project-qc-review <PR#>`. It serves the PR from
+the shared QC worktree through your project's `QC_HOOK`. Type your findings in plain words; they go to the
+PR's agent and get posted on the PR. Say `pass` when it's good.
+
+**From a browser:** a reviewer comments on the PR. `QC: <findings or answers>` goes to the PR's agent,
+which replies on the PR. If your project runs a hosted preview service, its comment triggers are in the
+repo profile's "QC preview" section.
+
+## Filing bugs and ideas
+
+- **Yourself:** in the **intake** workspace, type `/project-intake <what you saw or want>`. It checks for
+  duplicates, drafts, and files after one OK from you.
+- **Agents** queue reports with `intake-submit`. Run `/project-intake inbox` in the intake workspace to
+  triage the queue in one batch. Nothing else starts the triage: a bare `/project-intake` (including the
+  one `team-up` launches) only reports how many are waiting.
+
+## Labels you'll see
+
+| Label | Meaning |
+|---|---|
+| `P1-urgent` … `P4-low` | Priority, on issues and PRs. A PR never gets downgraded. |
+| `Security` | Ranks first within its P-level. |
+| `ready for QC` / `QC complete - ready to review` | QC state of a PR. |
+| `awaiting-ux-gate` | The agent is waiting for your prototype sign-off. |
+| `likely-fixed` | The agent thinks it's already done; you confirm and close. |
+| `on-hold` | Parked by you; never started. |
+| `needs-triage` | Filed but not yet triaged; not started unless on Claude Work This. |
+| `epic-phase` | Part of an epic; worked by the epic's build agent. |
+| `route:small` / `route:design` / `route:build` | Which lifecycle the orchestrator uses. |
+| `orchestrator-system` | Work on the system itself, for the System Manager. |
+
+The P-labels, the CWT status and the QC labels can be renamed per project (`P_LABELS`, `CWT_STATUS`,
+`LABEL_QC_READY`, `LABEL_QC_DONE`).
+
+## The engine's commands
+
+With `bin/install --bin`, every script runs as `pdo <script>`; from a checkout, as `bin/<script>`.
+
+| Command | Does |
+|---|---|
+| `team-up` | start intake, QC and the orchestrator if missing, then `sysreport` |
+| `sysreport` | one-call live status (read-only) |
+| `queue [--all]` | the ranked queue (and exclusions with reasons) |
+| `floor [P1..P4\|clear]` | show or set the spawn floor |
+| `spawn <repo> <n> [--dry-run]` | start a command agent for an issue |
+| `resume-agent <repo> <n> --prompt …` | prompt an agent, bringing it back if hibernated |
+| `hibernate <repo> <n>` | release a parked agent's memory |
+| `watch --peek` | the watcher's snapshot, without consuming events |
+| `qc start <pr#>` / `qc stop` / `qc status` | local QC servers |
+| `qc-fixture-push <pr#> <file>` | publish QC test data |
+| `intake-submit "<ws>" "<report>"` | queue a report for intake |
+| `file-issue`, `claim`, `board-status` | board and issue helpers |
+| `pr-agent <pr#>`, `pr-priority`, `shots <pr#>`, `agent-meta backfill` | PR helpers |
+| `project-env [KEY]` | the current project's resolved settings |
+
+## When something looks wrong
+
+- Ask the System Manager: `status`, then describe what you see.
+- If an agent shows "blocked", it's waiting on you: open its workspace, or use Remote Control.
+- If an agent was closed by accident, resuming it is safe; ask the System Manager to bring #N back.
+- Design: [design.md](design.md). Traps already found: [lessons-learned.md](lessons-learned.md).

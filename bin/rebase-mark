@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# rebase-mark <Repo>-<n> — record that a rebase was requested (count + time) for the watcher's
+# `conflicting` entries (requested_min, attempts). Cleared automatically once the PR is clean.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+[[ $# -ge 1 && "$1" != -* ]] || { echo "usage: rebase-mark <Repo>-<n>" >&2; exit 2; }
+D="$(pdo_state_dir)/rebase"; mkdir -p "$D"
+F="$D/$1"; n=$(( $(cat "$F" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$F"; echo "rebase request #$n recorded for $1"

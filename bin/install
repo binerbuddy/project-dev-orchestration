@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# install — install project-dev-orchestration for one or more tools.
+#
+# Usage: install [--claude] [--codex] [--grok] [--bin] [--link] [--prefix DIR] [--dry-run]
+#   --claude   Claude Code: add this repo as a plugin marketplace and install the plugin
+#              (`claude plugin marketplace add` + `claude plugin install`).
+#   --codex    Codex: add this repo as a plugin marketplace and install the plugin
+#              (`codex plugin marketplace add` + `codex plugin add`).
+#   --grok     Grok Build: install this repo as a plugin (`grok plugin install --trust`).
+#   --bin      put the engine on PATH: links bin/pdo into --prefix (default ~/.local/bin).
+#              Run any engine script as `pdo <script> ...`.
+#   --link     instead of the tool's plugin system, symlink each skill into the tool's user skill
+#              dir: ~/.claude/skills (Claude Code), ~/.agents/skills (Codex), $GROK_HOME/skills or
+#              ~/.grok/skills (Grok). Also the fallback when the tool's CLI isn't installed.
+#              Linked skills are un-namespaced: set PDO_SKILL_PREFIX="/" in your config.env so the
+#              engine launches /project-orchestrate rather than /project-dev-orchestration:project-orchestrate.
+#   --dry-run  print what would be done.
+# Links only: an existing non-link file or dir with the same name is left alone and reported.
+set -euo pipefail
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+NAME=project-dev-orchestration
+DO_CLAUDE=0 DO_CODEX=0 DO_GROK=0 DO_BIN=0 LINK=0 DRY=0 PREFIX="$HOME/.local/bin"
+[[ $# -gt 0 ]] || { sed -n '2,20p' "$0"; exit 2; }
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --claude) DO_CLAUDE=1; shift ;;
+    --codex) DO_CODEX=1; shift ;;
+    --grok) DO_GROK=1; shift ;;
+    --bin) DO_BIN=1; shift ;;
+    --link) LINK=1; shift ;;
+    --prefix) PREFIX="$2"; shift 2 ;;
+    --dry-run) DRY=1; shift ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    *) echo "install: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+
+run() { if [[ $DRY -eq 1 ]]; then echo "would run: $*"; else echo "+ $*"; "$@"; fi; }
+
+link() {  # link <src> <dst>
+  local src="$1" dst="$2"
+  if [[ -e "$dst" && ! -L "$dst" ]]; then echo "skip: $dst exists and is not a link"; return 0; fi
+  if [[ $DRY -eq 1 ]]; then echo "would link: $dst -> $src"; return 0; fi
+  mkdir -p "$(dirname "$dst")"
+  ln -sfn "$src" "$dst"
+  echo "linked: $dst -> $src"
+}
+
+link_skills() {  # link_skills <dest dir>
+  local n=0 d
+  for d in "$REPO"/skills/*/; do
+    [[ -f "$d/SKILL.md" ]] || continue
+    link "${d%/}" "$1/$(basename "$d")"; n=$((n + 1))
+  done
+  [[ $n -gt 0 ]] || echo "install: no skills found under $REPO/skills" >&2
+  echo "note: linked skills are un-namespaced; set PDO_SKILL_PREFIX=\"/\" in your config.env"
+}
+
+if [[ $DO_CLAUDE -eq 1 ]]; then
+  if [[ $LINK -eq 0 ]] && command -v claude >/dev/null; then
+    run claude plugin marketplace add "$REPO"
+    run claude plugin install "$NAME@$NAME"
+  else
+    [[ $LINK -eq 1 ]] || echo "install: claude CLI not found; linking skills instead"
+    link_skills "$HOME/.claude/skills"
+  fi
+fi
+if [[ $DO_CODEX -eq 1 ]]; then
+  if [[ $LINK -eq 0 ]] && command -v codex >/dev/null; then
+    run codex plugin marketplace add "$REPO"
+    run codex plugin add "$NAME@$NAME"
+  else
+    [[ $LINK -eq 1 ]] || echo "install: codex CLI not found; linking skills instead"
+    link_skills "$HOME/.agents/skills"
+  fi
+fi
+if [[ $DO_GROK -eq 1 ]]; then
+  if [[ $LINK -eq 0 ]] && command -v grok >/dev/null; then
+    run grok plugin install "$REPO" --trust
+  else
+    [[ $LINK -eq 1 ]] || echo "install: grok CLI not found; linking skills instead"
+    link_skills "${GROK_HOME:-$HOME/.grok}/skills"
+  fi
+fi
+if [[ $DO_BIN -eq 1 ]]; then
+  link "$REPO/bin/pdo" "$PREFIX/pdo"
+  case ":$PATH:" in *":$PREFIX:"*) ;; *) echo "note: $PREFIX is not on your PATH" ;; esac
+fi

@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""hibernate — release a parked command agent's RAM until it's needed again.
+
+Usage: hibernate <repo> <issue#> [--project P] [--servers-only] [--ux-gate] [--dry-run]
+
+Default (full hibernation): requires the agent to be idle, with no question pending, its PR
+labelled 'ready for QC', and a Claude session id recorded (so bin/resume-agent can bring the
+same session back later). It then:
+  1. stops the agent's side processes: anything whose cwd, or whose command line, is inside the
+     agent's worktree or its Claude scratchpad (/tmp/claude-*/*/<session_id>/). That covers dev
+     servers (API servers, bundler dev servers, esbuild), headless Chromium, playwright-mcp and their
+     children. Never touched: claude itself (step 2 ends it), the shared QC worktree and the QC
+     ports (QC_PORTS), and database clones (disk, not RAM).
+  2. closes the herdr workspace, which ends claude and its MCP servers;
+  3. records hibernated_at in agents/<Repo>-<n>.json.
+bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibernated_at.
+
+--servers-only  only step 1, leaving the session open (e.g. an agent at a UX sign-off whose
+                live map the human doesn't need right now).
+--ux-gate       allow full hibernation of an agent parked at 'awaiting-ux-gate' instead of
+                'ready for QC' (opt-in: the human may want the live stack for the review).
+--closed-out    close out a finished agent instead: its PR is MERGED, or carries 'QC complete -
+                ready to review' (the wrap-up after QC pass), or its issue is closed with no open
+                PR (likely-fixed confirmed, won't-fix). Same cleanup; the session is kept.
+--dry-run       print what would be stopped or closed, and change nothing.
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+QC_PORTS = set()  # the project's QC_PORTS: never stopped (the human's QC servers)
+QC_READY, QC_DONE = "ready for QC", "QC complete - ready to review"  # LABEL_QC_READY / LABEL_QC_DONE
+
+
+def run(*a):
+    r = subprocess.run(a, capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def die(msg, code=1):
+    print(f"hibernate: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def proc_info(pid):
+    try:
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        cwd = ""
+    try:
+        cmd = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
+        comm = open(f"/proc/{pid}/comm").read().strip()
+        ppid = int(open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return {"pid": pid, "cwd": cwd, "cmd": cmd, "comm": comm, "ppid": ppid}
+
+
+def qc_port_pids():
+    out = run("ss", "-ltnpH")
+    pids = set()
+    for line in out.splitlines():
+        m = re.search(r":(\d+)\s", line)
+        if m and int(m.group(1)) in QC_PORTS:
+            pids |= {int(p) for p in re.findall(r"pid=(\d+)", line)}
+    return pids
+
+
+MCP_RE = re.compile(r"mcp", re.I)
+
+
+def side_processes(worktree, session_id, qc_worktree, keep_mcp):
+    """Processes belonging to this agent, other than claude itself, plus their descendants."""
+    roots = [p for p in [worktree.rstrip("/")] if p]
+    scratch = [d.rstrip("/") for d in glob.glob(f"/tmp/claude-*/*/{session_id}")] if session_id else []
+    procs = {}
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            info = proc_info(int(d))
+            if info:
+                procs[info["pid"]] = info
+
+    def owned(p):
+        places = roots + scratch
+        in_cwd = any(p["cwd"] == r or p["cwd"].startswith(r + "/") for r in places)
+        in_cmd = any(r + "/" in p["cmd"] or p["cmd"].endswith(r) for r in places)
+        return in_cwd or in_cmd
+
+    protected = {os.getpid(), os.getppid()} | qc_port_pids()
+    # claude's ancestors (the herdr pane shell) end claude if killed: always leave them to
+    # `workspace close`, or keep them for --servers-only
+    for pid, p in procs.items():
+        if p["comm"] == "claude":
+            up = p["ppid"]
+            while up in procs and up > 1:
+                protected.add(up)
+                up = procs[up]["ppid"]
+    matched = {pid for pid, p in procs.items() if owned(p)}
+    # descendants of matched processes (esbuild under ng, chromium renderers, …)
+    changed = True
+    while changed:
+        changed = False
+        for pid, p in procs.items():
+            if pid not in matched and p["ppid"] in matched:
+                matched.add(pid)
+                changed = True
+    result = []
+    for pid in sorted(matched):
+        p = procs[pid]
+        if pid in protected or p["comm"] == "claude":
+            continue
+        if keep_mcp and MCP_RE.search(p["cmd"]):  # a live session keeps its tools; its browser may go
+            continue
+        if qc_worktree and (p["cwd"] == qc_worktree or p["cwd"].startswith(qc_worktree + "/")):
+            continue
+        result.append(p)
+    return result
+
+
+def stop(procs):
+    for p in procs:
+        try:
+            os.kill(p["pid"], signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.time() + 10
+    while time.time() < deadline and any(os.path.exists(f"/proc/{p['pid']}") for p in procs):
+        time.sleep(0.5)
+    for p in procs:
+        if os.path.exists(f"/proc/{p['pid']}"):
+            try:
+                os.kill(p["pid"], signal.SIGKILL)
+            except OSError:
+                pass
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("repo")
+    ap.add_argument("number", type=lambda s: int(s.lstrip("#")))
+    ap.add_argument("--project")
+    ap.add_argument("--servers-only", action="store_true")
+    ap.add_argument("--ux-gate", action="store_true")
+    ap.add_argument("--closed-out", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+
+    global QC_PORTS, QC_READY, QC_DONE
+    cfg = pdo_config.load(a.project, "hibernate")
+    org, roots = cfg["org"], cfg["repo_root"]
+    QC_PORTS = set(cfg["qc_ports"])
+    QC_READY, QC_DONE = cfg["label_qc_ready"], cfg["label_qc_done"]
+    STATE = cfg["state_dir"]
+    meta_file = os.path.join(STATE, "agents", f"{a.repo}-{a.number}.json")
+    if not os.path.exists(meta_file):
+        die(f"no metadata for {a.repo}#{a.number} (bin/agent-meta backfill)")
+    meta = json.load(open(meta_file, encoding="utf-8"))
+    if meta.get("hibernated_at") and not a.servers_only:
+        die(f"{a.repo}#{a.number} is already hibernated")
+    session = meta.get("session_id") or ""
+    worktree = meta.get("worktree") or meta.get("cwd") or ""
+    if worktree in roots.values():  # an adopted agent sitting in the repo root: never sweep the whole root
+        worktree = ""
+    qc_wt = os.path.join(roots.get(a.repo, "/nonexistent"), cfg["qc_worktree"])
+
+    # herdr reuses workspace ids: an id only counts while its label is still this agent's name
+    ws_labels = {w["workspace_id"]: w.get("label") for w in json.loads(run("herdr", "workspace", "list") or '{"result":{"workspaces":[]}}')["result"]["workspaces"]}
+    agents = json.loads(run("herdr", "agent", "list") or '{"result":{"agents":[]}}')["result"]["agents"]
+    pane = next((x for x in agents if x.get("workspace_id") == meta.get("workspace_id")
+                     and ws_labels.get(meta.get("workspace_id")) == meta.get("name") and x.get("agent") == "claude"), None)
+
+    if not a.servers_only:
+        if not session or not glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session}.jsonl")):
+            die("no resumable Claude session recorded; refusing (it couldn't be brought back)")
+        if pane:
+            tail = "\n".join(run("herdr", "pane", "read", pane["pane_id"]).splitlines()[-40:])
+            if pane.get("agent_status") not in ("idle", "done"):
+                die(f"agent is {pane.get('agent_status')}, not idle", 3)
+            if pane.get("agent_status") == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed")):
+                die("a question is pending in the agent's workspace", 3)
+        pr = json.loads(run("gh", "pr", "list", "-R", f"{org}/{a.repo}", "--head", meta.get("branch", ""),
+                            "--state", "all", "--json", "number,labels,state", "--limit", "1") or "[]")
+        labels = {l["name"] for l in (pr[0]["labels"] if pr else [])}
+        pr_state = pr[0]["state"] if pr else ""
+        issue = json.loads(run("gh", "api", f"repos/{org}/{a.repo}/issues/{a.number}", "--jq",
+                               "{state, labels: [.labels[].name]}") or "{}")
+        issue_labels = set(issue.get("labels", []))
+        # finished: merged; QC passed; or the issue closed with no open PR (likely-fixed
+        # confirmed, won't-fix)
+        finished = pr_state == "MERGED" or QC_DONE in labels \
+            or (issue.get("state") == "closed" and pr_state != "OPEN")
+        if a.closed_out:
+            if not finished:
+                die(f"--closed-out needs a merged PR, a PR labelled '{QC_DONE}', "
+                    "or a closed issue with no open PR", 3)
+        elif pr_state != "OPEN" or (QC_READY not in labels and not (a.ux_gate and "awaiting-ux-gate" in issue_labels)):
+            die(f"its PR isn't labelled '{QC_READY}' (use --ux-gate for an agent at a UX sign-off)", 3)
+
+    procs = side_processes(worktree, session, qc_wt, keep_mcp=a.servers_only)
+    rss = 0
+    for p in procs:
+        try:
+            rss += int(re.search(r"VmRSS:\s+(\d+)", open(f"/proc/{p['pid']}/status").read()).group(1))
+        except (OSError, AttributeError):
+            pass
+    if a.dry_run:
+        for p in procs:
+            print(f"would stop {p['pid']} {p['comm']}: {p['cmd'][:100]}")
+        print(f"would free ~{rss // 1024} MB of side processes" + ("" if a.servers_only else "; would close the workspace"))
+        return
+    stop(procs)
+    freed = rss // 1024
+    if not a.servers_only:
+        # close only a workspace that is still this agent's (ids get reused after a close)
+        if meta.get("workspace_id") and ws_labels.get(meta["workspace_id"]) == meta.get("name"):
+            subprocess.run(["herdr", "workspace", "close", meta["workspace_id"]], capture_output=True)
+        meta["hibernated_at"] = int(time.time())
+        meta["workspace_id"] = meta["pane_id"] = None  # don't let a stale id point at a future workspace
+        if a.closed_out:
+            meta["closed_out"] = True
+        with open(meta_file + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=1)
+        os.replace(meta_file + ".tmp", meta_file)
+    print(json.dumps({"workspace": meta.get("name"), "hibernated": not a.servers_only, "stopped": len(procs), "freed_side_mb": freed,
+                      "workspace_closed": not a.servers_only}))
+
+
+if __name__ == "__main__":
+    main()

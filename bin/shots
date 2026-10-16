@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# shots — open a PR's QC/UX-gate screenshot folder in the desktop file manager.
+#
+# Usage: shots <pr#>            open the screenshot folder with the newest image
+#        shots <pr#> --list     print every screenshot folder (newest first), open nothing
+#        shots <pr#> --print    print the folder it would open, open nothing
+#        [--repo R] [--project P]      --repo defaults to the project's PRIMARY_REPO
+#
+# Finds the worktree from the PR's command agent (bin/pr-agent), else from the git worktree on the
+# PR's branch, else from the agent metadata <Repo>-<pr#>.json (so an issue number works while
+# GitHub is unreachable). Screenshots live under <worktree>/$SCREENSHOT_DIR/<slug>/ (default .omc/qa; lifecycle
+# skills write them to shots/; the GitHub API can't attach images, so gate comments only carry paths).
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+PROJECT="" REPO="" N="" MODE=open
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    --list) MODE=list; shift ;;
+    --print) MODE=print; shift ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    *) N="${1#\#}"; shift ;;
+  esac
+done
+[[ "$N" =~ ^[0-9]+$ ]] || { echo "usage: shots <pr#> [--list|--print] [--repo R]" >&2; exit 2; }
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+REPO="${REPO:-$PRIMARY_REPO}"
+[[ -n "$REPO" ]] || { echo "shots: pass --repo (the project has no PRIMARY_REPO)" >&2; exit 2; }
+ROOT="${REPO_ROOT[$REPO]:?unknown repo $REPO}"
+QA="${SCREENSHOT_DIR:-.omc/qa}"
+AGENTS="$PDO_STATE_DIR/agents"
+
+WT=""
+if info="$("$HERE/bin/pr-agent" "$N" --repo "$REPO" --project "$PROJECT" 2>/dev/null)"; then
+  WT="$(jq -r '.agent.worktree // empty' <<<"$info")"
+  if [[ -z "$WT" ]]; then
+    branch="$(jq -r '.pr.branch' <<<"$info")"
+    WT="$(git -C "$ROOT" worktree list --porcelain | awk -v b="refs/heads/$branch" \
+      '/^worktree /{w=substr($0,10)} $0=="branch " b {print w; exit}')"
+  fi
+fi
+if [[ -z "$WT" && -f "$AGENTS/$REPO-$N.json" ]]; then
+  WT="$(jq -r '.worktree // empty' "$AGENTS/$REPO-$N.json")"
+fi
+[[ -n "$WT" && -d "$WT" ]] || { echo "shots: no worktree found for $REPO #$N" >&2; exit 1; }
+
+# folders holding images, newest image first
+mapfile -t DIRS < <(find "$WT/$QA" -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) \
+  -printf '%T@ %h\n' 2>/dev/null | sort -rn | awk '!seen[$2]++ {print $2}')
+[[ ${#DIRS[@]} -gt 0 ]] || { echo "shots: no screenshots under $WT/$QA" >&2; exit 1; }
+
+case "$MODE" in
+  list) printf '%s\n' "${DIRS[@]}" ;;
+  print) echo "${DIRS[0]}" ;;
+  open)
+    # exec + setsid -f: fully detached, nothing left holding this script's stdout
+    (exec setsid -f nohup xdg-open "${DIRS[0]}" >/dev/null 2>&1 </dev/null)
+    echo "${DIRS[0]}"
+    if [[ ${#DIRS[@]} -gt 1 ]]; then echo "($(( ${#DIRS[@]} - 1 )) more folder(s): shots $N --list)"; fi
+    ;;
+esac

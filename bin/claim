@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# claim — lock an issue for a command agent: assign it and set its board Status.
+#
+# Usage: claim <repo> <issue#> [--status "In Progress"] [--project P]
+#
+# Re-reads the issue live: refuses a closed issue (and self-heals its card to Done),
+# refuses one assigned to someone else. Adds the issue to the board if it is missing.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+die() { echo "claim: $*" >&2; exit 1; }
+
+PROJECT="" STATUS="In Progress"
+[[ $# -ge 2 ]] || die "usage: claim <repo> <issue#> [--status NAME] [--project P]"
+REPO="$1" NUM="${2#\#}"; shift 2
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --status) STATUS="$2"; shift 2 ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+
+ME="$(gh api user --jq .login)"
+Q='query($o:String!,$r:String!,$n:Int!,$p:Int!){repository(owner:$o,name:$r){issue(number:$n){id state
+  assignees(first:10){nodes{login}}
+  projectItems(first:20){nodes{id project{number owner{... on Organization{login}}}}}}}
+  organization(login:$o){projectV2(number:$p){id field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}'
+J="$(gh api graphql -f query="$Q" -F o="$ORG" -F r="$REPO" -F n="$NUM" -F p="$PROJECT_NUMBER")"
+
+ISSUE_ID="$(jq -r .data.repository.issue.id <<<"$J")"
+PROJ_ID="$(jq -r .data.organization.projectV2.id <<<"$J")"
+FIELD_ID="$(jq -r .data.organization.projectV2.field.id <<<"$J")"
+opt() { jq -r --arg s "$1" '.data.organization.projectV2.field.options[] | select(.name == $s) | .id' <<<"$J"; }
+ITEM_ID="$(jq -r --argjson p "$PROJECT_NUMBER" --arg o "$ORG" \
+  '[.data.repository.issue.projectItems.nodes[] | select(.project.number == $p and .project.owner.login == $o) | .id][0] // empty' <<<"$J")"
+
+set_status() {
+  local option; option="$(opt "$1")"
+  [[ -n "$option" ]] || die "no board Status option named '$1'"
+  gh api graphql -f query='mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){projectV2Item{id}}}' \
+    -F p="$PROJ_ID" -F i="$ITEM_ID" -F f="$FIELD_ID" -F o="$option" >/dev/null
+}
+
+if [[ "$(jq -r .data.repository.issue.state <<<"$J")" != OPEN ]]; then
+  [[ -n "$ITEM_ID" ]] && set_status Done
+  die "$REPO#$NUM is closed (board card set to Done)"
+fi
+OTHERS="$(jq -r --arg me "$ME" '[.data.repository.issue.assignees.nodes[].login | select(. != $me)] | join(",")' <<<"$J")"
+[[ -z "$OTHERS" ]] || die "$REPO#$NUM is assigned to $OTHERS"
+
+if [[ -z "$ITEM_ID" ]]; then
+  ITEM_ID="$(gh api graphql -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}' \
+    -F p="$PROJ_ID" -F c="$ISSUE_ID" --jq .data.addProjectV2ItemById.item.id)"
+fi
+gh issue edit "$NUM" -R "$ORG/$REPO" --add-assignee "$ME" >/dev/null
+set_status "$STATUS"
+echo "claimed $ORG/$REPO#$NUM for $ME, board Status: $STATUS"

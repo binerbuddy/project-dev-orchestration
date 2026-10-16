@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# intake-submit — queue a bug/idea report for the intake agent instead of prompting it directly.
+# Reports land in the intake inbox ($PDO_INBOX, default $PDO_STATE_DIR/intake-inbox) as one
+# markdown file each; the human runs the intake skill's "inbox" mode in the intake session to
+# triage the queue as a single batch.
+#
+# Usage: intake-submit "<your workspace name>" "<report>"
+#        intake-submit "<your workspace name>" < report.md
+
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+INBOX="$(pdo_inbox)"
+die() { echo "intake-submit: $*" >&2; exit 1; }
+
+[[ $# -ge 1 && -n "$1" ]] || die 'usage: intake-submit "<workspace name>" "<report>" (or report on stdin)'
+FROM="$1"
+if [[ $# -ge 2 ]]; then REPORT="$2"; else REPORT="$(cat)"; fi
+[[ -n "${REPORT//[[:space:]]/}" ]] || die "empty report"
+
+mkdir -p "$INBOX"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+SLUG="$(printf '%s' "$FROM" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//' | cut -c1-40)"
+FILE="$INBOX/$STAMP-${SLUG:-report}-$$.md"
+TMP="$(mktemp "$INBOX/.tmp.XXXXXX")"
+{
+  printf -- '---\nfrom: %s\nsubmitted: %s\n---\n\n' "$FROM" "$(date -Iseconds)"
+  printf '%s\n' "$REPORT"
+} > "$TMP"
+mv "$TMP" "$FILE"
+echo "queued for intake: $FILE"

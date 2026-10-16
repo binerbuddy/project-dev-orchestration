@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# board-status — set an issue's Status on the project board without claiming it.
+#
+# Usage: board-status <repo> <issue#> "<Status>" [--project P]
+#   e.g. board-status my-repo 123 "Claude Work This"   (the orchestrator picks it up within ~5 min)
+# Unlike bin/claim it doesn't assign anyone; an assignee would make bin/queue skip the issue.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+die() { echo "board-status: $*" >&2; exit 1; }
+[[ $# -ge 3 ]] || die 'usage: board-status <repo> <issue#> "<Status>" [--project P]'
+REPO="$1" NUM="${2#\#}" STATUS="$3"; shift 3
+PROJECT=""; [[ "${1:-}" == "--project" ]] && PROJECT="$2"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+Q='query($o:String!,$r:String!,$n:Int!,$p:Int!){repository(owner:$o,name:$r){issue(number:$n){id
+  projectItems(first:20){nodes{id project{number owner{... on Organization{login}}}}}}}
+  organization(login:$o){projectV2(number:$p){id field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}'
+J="$(gh api graphql -f query="$Q" -F o="$ORG" -F r="$REPO" -F n="$NUM" -F p="$PROJECT_NUMBER")"
+PROJ="$(jq -r .data.organization.projectV2.id <<<"$J")"; FIELD="$(jq -r .data.organization.projectV2.field.id <<<"$J")"
+OPT="$(jq -r --arg s "$STATUS" '.data.organization.projectV2.field.options[] | select(.name == $s) | .id' <<<"$J")"
+[[ -n "$OPT" ]] || die "no board Status named '$STATUS'"
+ITEM="$(jq -r --argjson p "$PROJECT_NUMBER" --arg o "$ORG" '[.data.repository.issue.projectItems.nodes[] | select(.project.number == $p and .project.owner.login == $o) | .id][0] // empty' <<<"$J")"
+if [[ -z "$ITEM" ]]; then
+  ITEM="$(gh api graphql -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}' \
+    -F p="$PROJ" -F c="$(jq -r .data.repository.issue.id <<<"$J")" --jq .data.addProjectV2ItemById.item.id)"
+fi
+gh api graphql -f query='mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){projectV2Item{id}}}' \
+  -F p="$PROJ" -F i="$ITEM" -F f="$FIELD" -F o="$OPT" >/dev/null
+echo "$ORG/$REPO#$NUM → $STATUS"

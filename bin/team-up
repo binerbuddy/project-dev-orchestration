@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# team-up — "fire up the dev team": start every standing piece that isn't already running.
+# Safe to re-run any time; it starts only what's missing and reports each step.
+#
+# Usage: team-up [--project P] [--no-hook] [hook options...]
+#
+# Starts, in order:
+#   1. herdr agent names         restored (they're wiped by herdr/session restarts)
+#   2. intake                    workspace + agent "intake"      (bin/start-intake)
+#   3. QC (<project>)            local QC agent                  (bin/start-qc)
+#   4. Orchestrator (<project>)  /loop <orchestrate skill>       (bin/start-orchestrator)
+#   5. TEAM_UP_HOOK              project extras (e.g. a remote preview host, a seed DB), if set;
+#                                skipped with --no-hook. Unknown options are passed to the hook.
+# Then it prints bin/sysreport.
+set -uo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+PDO_SCRIPT=team-up
+PROJECT="" RUN_HOOK=1 HOOK_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    --no-hook) RUN_HOOK=0; shift ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) HOOK_ARGS+=("$1"); shift ;;
+  esac
+done
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+step() { printf '%-26s ' "$1"; }
+
+herdr status >/dev/null 2>&1 || { echo "team-up: herdr isn't running. Start it (run 'herdr') first."; exit 1; }
+
+step "agent names"
+python3 - "$HERE" "$PROJECT" <<'PY' && echo "ok"
+import importlib.machinery, importlib.util, sys
+here, project = sys.argv[1], sys.argv[2]
+l = importlib.machinery.SourceFileLoader("w", f"{here}/bin/watch")
+spec = importlib.util.spec_from_loader("w", l); w = importlib.util.module_from_spec(spec); l.exec_module(w)
+w.restore_agent_names(project, w.load_repos(project)[1])
+PY
+
+step "intake";                 "$HERE/bin/start-intake" --project "$PROJECT" 2>&1 | tail -1
+step "QC ($PROJECT)";          "$HERE/bin/start-qc" --project "$PROJECT" 2>&1 | tail -1
+step "Orchestrator ($PROJECT)"
+out="$("$HERE/bin/start-orchestrator" --project "$PROJECT" 2>&1)"; rc=$?
+if [[ $rc -ne 0 && "$out" == *"already running"* ]]; then
+  # The workspace surviving doesn't mean its /loop does: after a "shut down" the agent sits idle
+  # with the loop ended, and nothing routes events. Loop alive = a watcher process (read-only
+  # check, as sysreport; never `watch --arm-status`, which kills it) or a log line within the
+  # hourly heartbeat.
+  LOG="$PDO_STATE_DIR/log.md"
+  age=$(( $(date +%s) - $(stat -c %Y "$LOG" 2>/dev/null || echo 0) ))
+  pane="$(herdr agent list | jq -r --arg n "orchestrator-$PROJECT" '.result.agents[] | select(.name == $n) | "\(.agent_status) \(.pane_id)"' | head -1)"
+  if ! pgrep -f '[b]in/watch --project' >/dev/null && (( age > 5400 )) && [[ "${pane%% *}" == idle ]] \
+     && ! herdr pane read "${pane#* }" | tail -40 | grep -qE "Enter to select|Do you want to proceed"; then
+    herdr agent prompt "orchestrator-$PROJECT" "/loop $ORCHESTRATE_SKILL project=$PROJECT" >/dev/null
+    echo "workspace was up but its loop had stopped; restarted /loop $ORCHESTRATE_SKILL"
+  else
+    echo "already running"
+  fi
+else echo "$out" | tail -1; fi
+
+# Project extras. The hook prints its own "<step> <result>" lines (use the same %-26s step
+# column); it gets the PDO_* env and any options team-up didn't recognise.
+if [[ $RUN_HOOK -eq 1 && -n "${TEAM_UP_HOOK:-}" ]]; then
+  if [[ -x "$TEAM_UP_HOOK" ]]; then
+    "$TEAM_UP_HOOK" ${HOOK_ARGS[@]+"${HOOK_ARGS[@]}"} || echo "team-up: TEAM_UP_HOOK exited $?"
+  else
+    echo "team-up: TEAM_UP_HOOK is not executable: $TEAM_UP_HOOK"
+  fi
+fi
+
+echo
+"$HERE/bin/sysreport" --project "$PROJECT"

@@ -1,0 +1,623 @@
+#!/usr/bin/env python3
+"""watch — cheap, token-free state probe for the orchestrator.
+
+Usage:
+  watch [--project P]                     one snapshot + events since the last run (JSON)
+  watch --peek                            same, but read-only (doesn't consume events); use this
+                                          when inspecting by hand
+  watch --until-event [--interval 300] [--max 3600]
+                                          poll until an actionable event, or until --max
+                                          seconds pass (then emit a "heartbeat" event)
+  watch --arm-status                      print "running" if this Claude session already owns a
+                                          live watcher, else "none"; kills watchers left behind by
+                                          other (dead or replaced) orchestrator sessions
+
+Watchers are owned by the Claude session that started them ($CLAUDE_CODE_SESSION_ID), via a
+lock file. A restarted orchestrator therefore replaces the old session's orphaned watcher
+instead of trusting it; an orphan would consume events that nobody is woken for.
+
+Command agents are herdr workspaces labelled "<Repo>-<n> <brief>". For each one, it reports:
+  - herdr status, and whether a question/menu is pending on screen;
+  - its branch, and that branch's PR (state, labels);
+  - parked: PR open with "ready for QC" or "QC complete - ready to review", or the issue is
+    labelled likely-fixed / on-hold or closed (parked agents don't count toward the active cap);
+  - stalled: not parked, no pending question, not working, screen unchanged for STALL_MIN.
+It also lists waiting_on_you: agents whose next step is the human's (question, idle at a gate,
+QC, likely-fixed confirmation), with workspace name and pane, for the orchestrator's report.
+It also reports weekly/5-hour usage from the oh-my-claudecode HUD cache, and the top of bin/queue.
+
+Events are transitions against the previous snapshot (state file), so each fires once:
+  slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, new_claude_work_this,
+  usage_ceiling, heartbeat. Quiet events (hibernated, hibernate_failed) ride along with the next
+  wake and never end --until-event on their own.
+
+PR priority: unless --peek, every queue refresh also runs bin/pr-priority, so open PRs carry
+the highest P-label of the issues they close (it never downgrades).
+
+Hibernation: unless --peek, agents idle >= HIBERNATE_AFTER_MIN with no question pending and a
+session recorded are released with bin/hibernate when parked at 'ready for QC' (quiet event
+'hibernated') or finished: PR merged, or 'QC complete' plus "wrap-up done" on screen, or the issue
+closed with no open PR (quiet event 'closed_out'). They are released: side processes stopped,
+workspace closed. They stay in `agents` with status "hibernated" (built from metadata), so
+qc_complete / pr_merged still fire; bin/resume-agent brings them back.
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+STATE_DIR = pdo_config.state_dir()  # replaced by the project's resolved state dir in load_repos()
+CFG = {}
+USAGE_CACHE = os.environ.get("USAGE_CACHE") or os.path.expanduser("~/.claude/plugins/oh-my-claudecode/.usage-cache-anthropic.json")
+MAX_ACTIVE = 3
+WEEKLY_CEILING = 80   # keep 20% of the weekly budget for manual / hot work
+FIVE_HOUR_CEILING = 90
+STALL_MIN = 45
+HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'
+QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed"}  # reported on the next wake; never wake by themselves
+WAIT_MIN = 10  # a non-parked agent idle this long, with no question, is probably waiting on a human gate
+QUEUE_EVERY_SEC = 300  # bin/queue costs ~7 API calls; don't run it every poll
+QC_READY, QC_DONE = "ready for QC", "QC complete - ready to review"  # LABEL_QC_READY / LABEL_QC_DONE
+PARKED_LABELS = {QC_READY, QC_DONE}
+QUESTION_MARKERS = ("Enter to select", "Do you want to proceed", "❯ 1.")
+
+
+def run(args, timeout=60):
+    r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def herdr(*args):
+    out = run(["herdr", *args], timeout=15)
+    return json.loads(out)["result"] if out else {}
+
+
+def load_repos(project):
+    """(org, repos this orchestrator manages): REPO_ROOT minus SELF_MANAGED_REPOS (repos another
+    manager owns; this orchestrator never touches them). Also applies the project's state dir,
+    labels and limits to this module."""
+    global STATE_DIR, MAX_ACTIVE, WEEKLY_CEILING, FIVE_HOUR_CEILING, QC_READY, QC_DONE, PARKED_LABELS, AWAITING_HUMAN
+    if not CFG or CFG.get("_asked") != project:
+        CFG.clear()
+        CFG.update(pdo_config.load(project, "watch"), _asked=project)
+    STATE_DIR = CFG["state_dir"]
+    MAX_ACTIVE = CFG["max_active"] or MAX_ACTIVE
+    WEEKLY_CEILING = CFG["weekly_ceiling"] or WEEKLY_CEILING
+    FIVE_HOUR_CEILING = CFG["five_hour_ceiling"] or FIVE_HOUR_CEILING
+    QC_READY, QC_DONE = CFG["label_qc_ready"], CFG["label_qc_done"]
+    PARKED_LABELS = AWAITING_HUMAN = {QC_READY, QC_DONE}
+    return CFG["org"], set(CFG["repo_root"]) - set(CFG["self_managed_repos"])
+
+
+def usage():
+    try:
+        d = json.load(open(USAGE_CACHE, encoding="utf-8"))
+        age_min = int((time.time() * 1000 - d["timestamp"]) / 60000)
+        data = d["data"]
+        return {"weekly": data.get("weeklyPercent"), "five_hour": data.get("fiveHourPercent"),
+                "weekly_resets": data.get("weeklyResetsAt"), "age_min": age_min}
+    except Exception as e:  # missing cache = unknown, never block on it silently
+        return {"weekly": None, "five_hour": None, "error": str(e)}
+
+
+LINKED_Q = """query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){
+  closedByPullRequestsReferences(first:5,includeClosedPrs:true){nodes{number state isDraft url headRefName mergeable baseRefName
+  labels(first:20){nodes{name}}}}}}}"""
+
+
+def linked_pr(org, repo, num):
+    out = run(["gh", "api", "graphql", "-f", f"query={LINKED_Q}", "-F", f"o={org}", "-F", f"r={repo}", "-F", f"n={num}"])
+    try:
+        nodes = json.loads(out)["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"]
+    except Exception:
+        return None
+    if not nodes:
+        return None
+    p = sorted(nodes, key=lambda n: (n["state"] != "OPEN", -n["number"]))[0]
+    return {"number": p["number"], "state": p["state"], "draft": p["isDraft"], "url": p["url"],
+            "labels": [l["name"] for l in p["labels"]["nodes"]], "branch": p["headRefName"],
+            "mergeable": p.get("mergeable"), "base": p.get("baseRefName")}
+
+
+def spawn_meta(repo, num):
+    try:
+        return json.load(open(os.path.join(STATE_DIR, "agents", f"{repo}-{num}.json"), encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+FIXED_NAMES = {"intake": "intake"}  # workspace label -> herdr agent name
+
+
+def restore_agent_names(project, repos):
+    """herdr agent names don't survive a herdr/session restart, and other agents address these by
+    name (e.g. `herdr agent prompt intake`), so put the standard names back."""
+    labels = {w["workspace_id"]: w.get("label") or "" for w in herdr("workspace", "list").get("workspaces", [])}
+    fixed = dict(FIXED_NAMES, **{f"Orchestrator ({project})": f"orchestrator-{project}", f"QC ({project})": f"qc-{project}"})
+    for a in herdr("agent", "list").get("agents", []):
+        if a.get("name") or a.get("agent") != "claude":
+            continue
+        label = labels.get(a.get("workspace_id"), "")
+        m = re.match(r"^(\S+)-(\d+) ", label)
+        want = fixed.get(label) or (f"{re.sub(r'[^a-z0-9-]', '', m.group(1).lower())[:24]}-{m.group(2)}"
+                                    if m and m.group(1) in repos else None)
+        if want:
+            run(["herdr", "agent", "rename", a["pane_id"], want], timeout=15)
+
+
+def agents(org, repos, prev):
+    workspaces = herdr("workspace", "list").get("workspaces", [])
+    panes = {a["workspace_id"]: a for a in herdr("agent", "list").get("agents", [])}
+    out = {}
+    for w in workspaces:
+        m = re.match(r"^(\S+)-(\d+) (.+)$", w.get("label") or "")
+        if not m or m.group(1) not in repos:
+            continue
+        repo, num, brief = m.group(1), int(m.group(2)), m.group(3)
+        key = f"{repo}#{num}"
+        a = panes.get(w["workspace_id"], {})
+        pane = a.get("pane_id")
+        screen = run(["herdr", "pane", "read", pane], timeout=15) if pane else ""
+        tail = "\n".join(screen.splitlines()[-60:])
+        digest = hashlib.sha1(re.sub(r"\d+[hms]\b|\d+%|\(\d[^)]*\)", "", tail).encode()).hexdigest()
+        cwd = a.get("foreground_cwd") or a.get("cwd") or ""
+        branch = run(["git", "-C", cwd, "branch", "--show-current"]).strip() if cwd else ""
+        pr = None
+        if branch and branch not in ("main", "master"):
+            pr = dict(PR_INDEX[(repo, branch)]) if (repo, branch) in PR_INDEX else None
+        if pr is None and branch in ("", "main", "master"):
+            # adopted sessions may sit in the repo root: fall back to PRs linked to the issue
+            pr = linked_pr(org, repo, num)
+            if pr:
+                branch = pr.pop("branch")
+        old = prev.get(key, {})
+        changed_at = old.get("changed_at", time.time()) if old.get("digest") == digest else time.time()
+        status = a.get("agent_status", "gone" if not pane else "unknown")
+        question = any(q in tail for q in QUESTION_MARKERS) or status == "blocked"
+        issue = json.loads(run(["gh", "api", f"repos/{org}/{repo}/issues/{num}", "--jq",
+                                "{state, labels: [.labels[].name]}"]) or "{}")
+        issue_labels = {l.lower() for l in issue.get("labels", [])}
+        likely_fixed = "likely-fixed" in issue_labels
+        meta = spawn_meta(repo, num)
+        # a design run whose epic now carries route:build has handed off to the build
+        design_ready = meta.get("route") == "design" and "route:build" in issue_labels
+        # parked = waiting on the human's QC, closure or on-hold decision, or handed off; frees the slot
+        # a declared UX sign-off wait frees the slot only while the agent is idle: once it
+        # resumes work it counts as active again, even if it forgot to drop the label
+        ux_gate = "awaiting-ux-gate" in issue_labels and status != "working"
+        parked = bool(pr and pr["state"] == "OPEN" and PARKED_LABELS & set(pr["labels"])) \
+            or likely_fixed or design_ready or ux_gate or "on-hold" in issue_labels or issue.get("state") == "closed"
+        idle_min = int((time.time() - changed_at) / 60)
+        if meta.get("hibernated_at") and pane:  # resumed by hand; resume-agent normally clears this
+            meta["hibernated_at"] = None
+            mf = os.path.join(STATE_DIR, "agents", f"{repo}-{num}.json")
+            with open(mf + ".tmp", "w", encoding="utf-8") as fh:
+                json.dump(meta, fh, indent=1)
+            os.replace(mf + ".tmp", mf)
+        out[key] = {
+            "repo": repo, "number": num, "brief": brief, "workspace": w.get("label"),
+            "workspace_id": w["workspace_id"], "pane_id": pane,
+            "status": status, "question_pending": question, "branch": branch, "pr": pr, "parked": parked,
+            "merged": bool(pr and pr["state"] == "MERGED"), "likely_fixed": likely_fixed,
+            "route": meta.get("route"), "design_ready": design_ready, "ux_gate": ux_gate,
+            "stalled": (not parked and not question and status in ("idle", "done") and idle_min >= STALL_MIN),
+            "unchanged_min": idle_min, "digest": digest, "changed_at": changed_at,
+            "session_id": meta.get("session_id"), "hibernated": False,
+            "wrapup_done": "wrap-up done" in tail.lower(), "issue_state": issue.get("state"),
+        }
+    out.update(hibernated_agents(org, repos, set(out)))
+    return out
+
+
+def hibernated_agents(org, repos, seen):
+    """Agents released by bin/hibernate: no workspace, but their PR/issue are still tracked so
+    qc_complete / pr_merged fire and they stay listed under QC in waiting_on_you."""
+    out = {}
+    for f in sorted(os.listdir(os.path.join(STATE_DIR, "agents")) if os.path.isdir(os.path.join(STATE_DIR, "agents")) else []):
+        try:
+            meta = json.load(open(os.path.join(STATE_DIR, "agents", f), encoding="utf-8"))
+        except ValueError:
+            continue
+        repo, num = meta.get("repo"), meta.get("number")
+        key = f"{repo}#{num}"
+        if not meta.get("hibernated_at") or repo not in repos or key in seen or meta.get("done_tracking"):
+            continue
+        pr = dict(PR_INDEX[(repo, meta["branch"])]) if (repo, meta.get("branch")) in PR_INDEX else None
+        issue = json.loads(run(["gh", "api", f"repos/{org}/{repo}/issues/{num}", "--jq",
+                                "{state, labels: [.labels[].name]}"]) or "{}")
+        ilabels = {l.lower() for l in issue.get("labels", [])}
+        if (pr and pr["state"] in ("MERGED", "CLOSED")) or (issue.get("state") == "closed" and not (pr and pr["state"] == "OPEN")):
+            # reported once more (so pr_merged can fire), then dropped from tracking for good
+            meta["done_tracking"] = True
+            mf = os.path.join(STATE_DIR, "agents", f)
+            with open(mf + ".tmp", "w", encoding="utf-8") as fh:
+                json.dump(meta, fh, indent=1)
+            os.replace(mf + ".tmp", mf)
+        out[key] = {
+            "repo": repo, "number": num, "brief": (meta.get("name") or "").split(" ", 1)[-1],
+            "workspace": meta.get("name"), "workspace_id": None, "pane_id": None,
+            "status": "hibernated", "question_pending": False, "branch": meta.get("branch"), "pr": pr,
+            "parked": True, "merged": bool(pr and pr["state"] == "MERGED"),
+            "likely_fixed": "likely-fixed" in ilabels,
+            # a hibernated agent (e.g. `bin/hibernate --ux-gate`) is still waiting at its UX sign-off
+            "route": meta.get("route"), "design_ready": False, "ux_gate": "awaiting-ux-gate" in ilabels,
+            "stalled": False,
+            "unchanged_min": int((time.time() - meta["hibernated_at"]) / 60), "digest": "",
+            "changed_at": meta["hibernated_at"], "session_id": meta.get("session_id"), "hibernated": True,
+        }
+    return out
+
+
+def auto_hibernate(project, ag):
+    """Release RAM held by agents parked at 'ready for QC' (idle >= HIBERNATE_AFTER_MIN, no
+    question pending). Token-free: runs inside the watcher. Returns quiet events."""
+    ev = []
+    for k, a in ag.items():
+        labels = set((a.get("pr") or {}).get("labels", []))
+        state = (a.get("pr") or {}).get("state")
+        if (a.get("hibernated") or a["status"] not in ("idle", "done") or a["question_pending"]
+                or not a.get("session_id") or a["unchanged_min"] < HIBERNATE_AFTER_MIN):
+            continue
+        # finished: merged, or QC passed and the agent printed its wrap-up marker
+        closed_out = (state == "MERGED" or (QC_DONE in labels and a.get("wrapup_done"))
+                      or (a.get("issue_state") == "closed" and state != "OPEN"))  # likely-fixed / won't-fix
+        parked_qc = state == "OPEN" and QC_READY in labels
+        if not (closed_out or parked_qc):
+            continue
+        cmd = [os.path.join(HERE, "bin", "hibernate"), a["repo"], str(a["number"]), "--project", project]
+        r = subprocess.run(cmd + (["--closed-out"] if closed_out else []), capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            a.update({"status": "hibernated", "hibernated": True, "workspace_id": None, "pane_id": None})
+            ev.append({"type": "closed_out" if closed_out else "hibernated", "agent": k, "detail": r.stdout.strip()})
+        else:
+            ev.append({"type": "hibernate_failed", "agent": k, "detail": r.stderr.strip()[:200]})
+    return ev
+
+
+def queue_top(project, prev_snapshot):
+    last = prev_snapshot.get("queue_at", 0)
+    if time.time() - last < QUEUE_EVERY_SEC and "queue" in prev_snapshot:
+        return prev_snapshot["queue"], last
+    out = run([os.path.join(HERE, "bin", "queue"), "--project", project, "--json", "--limit", "5"], timeout=180)
+    try:
+        return json.loads(out)["ranked"], time.time()
+    except Exception:
+        return prev_snapshot.get("queue", []), last
+
+
+def waiting_on_you(ag):
+    """Agents whose next step is the human's, oldest wait first, so a cleared herdr notification isn't lost."""
+    out = []
+    for k, a in ag.items():
+        if a["merged"] or a["status"] == "gone":
+            continue
+        labels = set((a["pr"] or {}).get("labels", []))
+        if a.get("ux_gate"):
+            why = "UX gate"
+        elif a["question_pending"]:
+            why = "question"
+        elif QC_READY in labels:
+            why = "QC"
+        elif a["likely_fixed"]:
+            why = "confirm likely-fixed"
+        elif not a["parked"] and a["status"] in ("idle", "done") and a["unchanged_min"] >= WAIT_MIN:
+            why = "idle - gate/review?"
+        else:
+            continue
+        out.append({"agent": k, "why": why, "workspace": a.get("workspace"), "pane_id": a["pane_id"],
+                    "hibernated": bool(a.get("hibernated")),
+                    "pr": (a["pr"] or {}).get("url"), "waiting_min": a["unchanged_min"]})
+    inbox = CFG.get("inbox") or os.environ.get("PDO_INBOX") or os.path.join(STATE_DIR, "intake-inbox")
+    pending = sorted(f for f in (os.listdir(inbox) if os.path.isdir(inbox) else [])
+                     if f.endswith(".md") and not f.startswith("."))
+    if pending:  # reports queued by agents via bin/intake-submit, waiting for the intake skill's "inbox" run
+        oldest = min(os.path.getmtime(os.path.join(inbox, f)) for f in pending)
+        out.append({"agent": None, "why": "intake inbox", "workspace": "intake", "pane_id": None,
+                    "hibernated": False, "pr": None, "count": len(pending),
+                    "waiting_min": int((time.time() - oldest) / 60)})
+    order = {"question": 0, "UX gate": 1, "idle - gate/review?": 2, "QC": 3, "intake inbox": 4, "confirm likely-fixed": 5}
+    return sorted(out, key=lambda x: (order[x["why"]], -x["waiting_min"]))
+
+
+QC_RE = re.compile(r"^\s*QC:", re.I)
+TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
+def qc_comments(org, repos, prev):
+    """New trusted PR comments starting with "QC:" (feedback from remote QC, e.g. a hosted
+    preview service), since the last check. One repo-wide call per repo; ids dedupe across overlaps."""
+    since = prev.get("qc_since") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
+    seen = set(prev.get("qc_seen", []))
+    found, now = [], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for repo in sorted(repos):
+        out = run(["gh", "api", f"repos/{org}/{repo}/issues/comments?since={since}&per_page=100", "--paginate",
+                   "--jq", '.[] | {id, body, html_url, issue_url, user: .user.login, assoc: .author_association}'])
+        for line in out.splitlines():
+            try:
+                c = json.loads(line)
+            except ValueError:
+                continue
+            if c["id"] in seen or c["assoc"] not in TRUSTED or not QC_RE.match(c["body"] or ""):
+                continue
+            seen.add(c["id"])
+            found.append({"repo": repo, "number": int(c["issue_url"].rsplit("/", 1)[1]), "id": c["id"],
+                          "author": c["user"], "url": c["html_url"], "body": c["body"]})
+    return found, now, sorted(seen)[-500:]
+
+
+PR_INDEX = {}  # (repo, headRefName) -> pr dict; filled once per snapshot by load_pr_index()
+GRAPHQL_RESERVE = 600  # below this many GraphQL points left, skip optional calls (queue, pr-priority)
+PRS_Q = """query($o:String!,$r:String!){repository(owner:$o,name:$r){
+  open: pullRequests(states:OPEN,first:100){nodes{...f}}
+  done: pullRequests(states:[MERGED,CLOSED],first:40,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{...f}}}}
+fragment f on PullRequest{number state isDraft url headRefName baseRefName mergeable labels(first:30){nodes{name}}}"""
+
+
+def load_pr_index(org, repos):
+    """One GraphQL call per repo for all open PRs plus recently merged/closed ones. Replaces a
+    `gh pr list --head` per agent, which (with ~25 tracked agents) exhausted the shared 5000/h
+    GraphQL budget."""
+    idx, ok = {}, True
+    for repo in sorted(repos):
+        out = run(["gh", "api", "graphql", "-f", f"query={PRS_Q}", "-F", f"o={org}", "-F", f"r={repo}"])
+        try:
+            d = json.loads(out)["data"]["repository"]
+        except (ValueError, KeyError, TypeError):
+            ok = False
+            continue
+        for n in d["done"]["nodes"] + d["open"]["nodes"]:  # open last: wins on a reused branch name
+            idx[(repo, n["headRefName"])] = {
+                "number": n["number"], "state": n["state"], "draft": n["isDraft"], "url": n["url"],
+                "labels": [l["name"] for l in n["labels"]["nodes"]], "mergeable": n.get("mergeable"),
+                "base": n.get("baseRefName")}
+    return idx, ok
+
+
+def graphql_remaining():
+    out = run(["gh", "api", "rate_limit", "--jq", ".resources.graphql.remaining"])
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
+PR_CAP_DEFAULT = 10
+AWAITING_HUMAN = {QC_READY, QC_DONE}
+REBASE_CONCURRENCY = 2
+
+
+def pr_cap(project, org, repos):
+    """Open PRs waiting on the human (QC or review/merge). At or over the cap, nothing new is
+    spawned (the urgent bypass excepted), so the team's pace follows the human's merge rate and
+    later PRs don't pile up conflicts against unmerged earlier ones. Cap: <project>-pr-cap file
+    (default 10)."""
+    try:
+        cap = int(open(os.path.join(STATE_DIR, f"{project}-pr-cap"), encoding="utf-8").read().strip())
+    except (OSError, ValueError):
+        cap = PR_CAP_DEFAULT
+    n = sum(1 for p in PR_INDEX.values() if p["state"] == "OPEN" and AWAITING_HUMAN & set(p["labels"]))
+    return {"open_awaiting_human": n, "cap": cap, "reached": n >= cap}
+
+
+def conflicting(ag):
+    """Agent PRs GitHub marks CONFLICTING, and which of them are being rebased now (agent awake)."""
+    out = []
+    for k, a in ag.items():
+        pr = a.get("pr") or {}
+        if pr.get("state") == "OPEN" and pr.get("mergeable") == "CONFLICTING":
+            marker = os.path.join(STATE_DIR, "rebase", k.replace("#", "-"))
+            try:
+                requested_min = int((time.time() - os.path.getmtime(marker)) / 60)
+                attempts = int(open(marker, encoding="utf-8").read().strip() or 1)
+            except (OSError, ValueError):
+                requested_min, attempts = None, 0
+            out.append({"agent": k, "pr": pr.get("number"), "url": pr.get("url"), "base": pr.get("base"),
+                        "in_progress": not a.get("hibernated") and a["status"] in ("working",),
+                        "requested_min": requested_min, "attempts": attempts})
+    # a PR that's clean again clears its rebase marker, so a later conflict starts a fresh count
+    live = {c["agent"].replace("#", "-") for c in out}
+    d = os.path.join(STATE_DIR, "rebase")
+    for f in (os.listdir(d) if os.path.isdir(d) else []):
+        if f not in live:
+            os.remove(os.path.join(d, f))
+    return sorted(out, key=lambda c: c["pr"] or 0)
+
+
+def snapshot(project, prev):
+    org, repos = load_repos(project)
+    global PR_INDEX
+    PR_INDEX, prs_ok = load_pr_index(org, repos)
+    gql_left = graphql_remaining()
+    rate_low = gql_left is not None and gql_left < GRAPHQL_RESERVE
+    if not prs_ok and prev.get("agents"):
+        # GitHub unavailable or rate-limited: keep the last known PR facts rather than
+        # concluding every PR vanished (which would fire bogus transitions)
+        for k, a in prev["agents"].items():
+            if a.get("pr") and a.get("branch"):
+                PR_INDEX.setdefault((a["repo"], a["branch"]), a["pr"])
+    ag = agents(org, repos, prev.get("agents", {}))
+    q, q_at = (prev.get("queue", []), prev.get("queue_at", 0)) if rate_low else queue_top(project, prev)
+    floor = run([os.path.join(HERE, "bin", "floor"), "--project", project]).strip() or "none"
+    qcn, qc_since, qc_seen = qc_comments(org, repos, prev)
+    active = [k for k, v in ag.items() if not v["parked"] and not v["merged"] and v["status"] != "gone"]
+    u = usage()
+    over = (u.get("weekly") or 0) >= WEEKLY_CEILING or (u.get("five_hour") or 0) >= FIVE_HOUR_CEILING
+    cap = pr_cap(project, org, repos)
+    if not prs_ok and prev.get("pr_cap"):
+        cap = prev["pr_cap"]  # the PR fetch failed: an undercount would wrongly lift the cap
+    return {
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "agents": ag, "active": active,
+        "waiting_on_you": waiting_on_you(ag),
+        "free_slots": 0 if (over or cap["reached"]) else max(0, MAX_ACTIVE - len(active)),
+        "pr_cap": cap, "github": {"graphql_left": gql_left, "rate_low": rate_low, "prs_ok": prs_ok},  # free_slots is 0 while reached; the urgent bypass still spawns
+        "conflicting": conflicting(ag), "rebase_concurrency": REBASE_CONCURRENCY,
+        # P1-urgent + Claude Work This: spawned regardless of free_slots and the usage ceiling
+        "urgent": [r for r in q if r.get("urgent_bypass")],
+        "usage": u, "usage_over_ceiling": over, "queue": q, "queue_at": q_at,
+        "qc_new": qcn, "qc_since": qc_since, "qc_seen": qc_seen,
+        "spawn_floor": floor,  # bin/floor; report it in the status line
+    }
+
+
+def events(prev, cur):
+    ev = []
+    pa, ca = prev.get("agents", {}), cur["agents"]
+    for k, a in ca.items():
+        o = pa.get(k, {})
+        if a["parked"] and not o.get("parked"):
+            ev.append({"type": "slot_freed", "agent": k, "pr": (a["pr"] or {}).get("url")})
+        labels, old_labels = set((a["pr"] or {}).get("labels", [])), set((o.get("pr") or {}).get("labels", []))
+        if QC_DONE in labels - old_labels:
+            ev.append({"type": "qc_complete", "agent": k, "pr": a["pr"]["url"]})
+        if a.get("design_ready") and not o.get("design_ready"):
+            ev.append({"type": "design_ready", "agent": k, "workspace_id": a["workspace_id"]})
+        if a["merged"] and not o.get("merged"):
+            ev.append({"type": "pr_merged", "agent": k, "pr": a["pr"]["url"]})
+        if a["stalled"] and not o.get("stalled"):
+            ev.append({"type": "stalled", "agent": k, "unchanged_min": a["unchanged_min"]})
+    for k in pa.keys() - ca.keys():
+        if pa[k].get("hibernated") or pa[k].get("merged"):
+            continue  # a finished, hibernated agent leaving tracking isn't "gone"
+        ev.append({"type": "agent_gone", "agent": k})
+    old_cwt = {r["ref"] for r in prev.get("queue", []) if r.get("cwt")}
+    for r in cur["queue"]:
+        if r.get("cwt") and r["ref"] not in old_cwt:
+            ev.append({"type": "new_claude_work_this", "ref": r["ref"], "title": r["title"]})
+    for c in cur.get("qc_new", []):
+        ev.append({"type": "qc_feedback", **c})
+    if cur["pr_cap"]["reached"] and not (prev.get("pr_cap") or {}).get("reached"):
+        ev.append({"type": "pr_cap_reached", **cur["pr_cap"]})
+    old_conf = {c["agent"] for c in prev.get("conflicting", [])}
+    for c in cur.get("conflicting", []):
+        if c["agent"] not in old_conf:
+            ev.append({"type": "pr_conflict", **c})
+    old_urgent = {r["ref"] for r in prev.get("urgent", [])}
+    for r in cur.get("urgent", []):
+        if r["ref"] not in old_urgent:  # also fires when a CWT item is raised to P1 later
+            ev.append({"type": "urgent", "ref": r["ref"], "title": r["title"]})
+    if cur["usage_over_ceiling"] and not prev.get("usage_over_ceiling"):
+        ev.append({"type": "usage_ceiling", "usage": cur["usage"]})
+    if prev.get("free_slots", 0) == 0 and cur["free_slots"] > 0 and not any(e["type"] == "slot_freed" for e in ev):
+        ev.append({"type": "slot_freed", "agent": None})
+    return ev
+
+
+def lock_path(project):
+    return os.path.join(STATE_DIR, f"{project}-watch.lock")
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return open(f"/proc/{pid}/cmdline", "rb").read().find(b"bin/watch") >= 0
+    except (OSError, ValueError):
+        return False
+
+
+def read_lock(project):
+    try:
+        return json.load(open(lock_path(project), encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def arm_status(project):
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    lock = read_lock(project)
+    pid = lock.get("pid", 0)
+    mine = bool(pid and alive(pid) and me and lock.get("owner") == me)
+    # kill every other event watcher for this project: stale lock owners and lockless strays
+    for d in os.listdir("/proc"):
+        if not d.isdigit() or int(d) in (os.getpid(), pid if mine else -1):
+            continue
+        try:
+            cmd = open(f"/proc/{d}/cmdline", "rb").read().split(b"\0")
+        except OSError:
+            continue
+        if any(c.endswith(b"bin/watch") for c in cmd) and b"--until-event" in cmd \
+                and (b"--project" not in cmd or cmd[cmd.index(b"--project") + 1].decode() == project):
+            os.kill(int(d), 15)
+    return "running" if mine else "none"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project")
+    ap.add_argument("--until-event", action="store_true")
+    ap.add_argument("--interval", type=int, default=300)
+    ap.add_argument("--max", type=int, default=3600)
+    ap.add_argument("--arm-status", action="store_true")
+    ap.add_argument("--peek", action="store_true", help="read-only: don't save the snapshot (for humans/debugging)")
+    a = ap.parse_args()
+
+    load_repos(a.project)
+    a.project = CFG["project"]  # resolved (from --project, $PDO_PROJECT or the cwd)
+    os.makedirs(STATE_DIR, exist_ok=True)
+    if a.arm_status:
+        print(arm_status(a.project))
+        return
+    if a.until_event:
+        lock = read_lock(a.project)
+        if lock.get("pid") and lock["pid"] != os.getpid() and alive(lock["pid"]):
+            os.kill(lock["pid"], 15)  # at most one event watcher per project
+        tmp = lock_path(a.project) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(), "owner": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+                       "started": time.time()}, f)
+        os.replace(tmp, lock_path(a.project))
+    state_file = os.path.join(STATE_DIR, f"{a.project}-watch.json")
+    try:
+        prev = json.load(open(state_file, encoding="utf-8"))
+    except Exception:
+        prev = {}
+
+    started = time.time()
+    quiet = []
+    while True:
+        if not a.peek:
+            restore_agent_names(a.project, load_repos(a.project)[1])
+        cur = snapshot(a.project, prev)
+        if not a.peek and cur.get("queue_at") != prev.get("queue_at") and not cur["github"]["rate_low"]:
+            # with each queue refresh (~5 min), keep open PRs labelled with their issues' P-level
+            try:
+                subprocess.run([os.path.join(HERE, "bin", "pr-priority"), "--project", a.project],
+                               capture_output=True, text=True, timeout=180)
+            except subprocess.TimeoutExpired:
+                pass
+        if not a.peek:
+            fresh = auto_hibernate(a.project, cur["agents"])
+            if fresh:  # waiting_on_you was built before these closed: rebuild it without dead panes
+                cur["waiting_on_you"] = waiting_on_you(cur["agents"])
+            quiet += fresh
+        ev = events(prev, cur) if prev else [{"type": "first_run"}]
+        if not a.peek:
+            tmp = state_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cur, f)
+            os.replace(tmp, state_file)  # atomic: a crash mid-write never truncates state
+        if not a.until_event or ev:
+            break
+        if time.time() - started >= a.max:
+            ev = [{"type": "heartbeat"}]
+            break
+        prev = cur
+        time.sleep(a.interval)
+    ev += quiet
+
+    for ag in cur["agents"].values():
+        ag.pop("digest", None)
+    json.dump({"events": ev, **cur}, sys.stdout, indent=1)
+    print()
+
+
+if __name__ == "__main__":
+    main()

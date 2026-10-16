@@ -1,0 +1,140 @@
+# project-dev-orchestration
+
+Lifecycle skills and an orchestration engine for running a team of coding agents on a GitHub project.
+
+- **Skills** (`skills/`): tool-neutral Agent Skills for every step from bug report to merged PR: intake,
+  feature design, feature build, small fix, PR review, review triage, QC review, status and worktree
+  clean-up. Claude Code, Codex and Grok Build can all load them. Each skill works on the git repo of the
+  current directory, and reads that repo's `.agents/project-profile.md` for its build commands, dev
+  servers, QC data and conventions.
+- **Engine** (`bin/`): optional bash and python scripts that run the team unattended. They rank the
+  project board, spawn one command agent per issue in its own [herdr](https://herdr.dev) workspace and git
+  worktree, watch the agents, hibernate the idle ones, route QC feedback, and keep the board current.
+
+A collaborator needs only the skills. The engine is for whoever runs the team.
+
+## Quick start
+
+**Claude Code**
+
+```
+/plugin marketplace add binerbuddy/project-dev-orchestration
+/plugin install project-dev-orchestration@project-dev-orchestration
+```
+
+or from a checkout: `bin/install --claude`.
+
+**Codex**
+
+```
+codex plugin marketplace add binerbuddy/project-dev-orchestration
+codex plugin add project-dev-orchestration@project-dev-orchestration
+```
+
+or from a checkout: `bin/install --codex`. `bin/install --codex --link` links the skills into
+`~/.agents/skills/` instead.
+
+**Grok Build**
+
+```
+grok plugin install binerbuddy/project-dev-orchestration
+```
+
+Grok reads the Claude plugin layout. From a checkout: `bin/install --grok`, or `--grok --link` to link the
+skills into `~/.grok/skills/`.
+
+**The engine** (only if you run the orchestrator): clone this repo, then
+
+```
+bin/install --bin                 # puts `pdo` on PATH: pdo queue, pdo spawn, pdo watch, ...
+mkdir -p ~/.config/project-dev-orchestration/projects
+$EDITOR ~/.config/project-dev-orchestration/projects/acme.env
+pdo team-up --project acme        # intake, QC and orchestrator agents, then a status report
+```
+
+Requirements: bash 4+, python 3.8+, git 2.31+, jq, the GitHub CLI (`gh`), herdr, and an agent CLI
+(Claude Code today; launching is behind one seam, `launch_agent` in `bin/lib.sh`).
+
+Then, in each product repo, add a profile (`templates/project-profile.md` →
+`.agents/project-profile.md`) and the "How work flows here" section
+(`templates/AGENTS-workflow-section.md`) to its `AGENTS.md`.
+
+### Notes on the skills
+
+- **Install them together, as the plugin.** The skills share reference files through sibling paths
+  (every reviewer consortium uses `skills/project-pr-review/references/review-roles.md`; the build
+  skill uses the design skill's doc contract and the small-fix skill's QC checklist), and they point at
+  `templates/`. A single skill copied on its own loses those links. `bin/install --link` links all of
+  them side by side.
+- **Skill names.** The skills refer to each other as `/project-<name>` (e.g. `/project-intake inbox`).
+  Under the Claude Code plugin a skill may appear namespaced, as
+  `/project-dev-orchestration:project-<name>`; both mean the same skill. The engine launches the
+  standing agents with `PDO_SKILL_PREFIX` (default `/project-dev-orchestration:`); set it to `/` in
+  your `config.env` when the skills are linked un-namespaced.
+- **Engine commands** appear in the skills as `pdo <name> …`. Without `pdo` on PATH, run
+  `<engine checkout>/bin/<name> …`; a dispatch brief gives agents the absolute path.
+
+## How it fits together
+
+```
+ GitHub board + issues ──► queue (ranks: Claude Work This, P1..P4)
+                              │
+ human ◄── questions ──┐      ▼
+   │                   │   orchestrator agent (/loop project-orchestrate)
+   │                   │      │ spawn                     ▲ events
+   │                   │      ▼                           │
+   │             command agent per issue ────────────► watch (token-free poller)
+   │             (own herdr workspace + worktree,         │ hibernate / close-out
+   │              runs a lifecycle skill)                 │
+   │                   │ PR labelled "ready for QC"       │
+   ▼                   ▼                                  │
+ QC agent (project-qc-review) ── serves the PR ── qc ── QC_HOOK (project's servers)
+   │ feedback / pass ──► resume-agent ──► same command agent, same session
+   ▼
+ human merges
+ intake agent (project-intake) ◄── intake-submit (reports from every agent)
+```
+
+## Configuration
+
+Project config is a bash env file, `projects/<name>.env`, found in the first of `PDO_CONFIG_DIRS`
+(colon-separated; default `~/.config/project-dev-orchestration`) that has it. A config dir may also hold
+`prompts/` (e.g. your own `dispatch-brief.md`), `hooks/`, and `config.env` (install-wide defaults).
+
+```bash
+# ~/.config/project-dev-orchestration/projects/acme.env
+ORG="acme"                    # GitHub org (or user) that owns the repos and the board
+PROJECT_NUMBER=3              # org project board number
+declare -A REPO_ROOT=(        # repo -> local clone root (a bare root holds worktrees as subdirs)
+  [widget]="$HOME/src/widget.git"
+  [widget-docs]="$HOME/src/widget-docs"
+)
+PRIMARY_REPO="widget"         # bare "#12" means widget#12
+GH_USER="acme-bot"            # optional: pin every agent's gh to this login
+QC_HOOK="hooks/acme-qc"       # optional: starts/stops your QC servers (relative = this config dir)
+QC_PORTS="3000 4200"          # optional: ports hibernation must never stop
+```
+
+Every script takes `--project <name>`. Without it they use `$PDO_PROJECT`, else the project whose
+`REPO_ROOT` holds the current directory's repo, and otherwise fail with the list of known projects. State
+lives in `PDO_STATE_DIR` (default `~/.local/state/project-dev-orchestration`). `pdo project-env` prints a
+project's resolved settings. The full key list and the hook contracts are in
+[docs/design.md](docs/design.md#configuration).
+
+## Docs
+
+- [docs/user-guide.md](docs/user-guide.md): running the team day to day.
+- [docs/design.md](docs/design.md): how the engine works, and why.
+- [docs/profile.md](docs/profile.md): the per-repo project profile.
+- [docs/collaborators.md](docs/collaborators.md): what a collaborator needs (no orchestrator).
+- [docs/lessons-learned.md](docs/lessons-learned.md): traps found the hard way.
+
+## Tests
+
+`tests/smoke.sh` runs offline in a temp dir with fake `gh` and `herdr`: config resolution, project
+detection, the intake inbox, the spawn floor, `spawn --dry-run`, the QC dispatcher, fixture publishing and
+`bin/install --link`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

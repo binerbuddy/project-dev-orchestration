@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+# runtime state, if PDO_STATE_DIR or PDO_INBOX is ever pointed inside the checkout
+state/
+intake-inbox/
+.omc/
