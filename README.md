@@ -2,8 +2,8 @@
 
 Lifecycle skills and an orchestration engine for running a team of coding agents on a GitHub project.
 
-- **Skills** (`skills/`): tool-neutral Agent Skills for every step from bug report to merged PR: intake,
-  feature design, feature build, small fix, PR review, review triage, QC review, status and worktree
+- **Skills** (`skills/`): tool-neutral Agent Skills for every step from repo setup to merged PR: repo
+  setup, intake, feature design, feature build, small fix, PR review, review triage, QC review, status and worktree
   clean-up. Claude Code, Codex and Grok Build can all load them. Each skill works on the git repo of the
   current directory, and reads that repo's `.agents/project-profile.md` for its build commands, dev
   servers, QC data and conventions.
@@ -55,9 +55,16 @@ pdo team-up --project acme        # intake, QC and orchestrator agents, then a s
 Requirements: bash 4+, python 3.8+, git 2.31+, jq, the GitHub CLI (`gh`), herdr, and an agent CLI
 (Claude Code today; launching is behind one seam, `launch_agent` in `bin/lib.sh`).
 
-Then, in each product repo, add a profile (`templates/project-profile.md` →
-`.agents/project-profile.md`) and the "How work flows here" section
-(`templates/AGENTS-workflow-section.md`) to its `AGENTS.md`.
+### Setting up a new repo
+
+Step one for any repo that will use the system: open your agent in it and run **`/project-setup`**
+(`/project-setup collaborator` for repo files only; full mode, the default when `pdo` is on PATH, also
+registers the repo with the engine). It detects the layout, origin and build commands, drafts
+`.agents/project-profile.md` (from `templates/project-profile.md`), adds the "How work flows here"
+section (`templates/AGENTS-workflow-section.md`) to `AGENTS.md`, creates the missing GitHub labels,
+writes `projects/<name>.env` and optionally wires up a project board, asks only for what it can't
+detect, and opens a PR on `chore/agent-workflow-setup`. Re-run it any time: it reports what is present
+and what has drifted, and only fills gaps.
 
 ### Notes on the skills
 

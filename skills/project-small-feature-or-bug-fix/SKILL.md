@@ -134,7 +134,8 @@ doesn't cover the cases; and it ends with the QC commands block. Save it to the 
 1. Ensure the changelog entry is up to date per §Changelog.
 2. Push the branch and open the PR: `git push -u origin <branch>`, then `gh pr create -R <org>/<repo> --base <base>`
    with a body summarizing what/why and the automated-QC evidence, with `Closes #<issue>` for every issue it resolves
-   (cross-repo: `Closes <org>/<other-repo>#<n>`). Record the PR number. Then give the PR the priority of its issues:
+   (cross-repo: `Closes <org>/<other-repo>#<n>`, only after the human said yes to closing an issue in that repo:
+   reading other repos is fine, writing to them needs the check). Record the PR number. Then give the PR the priority of its issues:
    `pdo pr-priority --repo <repo> --pr <number>`. It copies the highest P-label of the
    linked issues onto the PR. Never set a PR's P-label by hand-picking one.
    If the branch is stacked on another unmerged PR, or can't merge until another PR lands: base the PR on that branch,

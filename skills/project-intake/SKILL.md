@@ -120,6 +120,9 @@ Rules:
 - Board status is `Backlog` by default. Use the queue status (default `Claude Work This`) only when
   the human says to work it right away; the orchestrator picks that up and starts it.
 
+The repo line is how the human approves where each item is filed: never file, comment or close in a repo the gate
+didn't show.
+
 Ask once: **file as drafted, adjust, or drop items?** Apply adjustments, then file. Don't re-confirm
 unless something material changed.
 

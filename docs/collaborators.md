@@ -11,7 +11,11 @@ Grok Build) on your own machine. You don't need the orchestrator, herdr, or any 
    - Codex: `codex plugin marketplace add binerbuddy/project-dev-orchestration`, then
      `codex plugin add project-dev-orchestration@project-dev-orchestration`.
    - Grok Build: `grok plugin install binerbuddy/project-dev-orchestration`.
-2. Clone the product repo and read its `AGENTS.md`, especially "How work flows here".
+2. Clone the product repo. **If it isn't set up for the system yet** (no `.agents/project-profile.md`, no
+   "How work flows here" in `AGENTS.md`), step one is to run **`/project-setup collaborator`** in it: it
+   detects the build commands, drafts the profile and the `AGENTS.md` section, creates the missing
+   labels, asks only for what it can't detect, and opens a PR on `chore/agent-workflow-setup` for a
+   maintainer to merge. Otherwise read its `AGENTS.md`, especially "How work flows here".
 3. Ask your agent to load the **`project-how-it-works`** skill. It explains the pipeline, the labels, and
    which rules apply when no orchestrator is running.
 
@@ -27,5 +31,7 @@ prepare QC data.
 - **Your PR:** follow the lifecycle skill for the route (`project-small-feature-or-bug-fix`, or design →
   build for big features), post the QC checklist, and label the PR `ready for QC`. Never merge.
 - **QC feedback** arrives as PR comments (`QC: …`). Answer on the PR.
+- **Other repos:** check with a maintainer before touching any repo other than the one you're working in.
+  Reading it is fine; branches, PRs, issues, comments and `Closes <org>/<other-repo>#<n>` lines wait for a yes.
 - **gh identity:** never `gh auth switch` on a shared machine; pin with
   `GH_TOKEN=$(gh auth token -u <you>) gh …`.

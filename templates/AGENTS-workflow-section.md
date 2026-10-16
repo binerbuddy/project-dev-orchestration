@@ -35,6 +35,11 @@ dispatch brief gives the absolute path).
 - Commit QC fixtures or test data to a PR branch.
 - Do anything listed in the profile's §Do not.
 
+**Other repos.** Check with your manager (the agent that started you) or a human before touching any repo outside
+this one. Reading another repo for context is fine; editing its files, creating branches, pushing, opening PRs or
+issues, commenting, labelling or closing anything there (a `Closes <org>/<other-repo>#<n>` line included: merging
+closes that issue) waits for their yes.
+
 **Intake rule.** Don't fix or file bugs and ideas you notice outside your task. Queue them for the intake agent:
 `pdo intake-submit "<your workspace name>" "<what, where, repro>"` (one report per call). The human triages the queue with
 `/project-intake inbox`. Without an engine install, open an issue with the `needs-triage` label instead (see the

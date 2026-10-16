@@ -79,7 +79,8 @@ elsewhere (untracked in another worktree), move it here.
    registration, dialog styling, route shapes). Pre-existing bugs found on the way go into §Follow-ups, not scope.
 2. **Memory**: every project-memory entry touching the area (past triage states, gotchas, parked work).
 3. **Issue sweep (cursory)**: GitHub `<org>/<repo>`, plus any related repo §Identity says the area touches. If
-   §Identity names a legacy tracker for older closed work, check it read-only.
+   §Identity names a legacy tracker for older closed work, check it read-only. The sweep only reads; in a related
+   repo, any write it leads to (filing, commenting, closing, a `Closes` line) is listed for approval at phase 6.
    - `gh issue list -R <org>/<repo> --search "<terms> type:Epic" --state all` for existing epics; 4–8 keyword queries
      (`gh search issues --repo <org>/<repo> --include-prs=false "<terms>"`, open and closed) built from the feature's
      nouns and the UI areas it touches. Search is fuzzy, so read each plausible candidate with `gh issue view` before
@@ -137,7 +138,10 @@ survivors are resolved by the lead with the code as arbiter and recorded as `pro
 
 Present, batched with your tool's question UI (Claude Code `AskUserQuestion`: ≤4 questions per call, repeat as
 needed): open decisions; provisional decisions that need confirming; the proposed gates (phase + kind); the issue
-dispositions (absorb this umbrella? close these stale issues? anything to add?). Fold answers into §Decisions with
+dispositions (absorb this umbrella? close these stale issues? anything to add?); and every write the plan makes in
+a repo other than this one (filing the epic or phases there, commenting on or closing its issues, a
+`Closes <org>/<other-repo>#<n>` line), each listed for a yes or no. Without a yes, the item stays read-only: link it
+from the epic body instead. Fold answers into §Decisions with
 dates, update the phase plan, and set the header to
 `Status: Ready for implementation — revision N, all decisions taken <date>`.
 
@@ -152,7 +156,7 @@ The branch is docs-only and is merged later via the feature PR; pushing gives th
 
 ## 8. GitHub epic
 
-Repo `<org>/<repo>` (work owned by a related repo goes there; §Identity). Board: org Project `<project#>`, with its
+Repo `<org>/<repo>` (work owned by a related repo goes there only if the human approved it at phase 6; §Identity). Board: org Project `<project#>`, with its
 node id, Status field id and option ids (Backlog, In Progress, …) from §Identity. If §Identity lacks the ids, discover
 them: `gh project view <project#> --owner <org> --format json --jq .id` and
 `gh project field-list <project#> --owner <org> --format json`.
@@ -180,7 +184,7 @@ relying on it. Create (or update, if the sweep found an epic) in this order, rec
    (`gh project item-edit --project-id <project node id> --id <item> --field-id <status field id>
    --single-select-option-id <Backlog option id>`).
 4. **Dispositions**: fixed-by issues: comment "Resolved by epic #<n>" and list them in the epic body (they go on the
-   PR close list). Related: listed in the epic body only. Stale: close as completed only if the user confirmed in
+   PR close list). In another repo, only the writes approved at phase 6. Related: listed in the epic body only. Stale: close as completed only if the user confirmed in
    phase 6, with a comment naming what delivered it.
 5. **Write back**: fill the doc's §Tracking (epic #/URL, phase → issue table, fixed-by list, related list, stale
    list). Commit `docs: link tracking issues` and push. The doc in git is the only copy; there is no mirrored

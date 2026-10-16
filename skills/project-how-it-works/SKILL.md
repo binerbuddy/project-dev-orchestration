@@ -65,6 +65,11 @@ the queue status, the P-labels and the two QC labels.
 - **Pin gh, never switch it.** If the project env sets `GH_USER`, use `pdo with-gh-user gh …` (or
   `GH_TOKEN=$(gh auth token -u <user>) gh …`). Never `gh auth switch`: the active account is
   machine-wide and other sessions depend on it.
+- **Check before touching another repo.** Ask your manager (the agent that started you) or a human
+  before touching any repo outside your current working repo. Reading it for context is fine; edits,
+  branches, pushes, PRs, issues, comments, labels or closes there (a `Closes <org>/<other-repo>#<n>`
+  line included) wait for their yes. The standing agents' configured repos (the project env's
+  `REPO_ROOT`) are their working scope, as their skills describe.
 - **Name workspaces by label** (e.g. `Acme-245 export sort order`) in anything a human reads, never a
   bare id.
 

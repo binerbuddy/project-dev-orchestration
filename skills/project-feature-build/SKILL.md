@@ -167,7 +167,8 @@ Once every phase is done and every gate approved:
    the command returned) in the ledger and the resumability note.
 4. **PR**: mark ready (`gh pr ready`), write the final body: what/why, phase table with commit ranges, QC evidence,
    divergences, follow-ups, then the close list: `Closes #<epic>` and one `Closes #<n>` line per phase issue and per
-   fixed-by issue from the doc's §Tracking (cross-repo: `Closes <org>/<other-repo>#<n>`), and the attribution line
+   fixed-by issue from the doc's §Tracking (cross-repo: `Closes <org>/<other-repo>#<n>`, only where the design's decisions
+   gate or the human approved that write; otherwise ask first), and the attribution line
    your tool or session prescribes, if any. Merging closes them.
 5. **Review/triage cycle** exactly as `/project-small-feature-or-bug-fix` phase 9 (background sessions:
    `/project-pr-review`, then `/project-pr-triage` with GATE 1 and GATE 2 waived, in-place checklist PATCH, one cycle
