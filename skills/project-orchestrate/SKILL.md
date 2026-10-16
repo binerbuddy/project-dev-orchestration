@@ -38,8 +38,10 @@ Per event, act as `references/events.md` says. Summary: `urgent` → spawn now (
 the build; `pr_conflict` → nothing (step 2b); `pr_cap_reached` → report once; `qc_feedback` /
 `qc_complete` → resume the owning agent; `pr_merged` → check the issue and card; `stalled` → read the
 tail, nudge once or report; `agent_gone` → report; `usage_ceiling` → stop spawning, report;
-`closed_out` / `hibernated` / `hibernate_failed` / `event_hook_failed` / hook events marked quiet → one informational
-line; `first_run` / `heartbeat` →
+`closed_out` / `hibernated` / `hibernate_failed` / `event_hook_failed` / `claim_released` / hook events marked
+quiet → one informational line (close-out and the watcher's release take the claim label off; a hibernated
+agent still in progress keeps it); `claim_release_failed` → report it, and `pdo claim --release <repo> <n>`
+once the cause is clear; `first_run` / `heartbeat` →
 continue.
 
 ## 2b. Rebase conflicting PRs (every tick, throttled)
@@ -92,7 +94,9 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling or the PR cap) and
   3. If the route is ambiguous, add a `route:*` label first. Small = a single Bug/Task/Feature that
      fits one context window. Design = needs a design doc. Build = an Epic with a READY design doc.
   4. `pdo spawn <repo> <n> --project <p> --brief "<brief>"`: worktree, herdr workspace, agent
-     with Remote Control, claim.
+     with Remote Control, claim (the `managed-by:<MANAGER_SLUG>` label plus one claim comment naming
+     the agent and you, and board In Progress; the assignee stays a human lock unless the project
+     sets `CLAIM_ASSIGNS=1`).
   5. If spawn fails, **move on** to the next candidate in the same tick. Spawn logs the failure and the
      queue skips that issue for 24h. Try at most 5 candidates per tick; report each failure in one line.
 - Spawn at most `free_slots` agents per tick.
@@ -126,7 +130,8 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling or the PR cap) and
 
 ## Restarts
 
-All state lives outside this session: herdr workspaces, GitHub (assignees, board, PR labels) and
+All state lives outside this session: herdr workspaces, GitHub (`managed-by:` claim labels, assignees,
+board, PR labels) and
 `$PDO_STATE_DIR` (watch snapshot, lock, log). A fresh session simply runs a tick. Running command
 agents are recognised by their workspace labels and count toward the cap; claimed issues are excluded
 from the queue and `pdo spawn` refuses duplicates; transitions that happened while no orchestrator
@@ -156,6 +161,11 @@ ran still fire once, computed against the last saved snapshot.
   epic.
 - **One writer per issue.** Never spawn for an issue the queue excluded, and **never type into an
   agent with `question_pending`**: your text would answer its question.
+- **Other managers' claims.** A queue reason `managed-by:<slug>` is another manager's issue (the label's
+  description and its claim comment name it). Never spawn, label or unassign it. If the human wants it
+  worked here, the hand-off goes through that manager (or the Portfolio Manager, which logs the agreement
+  with `pdo fleet note`). `blocked-by:<ref>` waits for that issue to close; never remove a native
+  dependency yourself.
 - **Token frugality.** Read agents only through the `herdr agent read` tail; don't explore product
   code. The scripts do the polling.
 - **Model policy.** Command agents run on `DEFAULT_MODEL` (the `pdo spawn` default). Use a

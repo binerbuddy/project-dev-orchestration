@@ -1,8 +1,8 @@
 # The label set
 
 Every label the engine scripts and the lifecycle skills read or write. `/project-setup` checks for each one and
-creates the missing ones. Names in the first four groups follow the project env when it renames them (full mode:
-`pdo project-env <KEY>`; collaborator mode: the names the repo's `AGENTS.md` or profile already uses, else the
+creates the missing ones. Names in the first four groups follow the project env when it renames them (repo+team:
+`pdo project-env <KEY>`; repo-only: the names the repo's `AGENTS.md` or profile already uses, else the
 defaults below).
 
 GitHub label names are case-insensitive: `p1-urgent` already present counts as `P1-urgent` present. Report the case
@@ -30,6 +30,9 @@ difference; never rename it.
 | `Security` | | `ee0701` | Authn/authz, injection, secrets, exposure, unsafe input | queue (ranks first in its P-level), intake |
 | `small-win` | | `7ee787` | Cheap and worthwhile | intake, status |
 | `orchestrator-system` | | `5a5a5a` | Work on the orchestration system itself (System Manager) | queue (excluded) |
+
+Not in the set: the `managed-by:<slug>` claim labels. `pdo claim` creates its own manager's label the first time
+it claims an issue in a repo; setup never creates them.
 
 If `P_LABELS` names more or fewer than four labels, give them the P colors in order and reuse `c2e0c6` for any past
 the fourth.

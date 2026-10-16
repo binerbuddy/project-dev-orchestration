@@ -1,6 +1,6 @@
 <!-- guide-version: <version> -->
 <!--
-The per-repo human guide. /project-setup fills it from the repo's .agents/project-profile.md and, in full mode, the
+The per-repo human guide. /project-setup fills it from the repo's .agents/project-profile.md and, in repo+team setups, the
 engine's projects/<name>.env, and writes it to docs/agent-workflow.md (or where the profile's ## Docs says). Drop this
 comment; keep the guide-version line above as the file's first line.
 - <version>: an integer. 1 on first generation; /project-setup adds 1 whenever a re-run changes anything above
@@ -49,7 +49,9 @@ general guide, for any repo that uses the system, is at https://binerbuddy.githu
 
 - **Getting it worked:** <one of: "The manager moves the issue to **<queue column>** on the board; the orchestrator
   starts an agent within minutes." / "The manager assigns it to you; then ask your agent to work it with the route's
-  command."> An issue assigned to someone is theirs: leave it alone. <!-- env CWT_STATUS / PROJECT_NUMBER -->
+  command."> An issue assigned to someone is theirs: leave it alone. An issue labelled `managed-by:<manager>` is
+  being worked by that manager's agents (the claim comment says who): ask them before touching it. One that GitHub
+  shows as "blocked by" another issue waits for it. <!-- env CWT_STATUS / PROJECT_NUMBER -->
 - **Working an issue yourself:** in your clone, run the route's command with the issue, e.g.
   `/project-small-feature-or-bug-fix #<n>`. Your agent works in its own branch and worktree, asks you its questions,
   and stops at a PR labelled `<QC-ready label>`. <!-- env LABEL_QC_READY -->
@@ -75,14 +77,14 @@ each, plus any evidence the agent already gathered. <!-- profile §QC data -->
   <file>`, then compare with the expected output in the checklist">.
 - **Test data:** the inputs live on the never-merged `qc-fixtures` branch; the checklist links each one.
 [end if]
-- **Give feedback:** where the team runs the orchestrator (full mode), submit a GitHub PR review with
+- **Give feedback:** where the team runs the orchestrator (a repo+team setup), submit a GitHub PR review with
   **Request changes** and your findings or answers (review comments on lines are fine; the summary is what the agent
   reads first). The PR's agent gets it and replies on the PR. If you opened the PR yourself, GitHub won't let you
   request changes on it: tell the agent in its session instead. Without an orchestrator, point the agent that built
   the PR at your review.
 - **Pass it:** add the `<QC-done label>` label (and remove `<QC-ready label>`); only a human does. The agent then
   wraps the PR up for review. <!-- env LABEL_QC_READY, LABEL_QC_DONE -->
-[if full mode and the env sets QC_HOOK]
+[if repo+team and the env sets QC_HOOK]
 - **QC servers on the manager's machine:** the manager can start this PR's QC servers with `/project-qc-review
   <PR#>`; ask them in the PR if you want that.
 [end if]

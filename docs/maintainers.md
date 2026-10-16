@@ -5,8 +5,11 @@ the [user guide](user-guide.md).
 
 ## Set a repo up: `/project-setup`
 
-Open your agent in the repo and run `/project-setup`. In **full** mode (the default when the engine's `pdo` is on
-PATH) it also registers the repo with the engine; `/project-setup collaborator` touches the repo only. It:
+Open your agent in the repo and run `/project-setup`. It asks one plain question: will an orchestrator team (pdo)
+run this repo on this machine? **Yes (repo+team)**: it also registers the repo with the engine. **No (repo-only)**:
+it adds only the repo files that tell everyone's agents how to work here. It doesn't ask when it can tell (the repo
+is already registered, or `pdo` isn't installed), and `/project-setup repo-only` or `/project-setup repo+team`
+picks one up front. It:
 
 - detects the layout, origin, default branch and the build, typecheck and test commands;
 - drafts `.agents/project-profile.md`, the facts every agent reads (build commands, dev servers and ports, QC data,
@@ -17,8 +20,9 @@ PATH) it also registers the repo with the engine; `/project-setup collaborator` 
   ask; and offers a link to it from your README;
 - adds `.agents/local/` (per-clone agent state) to `.gitignore`;
 - creates the GitHub labels the pipeline uses (never deletes or renames one);
-- in full mode, writes the engine's `projects/<name>.env` and optionally wires up a GitHub Project board;
-- asks only what it can't detect, and opens one PR on `chore/agent-workflow-setup`.
+- in repo+team, writes the engine's `projects/<name>.env` and optionally wires up a GitHub Project board;
+- asks at most three short rounds (approve the plan; people; the QC facts it can't detect), each question with a
+  recommended answer, leaves the rest as optional `TODO(setup)` items, and opens one PR on `chore/agent-workflow-setup`.
 
 **Re-run it whenever things change.** It reports what is present, what has drifted and what is missing, fills only
 the gaps, and applies a fix to anything drifted only on your yes. When the profile or env changes what the human

@@ -67,9 +67,10 @@ Requirements: bash 4+, python 3.8+, git 2.31+, jq, the GitHub CLI (`gh`), herdr,
 
 ### Setting up a new repo
 
-Step one for any repo that will use the system: open your agent in it and run **`/project-setup`**
-(`/project-setup collaborator` for repo files only; full mode, the default when `pdo` is on PATH, also
-registers the repo with the engine). It detects the layout, origin and build commands, drafts
+Step one for any repo that will use the system: open your agent in it and run **`/project-setup`**. It asks
+whether an orchestrator team (pdo) will run the repo on this machine: **repo-only** (`/project-setup repo-only`)
+adds just the repo files every agent reads; **repo+team** (`/project-setup repo+team`) also registers the repo
+with the engine. It decides by itself when the repo is already registered or `pdo` isn't installed. It detects the layout, origin and build commands, drafts
 `.agents/project-profile.md` (from `templates/project-profile.md`), adds the "How work flows here"
 section (`templates/AGENTS-workflow-section.md`) to `AGENTS.md`, writes the human guide `docs/agent-workflow.md`
 (`templates/agent-workflow-guide.md`), gitignores `.agents/local/`, creates the missing GitHub labels,

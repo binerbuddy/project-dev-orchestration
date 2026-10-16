@@ -33,6 +33,38 @@ cat >"$T/fakebin/gh" <<'EOF'
 echo "gh $*" >>"$SMOKE_LOG"
 case "$*" in
   "api user --jq .login") echo me ;;
+  # claim / release (managed-by labels, claim comment)
+  "api repos/acme/widget/labels/managed-by%3A"*) [[ -f "$SMOKE_DIR/label-exists" ]] || { echo "HTTP 404" >&2; exit 1; } ;;
+  "label create managed-by:"*) touch "$SMOKE_DIR/label-exists" ;;
+  "api repos/acme/widget/issues/"*"/labels -f labels[]="*) ;;
+  "api -X DELETE repos/acme/widget/issues/"*"/labels/managed-by%3A"*) ;;
+  "api repos/acme/widget/issues/"*"/comments -f body="*) echo 9001 ;;
+  "issue edit"*) ;;
+  "api repos/acme/widget/issues/13") cat "$SMOKE_DIR/issue13.json" ;;
+  "api repos/acme/widget/issues/14") cat "$SMOKE_DIR/issue14.json" ;;
+  "api graphql"*"projectItems"*)
+    echo '{"data":{"repository":{"issue":{"projectItems":{"nodes":[]}}},"organization":{"projectV2":{"id":"PVT_b7","field":{"id":"F1","options":[{"id":"o3","name":"In Progress"},{"id":"o4","name":"Done"}]}}}}}' ;;
+  "api graphql"*"addProjectV2ItemById"*) echo ITEM_1 ;;
+  "api graphql"*"updateProjectV2ItemFieldValue"*) echo '{}' ;;
+  # queue: native blockers of alpha/tool#23
+  "api graphql"*"query blockers"*)
+    echo '{"data":{"repository":{"i23":{"blockedBy":{"nodes":[{"number":9,"state":"OPEN","repository":{"nameWithOwner":"alpha/tool"}},{"number":7,"state":"OPEN","repository":{"nameWithOwner":"gamma/lib"}},{"number":2,"state":"CLOSED","repository":{"nameWithOwner":"alpha/tool"}}]}}}}}' ;;
+  # fleet: native dependencies (one cross-repo edge on alpha/tool, one same-repo edge on gamma/lib)
+  "api graphql"*"query fleetdeps"*)
+    if [[ "$*" == *"r=tool"* ]]; then
+      echo '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"number":1,"blockedBy":{"nodes":[{"number":7,"state":"OPEN","repository":{"nameWithOwner":"gamma/lib"}}]}},{"number":12,"blockedBy":{"nodes":[{"number":9,"state":"OPEN","repository":{"nameWithOwner":"gamma/lib"}}]}}]}}}}'
+    else
+      echo '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"number":3,"blockedBy":{"nodes":[{"number":4,"state":"OPEN","repository":{"nameWithOwner":"gamma/lib"}}]}}]}}}}'
+    fi ;;
+  # fleet deps: native dependency add/remove, fallback comments, coordination notes
+  "api repos/alpha/tool/issues/5 --jq"*) printf '5005\tfalse\n' ;;
+  "api repos/alpha/tool/issues/8 --jq"*) printf '8008\ttrue\n' ;;
+  "api repos/gamma/lib/issues/7 --jq"*) printf '7007\tfalse\n' ;;
+  "api -X POST repos/gamma/lib/issues/7/dependencies/blocked_by -F issue_id=5005") echo '{"number":7}' ;;
+  "api -X POST repos/alpha/tool/issues/1/dependencies/blocked_by -F issue_id=7007")
+    echo 'gh: Validation failed: Target issue has already been taken (HTTP 422)' >&2; exit 1 ;;
+  "api -X DELETE repos/"*"/dependencies/blocked_by/"*) echo '{}' ;;
+  "api repos/"*"/comments -f body="*) printf '7001\thttps://github.com/x/y/issues/1#issuecomment-7001\n' ;;
   "auth token -u "*) echo "token-for-${@: -1}" ;;
   "auth git-credential"*) cat >/dev/null; printf 'protocol=https\nhost=github.com\nusername=x-access-token\npassword=%s\n' "${GH_TOKEN:-none}" ;;
   "pr edit"*|"pr comment"*) ;;
@@ -238,6 +270,48 @@ check "spawn dry-run logged no failure" test ! -e "$T/state/spawn-failures.jsonl
 "$BIN/spawn" nosuchrepo 12 >/dev/null 2>&1
 check "spawn failure is logged" grep -q '"repo":"nosuchrepo"' "$T/state/spawn-failures.jsonl"
 
+# --- claim: managed-by label, claim comment, CLAIM_ASSIGNS, release ---
+eq "MANAGER_SLUG defaults to a slug of MANAGER" "$("$BIN/project-env" --project acme MANAGER_SLUG)" orchestrator-acme
+eq "CLAIM_ASSIGNS defaults to 0" "$("$BIN/project-env" --project acme CLAIM_ASSIGNS)" 0
+eq "MANAGER_SLUG override is slugged" "$(MANAGER_SLUG="Gov Team" "$BIN/project-env" --project acme MANAGER_SLUG)" gov-team
+eq "claim_label in the JSON config" "$("$BIN/pdo-config" --project acme --json | jq -r .claim_label)" managed-by:orchestrator-acme
+: >"$SMOKE_LOG"; rm -f "$T/state/agents/widget-12.json"
+out="$("$BIN/claim" widget 12 --agent "widget-12 crash fix" 2>&1)"; rc=$?
+eq "claim exit" "$rc" 0
+has "claim reports the label and comment" "$out" "managed-by:orchestrator-acme, comment 9001"
+check "claim created the missing label with its description" grep -q 'label create managed-by:orchestrator-acme -R acme/widget --color c5def5 --description Worked by agents of Orchestrator (acme)' "$SMOKE_LOG"
+check "claim added the label" grep -q 'api repos/acme/widget/issues/12/labels -f labels\[\]=managed-by:orchestrator-acme' "$SMOKE_LOG"
+check "claim posted the claim comment" grep -q 'comments -f body=Claimed by widget-12 crash fix (manager: Orchestrator (acme)). Coordinate through that manager' "$SMOKE_LOG"
+eq "claim does not self-assign by default" "$(grep -c 'add-assignee' "$SMOKE_LOG")" 0
+check "claim set the board Status" grep -q 'updateProjectV2ItemFieldValue' "$SMOKE_LOG"
+eq "claim recorded the label and comment id" "$(jq -c '[.claim_label, .claim_comment_id, .claim_released_at]' "$T/state/agents/widget-12.json")" '["managed-by:orchestrator-acme",9001,null]'
+: >"$SMOKE_LOG"
+CLAIM_ASSIGNS=1 "$BIN/claim" widget 12 >/dev/null 2>&1
+check "CLAIM_ASSIGNS=1 self-assigns" grep -q 'issue edit 12 -R acme/widget --add-assignee me' "$SMOKE_LOG"
+eq "label exists now: not created twice" "$(grep -c 'label create' "$SMOKE_LOG")" 0
+jq -n '{number: 13, state: "open", title: "Held elsewhere", node_id: "I_13", assignees: [], labels: [{name: "managed-by:lib-lead"}]}' >"$T/issue13.json"
+out="$("$BIN/claim" widget 13 2>&1)"; rc=$?
+eq "claim refuses another manager's label" "$rc" 1
+has "claim names the other manager's label" "$out" "held by another manager (managed-by:lib-lead)"
+out="$("$BIN/spawn" widget 13 --dry-run 2>&1)"; has "spawn refuses another manager's label" "$out" "held by another manager"
+jq -n '{number: 14, state: "open", title: "Mine already", node_id: "I_14", assignees: [{login: "me"}], labels: [{name: "managed-by:orchestrator-acme"}]}' >"$T/issue14.json"
+out="$("$BIN/claim" widget 14 2>&1)"; rc=$?
+eq "CLAIM_ASSIGNS=0: any assignee is a human lock" "$rc" 1
+has "claim says the assignee is a human lock" "$out" "assigned to me (an assignee is a human lock)"
+: >"$SMOKE_LOG"
+out="$(CLAIM_ASSIGNS=1 "$BIN/claim" widget 14 --keep-status 2>&1)"; rc=$?
+eq "CLAIM_ASSIGNS=1: the login's own assignment is the legacy claim" "$rc" 0
+eq "re-claim with the label already on posts no second comment" "$(grep -c 'comments -f body=' "$SMOKE_LOG")" 0
+eq "--keep-status leaves the board alone" "$(grep -c 'updateProjectV2ItemFieldValue' "$SMOKE_LOG")" 0
+: >"$SMOKE_LOG"
+out="$("$BIN/claim" --release widget 12 2>&1)"; rc=$?
+eq "claim --release exit" "$rc" 0
+check "release removed the label" grep -q 'api -X DELETE repos/acme/widget/issues/12/labels/managed-by%3Aorchestrator-acme' "$SMOKE_LOG"
+check "release recorded claim_released_at" jq -e '.claim_released_at > 0' "$T/state/agents/widget-12.json"
+eq "release keeps the assignee unless --unassign" "$(grep -c 'remove-assignee' "$SMOKE_LOG")" 0
+"$BIN/claim" --release widget 12 --unassign >/dev/null 2>&1
+check "release --unassign removes the login" grep -q 'remove-assignee me' "$SMOKE_LOG"
+
 # --- python scripts against the fakes ---
 out="$("$BIN/queue" --json 2>&1)"; eq "queue (empty board)" "$(jq -c .ranked <<<"$out" 2>/dev/null)" "[]"
 out="$("$BIN/queue" --project beta 2>&1)"; has "queue needs a PROJECT_NUMBER" "$out" "no PROJECT_NUMBER"
@@ -301,11 +375,23 @@ EOF
 iss() { jq -nc --argjson n "$1" --arg t "$2" --arg l "$3" '{number: $n, title: $t, labels: [{name: $l}], assignees: [],
   type: {name: "Task"}, html_url: "https://github.com/alpha/tool/issues/\($n)", url: "https://api.github.com/repos/alpha/tool/issues/\($n)",
   created_at: "2026-01-0\($n)T00:00:00Z", body: "", issue_dependencies_summary: {}}'; }
-{ iss 1 "ordinary work" P2-high; iss 2 "urgent work" P1-urgent; } >"$T/alpha-issues.jsonl"
+{ iss 1 "ordinary work" P2-high; iss 2 "urgent work" P1-urgent
+  # 21: another manager's claim; 22: this project's own claim; 23: natively blocked by two open issues
+  jq -nc '{number: 21, title: "held by another team", labels: [{name: "P2-high"}, {name: "managed-by:docs-team"}], assignees: [], type: {name: "Task"},
+    html_url: "h21", url: "u21", created_at: "2026-01-01T00:00:00Z", body: "", issue_dependencies_summary: {}}'
+  jq -nc '{number: 22, title: "ours in progress", labels: [{name: "P2-high"}, {name: "managed-by:orchestrator-alpha"}], assignees: [], type: {name: "Task"},
+    html_url: "h22", url: "u22", created_at: "2026-01-01T00:00:00Z", body: "", issue_dependencies_summary: {}}'
+  jq -nc '{number: 23, title: "natively blocked", labels: [{name: "P2-high"}], assignees: [], type: {name: "Task"},
+    html_url: "h23", url: "u23", created_at: "2026-01-01T00:00:00Z", body: "", issue_dependencies_summary: {blocked_by: 2, blocking: 0}}'
+} >"$T/alpha-issues.jsonl"
 jq -n '{data: {repository: {pullRequests: {totalCount: 2, nodes: [
   {number: 10, title: "agent three", url: "https://github.com/alpha/tool/pull/10", isDraft: false, headRefName: "feat/3", labels: {nodes: [{name: "ready for QC"}]}},
   {number: 11, title: "agent four", url: "https://github.com/alpha/tool/pull/11", isDraft: false, headRefName: "feat/4", labels: {nodes: [{name: "QC complete - ready to review"}]}}]},
-  gates: {nodes: [{number: 6, title: "a prototype", url: "https://github.com/alpha/tool/issues/6"}]}}}}' >"$T/fleet-tool.json"
+  gates: {nodes: [{number: 6, title: "a prototype", url: "https://github.com/alpha/tool/issues/6"}]},
+  claims: {nodes: [
+    {name: "managed-by:orchestrator-alpha", issues: {totalCount: 3, nodes: [
+      {number: 4, title: "live agent", url: "u4"}, {number: 3, title: "hibernated agent", url: "u3"}, {number: 30, title: "agent gone", url: "u30"}]}},
+    {name: "managed-by:docs-team", issues: {totalCount: 1, nodes: [{number: 31, title: "theirs", url: "u31"}]}}]}}}}' >"$T/fleet-tool.json"
 echo '{"repo":"tool","number":3,"name":"tool-3 agent three","branch":"feat/3","hibernated_at":1700000000}' >"$FS/agents/tool-3.json"
 echo '{"result":{"workspaces":[{"label":"Orchestrator (alpha)","workspace_id":"wA","agent_status":"idle"},{"label":"tool-4 other work","workspace_id":"wB","agent_status":"blocked"},{"label":"lib-5 owned work","workspace_id":"wC","agent_status":"working"}]}}' >"$T/herdr-ws.json"
 echo '{"result":{"agents":[{"agent":"claude","name":null,"workspace_id":"wA","pane_id":"wA:p1","agent_status":"idle"},{"agent":"claude","name":"tool-4","workspace_id":"wB","pane_id":"wB:p1","agent_status":"blocked"},{"agent":"claude","name":"lib-5","workspace_id":"wC","pane_id":"wC:p1","agent_status":"working"}]}}' >"$T/herdr-agents.json"
@@ -337,6 +423,22 @@ eq "fleet: ... nor in its advice" "$(jq -r '.advice.gamma.active' <<<"$out" 2>/d
 eq "fleet: ... but in its memory estimate" "$(jq -r '.projects[1].est_agent_mb' <<<"$out" 2>/dev/null)" 400
 has "fleet text: self-managed line names the owner" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --project gamma 2>/dev/null)" "self-managed (owner: Lib Lead) 1: lib-5 owned work"
 check "fleet: gbot's calls used its own token" grep -q "gh auth token -u gbot" "$SMOKE_LOG"
+eq "fleet: claimed count per manager" "$(jq -c '[.claims[] | "\(.slug)=\(.count):\(.manager)"]' <<<"$out" 2>/dev/null)" '["orchestrator-alpha=3:Orchestrator (alpha)","docs-team=1:null"]'
+eq "fleet: a claim with no live or in-progress agent is stale" "$(jq -c '[.stale_claims[] | "\(.project):\(.ref)"]' <<<"$out" 2>/dev/null)" '["alpha:alpha/tool#30"]'
+eq "fleet: project claims" "$(jq -c '.projects[0].claims | [.label, (.claimed | length), .stale_known]' <<<"$out" 2>/dev/null)" '["managed-by:orchestrator-alpha",3,true]'
+eq "fleet: native cross-repo dependencies (same-repo edges left to the project)" "$(jq -c '[.native_deps[] | "\(.blocker)>\(.blocked)"]' <<<"$out" 2>/dev/null)" '["gamma/lib#7>alpha/tool#1","gamma/lib#9>alpha/tool#12"]'
+txt="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" 2>/dev/null)"
+has "fleet text: stale claim with the release command" "$txt" "STALE claim: [alpha] alpha/tool#30 agent gone - no live or in-progress agent (pdo claim --release tool 30 --project alpha)"
+has "fleet text: another manager's claims" "$txt" "managed-by:docs-team 1: (another manager: not in this install)"
+has "fleet text: GitHub-only native dependency" "$txt" "gamma/lib#9 blocks alpha/tool#12 [GitHub only]"
+out2="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 SMOKE_HERDR_FAIL=1 "$BIN/fleet" --json 2>/dev/null)"
+eq "fleet: no herdr = stale claims unknown, none flagged" "$(jq -c '[(.stale_claims | length), .projects[0].claims.stale_known]' <<<"$out2" 2>/dev/null)" '[0,false]'
+qx="$("${F[@]}" "$BIN/queue" --project alpha --all --json 2>/dev/null)"
+eq "queue: another manager's label excludes" "$(jq -c '[.excluded[] | select(.number == 21) | .excluded[]]' <<<"$qx")" '["managed-by:docs-team"]'
+eq "queue: our own label is claimed" "$(jq -c '[.excluded[] | select(.number == 22) | .excluded[]]' <<<"$qx")" '["claimed"]'
+eq "queue: native blocked-by names the open blockers" "$(jq -c '[.excluded[] | select(.number == 23) | .excluded[]]' <<<"$qx")" '["blocked-by:tool#9,gamma/lib#7"]'
+eq "queue: still ranks the unclaimed, unblocked work" "$(jq -c '[.ranked[].number]' <<<"$qx")" '[2,1]'
+
 check "fleet without --write-advice writes nothing" test ! -e "$FS/fleet-advice.json"
 
 out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=2000 "$BIN/fleet" --json 2>/dev/null)"
@@ -358,20 +460,34 @@ eq "fleet --project limits the sections" "$(jq -c '[.projects[].project, (.advic
 "${F[@]}" "$BIN/fleet" --project nope >/dev/null 2>&1; eq "fleet --project unknown fails" "$?" 1
 
 # cross-project dependencies
-eq "deps add" "$("${F[@]}" "$BIN/fleet" deps add alpha/tool#5 blocks gamma/lib#7 --note "needs the API")" "added #1: alpha/tool#5 blocks gamma/lib#7"
-"${F[@]}" "$BIN/fleet" deps add alpha/tool#8 blocks gamma/lib#7 >/dev/null
-"${F[@]}" "$BIN/fleet" deps add gamma/lib#7 blocks alpha/tool#1 >/dev/null
+: >"$SMOKE_LOG"
+eq "deps add (native)" "$("${F[@]}" "$BIN/fleet" deps add alpha/tool#5 blocks gamma/lib#7 --note "needs the API")" "added #1: alpha/tool#5 blocks gamma/lib#7 (native)"
+check "deps add: native blocked_by takes the blocker's numeric issue id" grep -q "api -X POST repos/gamma/lib/issues/7/dependencies/blocked_by -F issue_id=5005" "$SMOKE_LOG"
+err="$("${F[@]}" "$BIN/fleet" deps add alpha/tool#8 blocks gamma/lib#7 2>&1 >/dev/null)"
+has "deps add: a PR blocker falls back with a warning" "$err" "native dependency not added (alpha/tool#8 is a pull request"
+check "deps add: the fallback comments on the blocked issue" grep -q "api repos/gamma/lib/issues/7/comments -f body=\*\*Coordination (portfolio):\*\* Blocked by alpha/tool#8" "$SMOKE_LOG"
+eq "deps add: an existing native link counts as added" "$("${F[@]}" "$BIN/fleet" deps add gamma/lib#7 blocks alpha/tool#1 --as "Lib Lead" 2>/dev/null)" "added #3: gamma/lib#7 blocks alpha/tool#1 (native)"
+eq "deps: native flag recorded" "$("${F[@]}" "$BIN/fleet" deps list --json | jq -c 'map("\(.id):\(.native):\(.by)")')" '["1:true:portfolio","2:false:portfolio","3:true:Lib Lead"]'
 has "deps add duplicate" "$("${F[@]}" "$BIN/fleet" deps add alpha/tool#5 blocks gamma/lib#7)" "already recorded"
 "${F[@]}" "$BIN/fleet" deps add "tool#5" blocks gamma/lib#7 >/dev/null 2>&1; eq "deps add rejects a bare ref" "$?" 1
-has "deps list" "$("${F[@]}" "$BIN/fleet" deps list)" "#1 alpha/tool#5 blocks gamma/lib#7  - needs the API"
+has "deps list" "$("${F[@]}" "$BIN/fleet" deps list)" "#1 alpha/tool#5 blocks gamma/lib#7 [native]  - needs the API"
 out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --json 2>/dev/null)"
 eq "fleet flags closed and merged blockers" "$(jq -c '[.deps[] | "\(.id):\(.blocker_state)"]' <<<"$out" 2>/dev/null)" '["1:closed","2:merged","3:open"]'
 has "fleet text says mark done" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" 2>/dev/null)" "blocker CLOSED: mark done (pdo fleet deps done 1)"
 eq "deps done by pair" "$("${F[@]}" "$BIN/fleet" deps done alpha/tool#5 blocks gamma/lib#7)" "done #1: alpha/tool#5 blocks gamma/lib#7"
+check "deps done removes the native link" grep -q "api -X DELETE repos/gamma/lib/issues/7/dependencies/blocked_by/5005" "$SMOKE_LOG"
 eq "deps done by id" "$("${F[@]}" "$BIN/fleet" deps done 2)" "done #2: alpha/tool#8 blocks gamma/lib#7"
+check "deps done on a fallback dependency posts the matching comment" grep -q "No longer blocked by alpha/tool#8" "$SMOKE_LOG"
 eq "deps list shows open only" "$("${F[@]}" "$BIN/fleet" deps list --json | jq -c 'map(.id)')" "[3]"
 eq "deps list --all" "$("${F[@]}" "$BIN/fleet" deps list --all --json | jq -c 'map(.id)')" "[1,2,3]"
 "${F[@]}" "$BIN/fleet" deps done 2 >/dev/null 2>&1; eq "deps done twice fails" "$?" 1
+out="$("${F[@]}" "$BIN/fleet" note alpha/tool#1 "alpha ships the API first; gamma starts after" 2>&1)"
+has "fleet note posts and prints the link" "$out" "noted on alpha/tool#1 (portfolio): https://"
+check "fleet note heads the comment" grep -q "api repos/alpha/tool/issues/1/comments -f body=\*\*Coordination (portfolio):\*\* alpha ships the API first" "$SMOKE_LOG"
+"${F[@]}" "$BIN/fleet" note gamma/lib#7 "hand-off agreed" --as "Gamma Lead" >/dev/null 2>&1
+check "fleet note --as names the manager" grep -q "body=\*\*Coordination (Gamma Lead):\*\* hand-off agreed" "$SMOKE_LOG"
+eq "fleet note logs locally" "$(jq -sc 'map(select(.kind == "note") | .by)' "$FS/coordination-log.jsonl")" '["portfolio","Gamma Lead"]'
+"${F[@]}" "$BIN/fleet" note "tool#1" "x" >/dev/null 2>&1; eq "fleet note rejects a bare ref" "$?" 1
 
 # the advice file, and queue / watch honouring it
 "${F[@]}" PDO_FLEET_MEM_AVAIL_MB=2000 "$BIN/fleet" --write-advice >/dev/null 2>&1
@@ -409,7 +525,15 @@ WS="$T/watch-state"; mkdir -p "$WS/agents"
 # a hibernated agent on widget#5 (branch feat/5) is tracked without herdr, so qc_complete can fire for it
 jq -n '{repo: "widget", number: 5, name: "widget-5 thing", branch: "feat/5", hibernated_at: 1, session_id: "s5"}' >"$WS/agents/widget-5.json"
 W() { PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" "$BIN/watch" --project acme "$@" 2>"$T/watch.err"; }
+# a closed-out agent whose issue still carries the claim label: the watcher releases it once
+jq -n '{repo: "widget", number: 6, name: "widget-6 done", branch: "feat/6", hibernated_at: 1, closed_out: true, done_tracking: true,
+  claim_label: "managed-by:orchestrator-acme"}' >"$WS/agents/widget-6.json"
+: >"$SMOKE_LOG"
 W >/dev/null   # first run: baseline
+check "watch: releases a finished agent's claim label" grep -q "api -X DELETE repos/acme/widget/issues/6/labels/managed-by%3Aorchestrator-acme" "$SMOKE_LOG"
+check "watch: records the release" jq -e '.claim_released_at > 0' "$WS/agents/widget-6.json"
+: >"$SMOKE_LOG"; W >/dev/null
+eq "watch: releases once" "$(grep -c 'issues/6/labels' "$SMOKE_LOG")" 0
 # rewind the review cursor so the reviews above count as new; the old one stays before it
 jq --arg s "$(date -u -d '-1 hour' +%FT%TZ)" '.review_since = $s | .review_seen = []' "$WS/acme-watch.json" >"$WS/x" && mv "$WS/x" "$WS/acme-watch.json"
 out="$(W)"

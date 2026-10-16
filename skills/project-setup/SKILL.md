@@ -1,7 +1,7 @@
 ---
 name: project-setup
-description: Set up, initialise or onboard the current git repo for project-dev-orchestration (the orchestration / agent workflow) - detect the layout, origin, stack and its build/typecheck/test commands, draft .agents/project-profile.md, add the "How work flows here" section to AGENTS.md, check and create the GitHub labels, record the QC fixture format, generate the human guide (docs/agent-workflow.md or the repo's human-docs dir) and gitignore .agents/local/, and in full mode register the repo with the engine (projects/<name>.env, optional project board), then deliver the repo files as a PR on chore/agent-workflow-setup that follows the repo's own changeset/CI rules. Handles repos that are one of several in a project. Idempotent - a re-run reports what is present and what has drifted, and only fills gaps. Use when asked to set up, initialise, onboard or bootstrap a repo for the orchestration or agent workflow, or to check or repair an existing setup.
-argument-hint: "[collaborator|full]"
+description: Set up, initialise or onboard the current git repo for project-dev-orchestration (the orchestration / agent workflow) - detect the layout, origin, stack and its build/typecheck/test commands, draft .agents/project-profile.md, add the "How work flows here" section to AGENTS.md, check and create the GitHub labels, record the QC fixture format, generate the human guide (docs/agent-workflow.md or the repo's human-docs dir) and gitignore .agents/local/, and when an orchestrator team will run here (repo+team) register the repo with the engine (projects/<name>.env, optional project board), then deliver the repo files as a PR on chore/agent-workflow-setup that follows the repo's own changeset/CI rules. Asks at most three short rounds of questions, each with a recommended answer, leading with detected defaults. Handles repos that are one of several in a project. Idempotent - a re-run reports what is present and what has drifted, and only fills gaps. Use when asked to set up, initialise, onboard or bootstrap a repo for the orchestration or agent workflow, or to check or repair an existing setup.
+argument-hint: "[repo-only|repo+team]"
 ---
 
 # Project setup
@@ -10,7 +10,8 @@ argument-hint: "[collaborator|full]"
 
 Initialise the **current working repo** to use project-dev-orchestration: the repo files every agent reads (the
 profile and `AGENTS.md`), the guide its humans read (`docs/agent-workflow.md` by default), the GitHub labels the
-pipeline relies on, and, in full mode, the engine's registration of the repo.
+pipeline relies on, and, when an orchestrator team will run the repo from this machine, the engine's registration of
+the repo.
 
 **Idempotent.** Every step first checks what is already there. A re-run prints what is present, what has drifted
 (present but out of date, or disagreeing with what detection finds), and what is missing, and only fills gaps.
@@ -30,30 +31,76 @@ renamed or deleted without it.
 - **Never delete or rename a GitHub label**, and never use `gh label create --force` on one that exists.
 - **Show before you move.** Moving the human's existing `CLAUDE.md` (or any other) content needs the diff shown and
   an explicit yes.
-- **Ask in batches.** Collect the unknowns and ask once (Claude Code: `AskUserQuestion`, at most 4 questions per call,
-  repeated as needed; Codex and Grok: one numbered list in chat). Every question can be answered "skip": the item
-  stays `TODO(setup)`.
-- **gh and git identity.** Never `gh auth switch`. Once a `GH_USER` is known (an existing project env, or the
-  human's answer in step 6), run gh as `pdo with-gh-user gh …` or `GH_TOKEN=$(gh auth token -u <user>) gh …`.
-  `git push` and `git fetch` over HTTPS don't read `GH_TOKEN` on their own: run them as
-  `pdo with-gh-user --user <login> git push …`, which also injects gh's credential helper for github.com. Without
-  the engine: `GH_TOKEN=$(gh auth token -u <login>) git -c credential.https://github.com.helper= -c
-  'credential.https://github.com.helper=!gh auth git-credential' push …`.
+- **Few questions, in at most three short rounds** (section "Questions" below). Lead with what you detected, so
+  most answers are one "yes". Every question carries a recommended answer, and every question can be answered
+  "skip": the item stays `TODO(setup)`. Never ask about something the profile can leave as `TODO(setup)` without
+  blocking the run; collect those at the end as optional.
+- **gh and git identity.** Never `gh auth switch`.
+  - **`GH_TOKEN` already set** (a dispatched agent runs inside `pdo with-gh-user`; or the human exported it): gh
+    already uses it. Check who it is with `gh api user --jq .login`, use that login, and don't re-pin (no
+    `with-gh-user`, no second `gh auth token -u`). For git over HTTPS, `git config --get-all
+    credential.https://github.com.helper` showing `!gh auth git-credential` means plain `git push` already uses the
+    token; otherwise add the helper for that one command (`git -c credential.https://github.com.helper= -c
+    'credential.https://github.com.helper=!gh auth git-credential' push …`), which reads the `GH_TOKEN` already set.
+  - **Not set:** once a `GH_USER` is known (an existing project env, or the human's answer in round 2), run gh as
+    `pdo with-gh-user gh …` or `GH_TOKEN=$(gh auth token -u <user>) gh …`. `git push` and `git fetch` over HTTPS
+    don't read `GH_TOKEN` on their own: run them as `pdo with-gh-user --user <login> git push …`, which also injects
+    gh's credential helper for github.com. Without the engine: `GH_TOKEN=$(gh auth token -u <login>) git -c
+    credential.https://github.com.helper= -c 'credential.https://github.com.helper=!gh auth git-credential' push …`.
 - LF line endings in every file you write. Normalise anything you copy from an existing file to LF first.
 
-## 0. Mode
+## 0. Mode: will an orchestrator team run here?
 
-- `collaborator`: repo files and labels only. No engine, no env file, no board. For someone who works the repo with
-  their own agent and no orchestrator.
-- `full`: everything in collaborator mode, plus engine registration (step 6).
-- No argument: `full` if the engine is reachable, else `collaborator`. The engine is reachable when `pdo` is on
-  PATH, or the human names an engine checkout: a directory whose `bin/` holds `pdo` and `project-env`. If they name
-  a wrapper or overlay directory with its own `bin/`, use it only if its `bin/` runs every command this skill calls
-  (`<dir>/bin/pdo help` lists them); otherwise ask for the engine checkout itself. Say which mode you picked and
-  why in one line.
-- **One of several repos in a project:** if `pdo project-env` run from this repo resolves a project whose
-  `PRIMARY_REPO` is another repo, this repo is a secondary repo of that project. Use full mode against that
-  project's env (step 6 edits it, never creates a second one), and treat its board as shared (step 2, §Identity).
+Two setups. Name them this way to the human:
+- **repo-only**: only the repo files that tell everyone's agents how to work here (profile, `AGENTS.md` section,
+  human guide, labels). Nothing on this machine changes. For someone who works the repo with their own agent.
+- **repo+team**: the same, plus registering the repo with the engine on this machine (step 6: an env file, and a
+  board if wanted), so an orchestrator team (`pdo`) can run it.
+
+The arguments `repo-only` and `repo+team` pick one; the older names `collaborator` (= repo-only) and `full`
+(= repo+team) still work. Without an argument, decide in this order, and **state the decision** in one line with
+its reason instead of asking whenever detection settles it:
+1. **Already registered** (`pdo project-env`, run from the repo, resolves a project): repo+team, checking that
+   registration. "This repo is already registered with the engine as project `<p>`; I'll check that too."
+2. **No engine reachable**: repo-only. "The engine (`pdo`) isn't installed here, so I'll only add the repo
+   files." The engine is reachable when `pdo` is on PATH, or the human names an engine checkout: a directory whose
+   `bin/` holds `pdo` and `project-env`. If they name a wrapper or overlay directory with its own `bin/`, use it only
+   if its `bin/` runs every command this skill calls (`<dir>/bin/pdo help` lists them); otherwise ask for the engine
+   checkout itself.
+3. **Otherwise ask one plain question** (in round 1, below): "Is an orchestrator team (pdo) going to run on this
+   machine for this repo? **Yes:** I'll also register the repo with the engine. **No:** I'll only add the repo files
+   that tell everyone's agents how to work here." Recommend **Yes** when the config dirs already hold other
+   projects (this machine runs teams), else **No**.
+
+**One of several repos in a project:** if `pdo project-env` run from this repo resolves a project whose
+`PRIMARY_REPO` is another repo, this repo is a secondary repo of that project. Use repo+team against that
+project's env (step 6 edits it, never creates a second one), and treat its board as shared (step 2, §Identity).
+
+## Questions: at most three short rounds
+
+Run detection (step 1) first, then ask. Claude Code: one `AskUserQuestion` call per round (at most 4 questions);
+Codex and Grok: one short numbered list per round. Each question states the recommended answer first, from
+detection where possible (`Manager (recommended: <login>, the repo's top committer)`), so "yes" accepts it. Ask
+only what isn't settled; a round with nothing left is skipped.
+
+1. **The plan.** One list of what you detected and will write, approved with one "yes" (or "yes, except …"): the mode
+   when step 0 didn't settle it, the files to add or change (profile, `AGENTS.md` section, guide path and the docs
+   dir chosen, `.gitignore`), the `CLAUDE.md` move (with its diff, step 3), the README link (step 7), and the labels
+   to create (step 4).
+2. **People.** `Manager` (who runs the team, sets priorities and merges, and how to reach them) and `Where to ask`
+   (where collaborators ask questions). repo+team adds the engine's few: the project name (recommended: the repo
+   name in lower case), `GH_USER` (recommended: the login `gh api user` shows, when it has push access), and the
+   board (recommended: the board linked to the repo if `gh project list` finds one, else none). repo-only asks about
+   the board as an optional question: "Is there a project board for this repo? (recommended: skip; record it later)".
+3. **What can't be detected and would leave QC unusable:** the QC data and fixture format (step 5; recommend
+   what the stack suggests, e.g. an input file with its expected output for a headless repo), the ports reserved for
+   the human's QC servers and the agents' port scheme (recommend the detected dev-server ports as the human's, and
+   the same ports +100 for agents), and the "Human run" line (recommend the detected start command).
+
+**Optional, at the end.** Everything else the profile can leave as `TODO(setup)` without blocking: extra review
+roles, related repos, §Conventions and §Do not, §Project extras, `Human guide notes`, worktree naming when there's
+nothing to infer, type labels on a user-owned repo. List them in one message as optional ("answer any now, or skip
+and they stay `TODO(setup)`"), each with a recommendation where you have one. Never hold the run for them.
 
 ## 1. Detect (read-only)
 
@@ -75,8 +122,13 @@ Recipes for each item: `references/detection.md`. Find:
 5. **Changelog and PR rules (CI):** the changelog convention (changesets, a CHANGELOG file, release tooling), and any
    workflow that fails a PR without one: a required-changeset or changelog check, the label that skips it (e.g.
    `skip changeset`), and the paths it exempts. Step 8 applies these to the setup PR itself.
-6. **Full mode:** whether the repo is already registered (`pdo project-env` run from the repo resolves a project,
+6. **Engine:** whether `pdo` is reachable, whether the repo is already registered (`pdo project-env` run from the repo resolves a project,
    and whether this repo is its `PRIMARY_REPO`), the config dirs, and the gh logins on the machine.
+
+7. **A fresh `origin/<base>`.** Every check against the default branch reads `origin/<base>`, so update it first
+   with the recipe in `references/detection.md` ("Fresh origin/<base>"): a bare clone made without a fetch refspec
+   doesn't move `refs/remotes/origin/<base>` on a plain `git fetch`, and the recipe detects that and fetches with an
+   explicit refspec.
 
 Print a short **detection report**: one line per item with its value, its source, and its state (present, missing,
 drifted). On a re-run this report is the main output; the later steps act only on the missing and drifted lines.
@@ -94,7 +146,8 @@ guidance paragraph with facts.
   §Build & checks and §Tests (the commands, each with the directory it runs in; "none defined" where there is none),
   §Dev servers (start commands and ports found, with their files), §Changelog (the convention found, with an example
   entry copied from the repo, plus the CI check, skip label and exempt paths from step 1), §Docs (the dirs found).
-- **List the unknowns and ask only for what detection can't give**, typically:
+- **The unknowns detection can't give** go into the question rounds above (round 2: the §Identity guide lines;
+  round 3: §QC data, §Dev servers ports and "Human run"; the rest is optional at the end). What each one holds:
   - **§QC data:** what human QC runs against. With a UI: seed data, what the top-level record is called in the UI,
     the fixture format and extension, how to export and import one, any size limit (see step 5). Headless: what a
     QC case is (an input file or request plus its expected output), the fixture format, and the command a human
@@ -107,15 +160,15 @@ guidance paragraph with facts.
   - **§Review roles:** extra reviewer roles (a UI designer for the project's component library, a data reviewer for
     migrations), or none;
   - **§Identity related repos:** other repos agents may need to search or file against, and when each is in scope;
-  - **§Identity board:** the project board, if any (full mode handles it in step 6; collaborator mode only records
-    what the human says);
+  - **§Identity board:** the project board, if any (repo+team handles it in step 6; repo-only only records what the
+    human says, and "Board: TODO(setup)" when they skip);
   - **§Dev servers:** the ports reserved for the human's QC servers and the port scheme agents use instead; the
     database rules; and the plain commands a person runs to start the app for QC (the "Human run" line);
   - **§Conventions** and **§Do not:** anything the human wants stated now (both may start short);
   - **§Identity, for the human guide (step 7):** `Manager` (the person who runs the team, sets priorities and
     merges, and how to reach them), `Where to ask` (where collaborators ask questions), and `Human guide notes`
     (anything repo-specific the guide must tell people: which repo to file in, house prohibitions in plain words).
-    Ask these in the same batch. The guide is rendered from these lines, so a re-run never loses the answers.
+    These are round 2. The guide is rendered from these lines, so a re-run never loses the answers.
 - Write answers in; unanswered items stay `TODO(setup): <question>` under their heading.
 - **Shared board (a project with several repos).** The primary repo's profile holds the board's ids. A secondary
   repo's §Identity names the board and points at the ids instead of copying them: "Board: org Project #<n>, shared
@@ -139,9 +192,9 @@ Fill this plugin's `templates/AGENTS-workflow-section.md` (`../../templates/AGEN
 leading comment, replace every `<placeholder>` (`<org>/<repo>`, `<project#>`, `<base>`) and use the project's label
 names where its env renames them. `<guide path>` is where step 7 writes the human guide. With no board, replace the
 "on org Project `<project#>`" clause with "with no project board (a maintainer dispatches agents by hand)".
-`<engine checkout>`: in full mode, the engine path `pdo project-env PDO_HOME` prints, written with `~/` when it is
+`<engine checkout>`: in repo+team, the engine path `pdo project-env PDO_HOME` prints, written with `~/` when it is
 under the home directory (person-started sessions without `pdo` on PATH find the engine through it; a dispatch
-brief's absolute path still wins); in collaborator mode, replace it with "your project-dev-orchestration
+brief's absolute path still wins); in repo-only, replace it with "your project-dev-orchestration
 checkout". For a headless repo, use the template's headless wording in the QC Checklist rule.
 
 - **No `AGENTS.md`:** create it with a one-line title and the section.
@@ -196,15 +249,15 @@ Tell the human, in two or three lines:
   headless repo, typically an input file with its expected output).
 
 Ask for the fixture format (what it is, its file extension, how to export one and import or run it, any size limit)
-and record it in the profile's §QC data. In full mode also set the extension in the env file: `FIXTURE_EXT` (e.g.
+and record it in the profile's §QC data. In repo+team also set the extension in the env file: `FIXTURE_EXT` (e.g.
 `.json`, `.tar.gz`) for the project's primary repo, and for a secondary repo with its own format an entry in
 `FIXTURE_EXT_BY_REPO` (`declare -A FIXTURE_EXT_BY_REPO=([<repo>]=".<ext>")`), which `qc-fixture-push --repo <repo>`
 uses before `FIXTURE_EXT`. `qc-fixture-push` warns when a file doesn't match. No fixtures (the seed data covers
 QC): say so in §QC data and leave both unset.
 
-## 6. Full mode: engine registration
+## 6. repo+team: engine registration
 
-Skip this whole step in collaborator mode.
+Skip this whole step in repo-only.
 
 **Env file.** The project name is the human's choice (suggest the repo name in lower case; it is what `--project`
 takes). Write `projects/<name>.env` into the first dir of `PDO_CONFIG_DIRS`, or the default
@@ -288,7 +341,7 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
   next candidate (the repo root is the last resort) and never edit the ignore rule without the human's yes. Record
   the path in §Docs ("Human guide: `<path>`") and use it for `AGENTS.md`'s `<guide path>`.
 - **Fill** this plugin's `templates/agent-workflow-guide.md` (`../../templates/agent-workflow-guide.md`) from the
-  profile as written in steps 2 and 5, and in full mode from the env file of step 6 (renamed labels, the queue
+  profile as written in steps 2 and 5, and in repo+team from the env file of step 6 (renamed labels, the queue
   column, the board). Each placeholder names its source; the manager, where to ask and the repo notes come from
   §Identity's `Manager`, `Where to ask` and `Human guide notes` lines, and "Run it locally" from §Dev servers'
   "Human run" line (never the agent port scheme). Keep the `[if …]` blocks whose condition holds and delete the
@@ -321,7 +374,8 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
    `origin/<base>` makes a bare `git push` or `git pull` target the default branch):
    - bare-root layout: a new worktree named `agent-workflow-setup` (the worktree name for issue-less setup work;
      use §Layout's case style, e.g. `agentWorkflowSetup` for camelCase):
-     `git fetch origin <base> && git worktree add --no-track -b chore/agent-workflow-setup <bare-root>/agent-workflow-setup origin/<base>`;
+     refresh `origin/<base>` (detection's "Fresh origin/<base>" recipe), then
+     `git worktree add --no-track -b chore/agent-workflow-setup <bare-root>/agent-workflow-setup origin/<base>`;
    - plain clone: `git switch --no-track -c chore/agent-workflow-setup origin/<base>` when the working tree is
      clean; when it isn't, use a separate worktree (`git worktree add --no-track -b chore/agent-workflow-setup
      ../<repo>-agent-workflow-setup origin/<base>`) and leave the human's checkout alone;
@@ -355,5 +409,5 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
    - **Drifted:** what was fixed on their yes, and what they chose to keep.
    - **Skipped:** declined items, labels that need a maintainer, `TODO(setup)` questions still open.
    - **Next steps:** merge the PR; point collaborators at the human guide, which links the general guide
-     (https://binerbuddy.github.io/project-dev-orchestration/) for installing the plugin; in full mode, write any
+     (https://binerbuddy.github.io/project-dev-orchestration/) for installing the plugin; in repo+team, write any
      hooks the project needs, then start the team with `pdo team-up --project <name>`.

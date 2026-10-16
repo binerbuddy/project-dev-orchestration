@@ -102,6 +102,7 @@ the command that checks each; you QC by running them or by reading the evidence 
 | `epic-phase` | Part of an epic; worked by the epic's build agent. |
 | `route:small` / `route:design` / `route:build` | Which lifecycle the orchestrator uses. |
 | `orchestrator-system` | Work on the system itself, for the System Manager. |
+| `managed-by:<manager>` | Claimed by that manager's agents (set and removed by the engine). Another manager's label means: ask that manager first. |
 
 The P-labels, the CWT status and the QC labels can be renamed per project (`P_LABELS`, `CWT_STATUS`,
 `LABEL_QC_READY`, `LABEL_QC_DONE`).
@@ -126,11 +127,13 @@ start yourself (not dispatched) finds the engine through `pdo` on PATH, else thr
 | `qc-fixture-push <pr#> <file>` | publish QC test data |
 | `intake-submit "<ws>" "<report>"` | queue a report for intake |
 | `file-issue`, `claim`, `board-status` | board and issue helpers |
+| `claim --release <repo> <n> [--unassign]` | take a claim's `managed-by:` label off by hand (finished agents release on their own) |
 | `pr-agent <pr#>`, `pr-priority`, `shots <pr#>`, `agent-meta backfill` | PR helpers |
 | `project-env [KEY]` / `project-env --board` | the current project's resolved settings / the board's ids (live) |
 | `with-gh-user --user <login> <cmd>` | run one command (`gh …`, `git push …`) as that GitHub login, without switching the account |
 | `fleet [--json] [--write-advice]` | every project at once, the machine's constraints, allocation advice (read-only by default) |
-| `fleet deps add\|list\|done …` | cross-project dependencies |
+| `fleet deps add\|list\|done …` | cross-project dependencies (also GitHub's native "blocked by") |
+| `fleet note <org/repo#n> "<text>" [--as NAME]` | log a cross-manager agreement as an issue comment |
 
 ## Portfolio manager (several projects)
 
@@ -152,6 +155,27 @@ manager. Projects opt in to its advice with `FLEET_ADVICE=honour` in their env f
 `PORTFOLIO_PRIORITY` (1 = highest), `RESOURCE_PROFILE` (`light`, `medium`, `heavy`), `MANAGER`
 (the manager's workspace name) and, for self-managed repos, `REPO_MANAGER`. Cross-project
 dependencies: `pdo fleet deps add "<org/repo#n>" blocks "<org/repo#m>"`.
+
+## Claims and coordination between managers
+
+When your engine claims an issue it adds a label, `managed-by:<slug>`, and a short comment naming the
+agent and its manager. Other managers' engines and people's agents skip issues with someone else's
+label, so two teams never work the same issue. The **assignee** is yours: an assigned issue is a
+human lock that the engine never touches or starts.
+
+| Env key | Default | Meaning |
+|---|---|---|
+| `MANAGER_SLUG` | a slug of `MANAGER`, e.g. `orchestrator-acme` | the claim label is `managed-by:<slug>` |
+| `CLAIM_ASSIGNS` | `0` | `1` = claim also assigns the gh login (the old lock); keep it only until older claims are relabelled |
+
+- The label comes off when the agent finishes (merged, QC passed and wrapped up, or the issue closed).
+  A hibernated agent that is still in progress keeps it. To release one by hand:
+  `pdo claim --release <repo> <n>`.
+- `pdo fleet` counts each manager's claims and flags **stale claims**: a label whose agent is gone.
+- `pdo fleet deps add A blocks B` also sets GitHub's "blocked by" on B, and the queue holds B
+  (`blocked-by:<ref>`) until A closes. `deps done` removes it.
+- Agreements between managers (who goes first, a hand-off, who owns what) are logged on every issue
+  involved with `pdo fleet note`, so a collaborator's agent sees them too.
 
 ## When something looks wrong
 

@@ -53,6 +53,10 @@ session recorded are released with bin/hibernate when parked at 'ready for QC' (
 closed with no open PR (quiet event 'closed_out'). They are released: side processes stopped,
 workspace closed. They stay in `agents` with status "hibernated" (built from metadata), so
 qc_complete / pr_merged still fire; bin/resume-agent brings them back.
+
+Claims: unless --peek, finished agents (closed out, or hibernated and then merged/closed) whose
+issue still carries the managed-by claim label get it removed with bin/claim --release (quiet
+events 'claim_released' / 'claim_release_failed').
 """
 import argparse
 import hashlib
@@ -76,7 +80,7 @@ WEEKLY_CEILING = 80   # keep 20% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
 HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'
-QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed", "event_hook_failed"}  # reported on the next wake; never wake by themselves
+QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed", "event_hook_failed", "claim_released", "claim_release_failed"}  # reported on the next wake; never wake by themselves
 SEEN_KEEP = 500  # review ids remembered for dedupe (ids only grow, so the newest are kept)
 SINCE_MAX_AGE_SEC = 7 * 86400  # a carried "since" older than this is clamped (bounds the hook's first fetch)
 HOOK_MAX_EVENTS = 200
@@ -303,6 +307,27 @@ def auto_hibernate(project, ag):
             ev.append({"type": "closed_out" if closed_out else "hibernated", "agent": k, "detail": r.stdout.strip()})
         else:
             ev.append({"type": "hibernate_failed", "agent": k, "detail": r.stderr.strip()[:200]})
+    return ev
+
+
+def release_finished_claims(project, repos):
+    """Finished agents (closed out, or hibernated and then merged or closed: done_tracking) whose
+    managed-by claim label is still recorded as on: bin/claim --release. Metadata-only scan, so a
+    release that failed (or was skipped under --peek) is retried on the next pass. Quiet events."""
+    ev, d = [], os.path.join(STATE_DIR, "agents")
+    for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        try:
+            meta = json.load(open(os.path.join(d, f), encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (meta.get("repo") not in repos or not meta.get("claim_label") or meta.get("claim_released_at")
+                or not (meta.get("closed_out") or meta.get("done_tracking"))):
+            continue
+        key = f"{meta['repo']}#{meta.get('number')}"
+        r = subprocess.run([os.path.join(HERE, "bin", "claim"), "--release", meta["repo"], str(meta.get("number")),
+                            "--project", project, "--quiet"], capture_output=True, text=True, timeout=60)
+        ev.append({"type": "claim_released", "agent": key, "label": meta["claim_label"]} if r.returncode == 0 else
+                  {"type": "claim_release_failed", "agent": key, "detail": r.stderr.strip()[:200]})
     return ev
 
 
@@ -707,6 +732,7 @@ def main():
             if fresh:  # waiting_on_you was built before these closed: rebuild it without dead panes
                 cur["waiting_on_you"] = waiting_on_you(cur["agents"])
             quiet += fresh
+            quiet += release_finished_claims(a.project, load_repos(a.project)[1])
         ev = (events(prev, cur) if prev else [{"type": "first_run"}]) + hook_wake  # the hook dedupes itself
         if not a.peek:
             tmp = state_file + ".tmp"

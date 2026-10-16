@@ -7,7 +7,7 @@
 # Creates a dedicated git worktree (so each agent has its own cwd and OMC state),
 # writes a dispatch brief, opens a herdr workspace named "<Repo>-<n> <brief>", and
 # starts the agent (AGENT_CLI, default claude) there with Remote Control on and the route's lifecycle skill as the
-# first prompt. On success, claims the issue (bin/claim: assignee + board In Progress).
+# first prompt. On success, claims the issue (bin/claim: managed-by label, claim comment, board In Progress).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -56,8 +56,16 @@ ISSUE_JSON="$(gh api "repos/$ORG/$REPO/issues/$NUM")" || die "cannot read $ORG/$
 jq -e '.pull_request == null' >/dev/null <<<"$ISSUE_JSON" || die "$REPO#$NUM is a pull request"
 [[ "$(jq -r .state <<<"$ISSUE_JSON")" == open ]] || die "$REPO#$NUM is closed"
 ME="$(gh api user --jq .login)"
-OTHERS="$(jq -r --arg me "$ME" '[.assignees[].login | select(. != $me)] | join(",")' <<<"$ISSUE_JSON")"
+# an assignee is a human lock; the gh login's own assignment is a legacy claim (CLAIM_ASSIGNS=1),
+# or the dispatcher's own (--no-claim)
+if [[ $CLAIM -eq 1 && "$CLAIM_ASSIGNS" != 1 ]]; then
+  OTHERS="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
+else
+  OTHERS="$(jq -r --arg me "$ME" '[.assignees[].login | select(. != $me)] | join(",")' <<<"$ISSUE_JSON")"
+fi
 [[ -z "$OTHERS" ]] || die "$REPO#$NUM is assigned to $OTHERS (human/interactive lock)"
+HELD="$(jq -r --arg mine "managed-by:$MANAGER_SLUG" '[.labels[].name | select(startswith("managed-by:") and . != $mine)] | join(",")' <<<"$ISSUE_JSON")"
+[[ -z "$HELD" ]] || die "$REPO#$NUM is held by another manager ($HELD): coordinate through that manager"
 # An epic-phase issue is worked by its parent Epic's build agent (the feature-build skill runs
 # every phase); dispatching it alone would fork the epic's branch and duplicate work.
 if [[ $ALLOW_PHASE -eq 0 ]] && jq -e '[.labels[].name | ascii_downcase] | index("epic-phase")' >/dev/null <<<"$ISSUE_JSON"; then
@@ -178,7 +186,7 @@ if [[ $rc -eq 2 ]]; then trap - EXIT; die "agent is blocked on an unexpected pro
 [[ $rc -eq 0 ]] || die "agent did not become ready"
 herdr agent rename "$PANE_ID" "$AGENT" >/dev/null 2>&1 || true
 trap - EXIT
-[[ $CLAIM -eq 0 ]] || "$HERE/bin/claim" "$REPO" "$NUM" --project "$PROJECT" >&2
+[[ $CLAIM -eq 0 ]] || "$HERE/bin/claim" "$REPO" "$NUM" --project "$PROJECT" --agent "$NAME" >&2
 # metadata the watcher, qc-review and resume-agent use
 write_meta "$REPO" "$NUM" "$(jq -n --arg repo "$REPO" --argjson num "$NUM" --arg route "$ROUTE" \
   --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg ws "$WS_ID" --arg pane "$PANE_ID" \

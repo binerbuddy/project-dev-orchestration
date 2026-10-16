@@ -1,6 +1,6 @@
 ---
 name: project-how-it-works
-description: How work flows in a repo that uses project-dev-orchestration — issue → board → orchestrator → command agent → PR → QC → merge; which labels, routes (route:small/design/build), P-levels and board statuses ("Claude Work This") mean; the spawn floor; how to file bugs (intake-submit, or a needs-triage issue); the QC Checklist and project-name rules, qc-fixtures, and the QC handoff (labels and PR reviews). Load it whenever you ask how work flows here, which labels or priority to use, how to file a bug or idea, how to hand off to QC, or what you may and may not touch — including on a collaborator's machine with no orchestrator running.
+description: How work flows in a repo that uses project-dev-orchestration — issue → board → orchestrator → command agent → PR → QC → merge; which labels, routes (route:small/design/build), P-levels and board statuses ("Claude Work This") mean; what managed-by:<manager> claim labels and GitHub "blocked by" dependencies mean (don't work an issue another manager holds: ask); the spawn floor; how to file bugs (intake-submit, or a needs-triage issue); the QC Checklist and project-name rules, qc-fixtures, and the QC handoff (labels and PR reviews). Load it whenever you ask how work flows here, which labels or priority to use, how to file a bug or idea, how to hand off to QC, or what you may and may not touch — including on a collaborator's machine with no orchestrator running.
 ---
 
 # How work flows here
@@ -47,7 +47,8 @@ gitignored; never commit it).
 3. **Orchestrator.** A long-lived session ranks the queue deterministically (CWT, then P1 → P4), keeps
    a few command agents active (default 3), respects the **spawn floor** and the usage reserve, and
    watches agents and PRs. It never edits product code and never merges.
-4. **Command agent.** One per issue or epic, in its own git worktree, running the route's lifecycle
+4. **Command agent.** One per issue or epic, claimed with a `managed-by:<manager>` label and one
+   claim comment naming the agent and its manager, in its own git worktree, running the route's lifecycle
    skill: `route:small` → `project-small-feature-or-bug-fix`; `route:design` →
    `project-feature-design`, which hands the epic to `route:build` → `project-feature-build`. It asks
    the human directly; it first checks whether the issue is already done (`likely-fixed`).
@@ -102,6 +103,22 @@ the queue status, the P-labels and the two QC labels.
 - **Name workspaces by label** (e.g. `Acme-245 export sort order`) in anything a human reads, never a
   bare id.
 
+## Claims and dependencies: who holds an issue
+
+- **`managed-by:<slug>`** on an issue means a manager's agents are working it. The label's
+  description ("Worked by agents of <manager>") and the issue's claim comment ("Claimed by <agent>
+  (manager: <manager>) ...") name them. **Not your manager's label: don't work the issue** (no branch,
+  PR, comments that start work, or labels). Ask the human, or your manager, to coordinate with that
+  manager; a collaborator without a manager asks in the place the repo's human guide names. Your own
+  manager's label on the issue you were dispatched for is your claim.
+- **An assignee** is a person's lock: the engine never starts an assigned issue, and neither do you.
+- **"Blocked by"** (GitHub's issue dependencies, in the issue's sidebar) means the issue waits for the
+  blocker to close. Don't start it early; ask if the blocker looks done. Agreements between managers
+  (who goes first, hand-offs, ownership) are logged on the issues as comments headed
+  `**Coordination (<manager or portfolio>):**`: read and follow them.
+- **Never add or remove** `managed-by:` labels, assignees or dependencies on an issue you don't hold.
+  The engine adds the label when it claims and removes it when the agent finishes.
+
 ## What you must not do
 
 - **Don't move orchestrator-owned board columns** (In Progress, In Review, Done) or claim issues by
@@ -114,7 +131,7 @@ the queue status, the P-labels and the two QC labels.
   question pending answers that question with your text. Text in another pane's input box may be a
   suggested prompt, not a human's draft: never submit it.
 - Don't spawn work for `epic-phase` issues on their own, or for issues labelled `on-hold`,
-  `needs-triage` or `orchestrator-system`.
+  `needs-triage` or `orchestrator-system`, or held by another manager (`managed-by:`).
 - Don't downgrade a PR's P-label, and don't hand-pick one (`pdo pr-priority` sets it).
 - Don't bind the project's reserved QC ports or kill what's on them (profile `## Dev servers`).
 - Anything in the profile's `## Do not`.

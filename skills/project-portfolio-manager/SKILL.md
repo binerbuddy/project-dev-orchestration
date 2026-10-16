@@ -34,8 +34,13 @@ machine-wide.
    `SELF_MANAGED_REPOS` and their `REPO_MANAGER` entries (`pdo project-env --project <p>`). Skim
    headers; read in full only what the current request touches.
 3. **Cross-project dependencies:** the snapshot's "cross-project dependencies" section; a blocker
-   flagged CLOSED or MERGED is ready to be marked done.
-4. **Your own last loop note**, if you keep one (step 5), to see what changed.
+   flagged CLOSED or MERGED is ready to be marked done. Lines marked `[GitHub only]` are native
+   dependencies someone added on GitHub; they hold the blocked issue in its project's queue too.
+4. **Claims:** the snapshot's "claims" section counts each manager's `managed-by:<slug>` issues. A
+   **STALE claim** (the label is on, the agent is gone) goes to that project's manager: it releases
+   the claim (`pdo claim --release …`) or restarts the work. Labels of managers outside this install
+   are other teams' work: never relabel them.
+5. **Your own last loop note**, if you keep one (step 5), to see what changed.
 
 Then give the human **one unified "Waiting on you" list** across all projects, ranked by impact:
 
@@ -81,14 +86,31 @@ You are where the "check before touching another repo" rule escalates to. The ch
 When work in one project waits on work in another, record it so neither team loses it:
 
 ```
-pdo fleet deps add "<org/repo#n>" blocks "<org/repo#m>" --note "<why>"
+pdo fleet deps add "<org/repo#n>" blocks "<org/repo#m>" --note "<why>" --as "<your workspace name>"
 pdo fleet deps list [--all]
 pdo fleet deps done <id>        # or the same "<a>" blocks "<b>" pair
 ```
 
-`pdo fleet` flags a dependency whose blocker has closed or merged. Tell the blocked project's
-manager, then mark it done. You record dependencies; you don't add GitHub "blocked by" links in
-another project's repos yourself (ask its manager, or the human).
+`deps add` also sets GitHub's native "blocked by" on the blocked issue, which holds it in that
+project's queue (`blocked-by:<ref>`) and shows on the issue for everyone's agents. That is a write in
+the blocked issue's repo: add it only after its manager (or the human) agreed. When GitHub refuses (a
+pull request as blocker, no access), the pair stays local, a coordination comment goes on the blocked
+issue instead, and the command warns: tell that manager. `pdo fleet` flags a dependency whose blocker
+has closed or merged. Tell the blocked project's manager, then mark it done (`deps done` removes the
+native link).
+
+**Log every agreement.** Each cross-manager agreement (an ordering, a hand-off, who owns an issue or
+a repo area, a dependency) is logged on **every issue involved**, so collaborators' agents see it on
+GitHub:
+
+```
+pdo fleet note "<org/repo#n>" "<what was agreed, by whom, and what each side does next>" --as "<your workspace name>"
+```
+
+It posts a comment headed `**Coordination (<name>):**` and appends it to the local coordination log.
+One note per issue; name the other issues in the text. Log only what both managers (or the human)
+agreed, never a proposal. A hand-off of a claimed issue means the old manager releases its claim
+(`pdo claim --release`) before the new one claims it; ask them to, don't relabel it yourself.
 
 ## 4. Allocation
 
@@ -141,6 +163,9 @@ With the argument `loop` (e.g. under `/loop` hourly):
   the project's orchestrator).
 - **Don't duplicate the managers.** Don't nudge stalled agents yourself or route QC; tell the
   project's manager.
+- **Claims are other managers' locks.** Never add or remove `managed-by:` labels, assignees or native
+  dependencies on another manager's issues yourself; ask that manager, then log the result
+  (`pdo fleet note`).
 - **Bugs and ideas** you notice go to intake: `pdo intake-submit "<your workspace name>" "<report>"`.
 
 References: `references/allocation.md` (the advice rules, profiles and env keys).

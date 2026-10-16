@@ -1,45 +1,97 @@
 #!/usr/bin/env bash
-# claim — lock an issue for a command agent: assign it and set its board Status.
+# claim — lock an issue for a command agent: the managed-by label, a claim comment, and the board Status.
 #
-# Usage: claim <repo> <issue#> [--status "In Progress"] [--project P]
+# Usage: claim <repo> <issue#> [--status "In Progress"] [--keep-status] [--agent NAME] [--project P]
+#        claim --release <repo> <issue#> [--unassign] [--quiet] [--project P]
 #
-# Re-reads the issue live: refuses a closed issue (and self-heals its card to Done),
-# refuses one assigned to someone else. Adds the issue to the board if it is missing.
+# Claim re-reads the issue live and refuses:
+#   - a closed issue (and self-heals its board card to Done);
+#   - an issue with a human lock, i.e. an assignee. With CLAIM_ASSIGNS=1 (legacy) the gh login's own
+#     assignment doesn't count, since claim made it; with the default CLAIM_ASSIGNS=0 any assignee does;
+#   - an issue carrying another manager's managed-by:<slug> label.
+# Then it adds this project's managed-by:<MANAGER_SLUG> label (creating the label when the repo lacks
+# it: the one label claim may create), posts one short claim comment ("Claimed by <agent> (manager:
+# <MANAGER>) ...") unless the label was already there, assigns the gh login only when CLAIM_ASSIGNS=1,
+# adds the issue to the board if it is missing, and sets its Status. --keep-status leaves the board
+# alone (for labelling an issue that is already being worked). Without a board (no PROJECT_NUMBER)
+# the board steps are skipped. The label and the comment id go into the agent metadata
+# ($PDO_STATE_DIR/agents/<repo>-<n>.json: claim_label, claim_comment_id, claim_assigned).
+#
+# --release removes the managed-by label (a label that isn't there is fine) and records
+# claim_released_at; --unassign also removes the gh login as assignee. bin/hibernate --closed-out
+# and bin/watch (an agent whose PR merged after it hibernated) release automatically.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 die() { echo "claim: $*" >&2; exit 1; }
 
-PROJECT="" STATUS="In Progress"
-[[ $# -ge 2 ]] || die "usage: claim <repo> <issue#> [--status NAME] [--project P]"
-REPO="$1" NUM="${2#\#}"; shift 2
+PROJECT="" STATUS="In Progress" KEEP_STATUS=0 AGENT="" RELEASE=0 UNASSIGN=0 QUIET=0
+ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --status) STATUS="$2"; shift 2 ;;
+    --keep-status) KEEP_STATUS=1; shift ;;
+    --agent) AGENT="$2"; shift 2 ;;
     --project) PROJECT="$2"; shift 2 ;;
-    *) die "unknown option: $1" ;;
+    --release) RELEASE=1; shift ;;
+    --unassign) UNASSIGN=1; shift ;;
+    --quiet) QUIET=1; shift ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option: $1" ;;
+    *) ARGS+=("$1"); shift ;;
   esac
 done
+[[ ${#ARGS[@]} -eq 2 ]] || die "usage: claim [--release] <repo> <issue#> [--status NAME] [--keep-status] [--agent NAME] [--project P]"
+REPO="${ARGS[0]}" NUM="${ARGS[1]#\#}"
+[[ "$NUM" =~ ^[0-9]+$ ]] || die "not an issue number: ${ARGS[1]}"
 # shellcheck source=lib.sh
 source "$HERE/bin/lib.sh"
 pdo_resolve_project "$PROJECT"
 # shellcheck source=/dev/null
 HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
 
+R="$ORG/$REPO"
+LABEL="managed-by:$MANAGER_SLUG"
+enc() { jq -rn --arg s "$1" '$s | @uri'; }
+say() { if [[ $QUIET -eq 0 ]]; then echo "$*"; fi; }
 ME="$(gh api user --jq .login)"
-Q='query($o:String!,$r:String!,$n:Int!,$p:Int!){repository(owner:$o,name:$r){issue(number:$n){id state
-  assignees(first:10){nodes{login}}
-  projectItems(first:20){nodes{id project{number owner{... on Organization{login}}}}}}}
-  organization(login:$o){projectV2(number:$p){id field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}'
-J="$(gh api graphql -f query="$Q" -F o="$ORG" -F r="$REPO" -F n="$NUM" -F p="$PROJECT_NUMBER")"
 
-ISSUE_ID="$(jq -r .data.repository.issue.id <<<"$J")"
-PROJ_ID="$(jq -r .data.organization.projectV2.id <<<"$J")"
-FIELD_ID="$(jq -r .data.organization.projectV2.field.id <<<"$J")"
+# ---- release ----
+if [[ $RELEASE -eq 1 ]]; then
+  if out="$(gh api -X DELETE "repos/$R/issues/$NUM/labels/$(enc "$LABEL")" 2>&1 >/dev/null)"; then
+    say "released $R#$NUM: removed $LABEL"
+  elif [[ "$out" == *"404"* || "$out" == *"Not Found"* || "$out" == *"does not exist"* ]]; then
+    say "released $R#$NUM: $LABEL was not on it"
+  else
+    die "could not remove $LABEL from $R#$NUM: $out"
+  fi
+  if [[ $UNASSIGN -eq 1 ]]; then
+    gh issue edit "$NUM" -R "$R" --remove-assignee "$ME" >/dev/null
+    say "unassigned $ME from $R#$NUM"
+  fi
+  write_meta "$REPO" "$NUM" "$(jq -nc --argjson t "$(date +%s)" '{claim_released_at: $t}')"
+  exit 0
+fi
+
+# ---- claim ----
+ISSUE="$(gh api "repos/$R/issues/$NUM")"
+[[ "$(jq -r 'has("pull_request")' <<<"$ISSUE")" == false ]] || die "$R#$NUM is a pull request"
+STATE="$(jq -r .state <<<"$ISSUE")"
+ISSUE_NODE="$(jq -r .node_id <<<"$ISSUE")"
+
+# the board (an org project): its ids, the issue's card, the Status options
+PROJ_ID="" FIELD_ID="" ITEM_ID="" J=""
+if [[ -n "${PROJECT_NUMBER:-}" ]]; then
+  Q='query($o:String!,$r:String!,$n:Int!,$p:Int!){repository(owner:$o,name:$r){issue(number:$n){
+    projectItems(first:20){nodes{id project{number owner{... on Organization{login}}}}}}}
+    organization(login:$o){projectV2(number:$p){id field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}'
+  J="$(gh api graphql -f query="$Q" -F o="$ORG" -F r="$REPO" -F n="$NUM" -F p="$PROJECT_NUMBER")"
+  PROJ_ID="$(jq -r .data.organization.projectV2.id <<<"$J")"
+  FIELD_ID="$(jq -r .data.organization.projectV2.field.id <<<"$J")"
+  ITEM_ID="$(jq -r --argjson p "$PROJECT_NUMBER" --arg o "$ORG" \
+    '[.data.repository.issue.projectItems.nodes[] | select(.project.number == $p and .project.owner.login == $o) | .id][0] // empty' <<<"$J")"
+fi
 opt() { jq -r --arg s "$1" '.data.organization.projectV2.field.options[] | select(.name == $s) | .id' <<<"$J"; }
-ITEM_ID="$(jq -r --argjson p "$PROJECT_NUMBER" --arg o "$ORG" \
-  '[.data.repository.issue.projectItems.nodes[] | select(.project.number == $p and .project.owner.login == $o) | .id][0] // empty' <<<"$J")"
-
 set_status() {
   local option; option="$(opt "$1")"
   [[ -n "$option" ]] || die "no board Status option named '$1'"
@@ -47,17 +99,56 @@ set_status() {
     -F p="$PROJ_ID" -F i="$ITEM_ID" -F f="$FIELD_ID" -F o="$option" >/dev/null
 }
 
-if [[ "$(jq -r .data.repository.issue.state <<<"$J")" != OPEN ]]; then
+if [[ "$STATE" != open ]]; then
   [[ -n "$ITEM_ID" ]] && set_status Done
-  die "$REPO#$NUM is closed (board card set to Done)"
+  die "$R#$NUM is closed${ITEM_ID:+ (board card set to Done)}"
 fi
-OTHERS="$(jq -r --arg me "$ME" '[.data.repository.issue.assignees.nodes[].login | select(. != $me)] | join(",")' <<<"$J")"
-[[ -z "$OTHERS" ]] || die "$REPO#$NUM is assigned to $OTHERS"
+if [[ "$CLAIM_ASSIGNS" == 1 ]]; then
+  LOCKS="$(jq -r --arg me "$ME" '[.assignees[].login | select(. != $me)] | join(",")' <<<"$ISSUE")"
+else
+  LOCKS="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE")"
+fi
+[[ -z "$LOCKS" ]] || die "$R#$NUM is assigned to $LOCKS (an assignee is a human lock)"
+OTHER="$(jq -r --arg mine "$LABEL" '[.labels[].name | select(startswith("managed-by:") and . != $mine)] | join(",")' <<<"$ISSUE")"
+[[ -z "$OTHER" ]] || die "$R#$NUM is held by another manager ($OTHER): coordinate through that manager"
+HAD_LABEL="$(jq -r --arg mine "$LABEL" '[.labels[].name | select(. == $mine)] | length' <<<"$ISSUE")"
 
-if [[ -z "$ITEM_ID" ]]; then
-  ITEM_ID="$(gh api graphql -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}' \
-    -F p="$PROJ_ID" -F c="$ISSUE_ID" --jq .data.addProjectV2ItemById.item.id)"
+# the label: create it if the repo lacks it (the one label claim may create), then add it
+if [[ "$HAD_LABEL" == 0 ]]; then
+  if ! gh api "repos/$R/labels/$(enc "$LABEL")" >/dev/null 2>&1; then
+    gh label create "$LABEL" -R "$R" --color c5def5 --description "Worked by agents of ${MANAGER:-$PROJECT}" >/dev/null 2>&1 \
+      || gh api "repos/$R/labels/$(enc "$LABEL")" >/dev/null 2>&1 \
+      || die "cannot create label $LABEL in $R"
+  fi
+  gh api "repos/$R/issues/$NUM/labels" -f "labels[]=$LABEL" >/dev/null
 fi
-gh issue edit "$NUM" -R "$ORG/$REPO" --add-assignee "$ME" >/dev/null
-set_status "$STATUS"
-echo "claimed $ORG/$REPO#$NUM for $ME, board Status: $STATUS"
+if [[ "$CLAIM_ASSIGNS" == 1 ]]; then gh issue edit "$NUM" -R "$R" --add-assignee "$ME" >/dev/null; fi
+
+if [[ -n "${PROJECT_NUMBER:-}" && $KEEP_STATUS -eq 0 ]]; then
+  if [[ -z "$ITEM_ID" ]]; then
+    ITEM_ID="$(gh api graphql -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}' \
+      -F p="$PROJ_ID" -F c="$ISSUE_NODE" --jq .data.addProjectV2ItemById.item.id)"
+  fi
+  set_status "$STATUS"
+fi
+
+# one claim comment per claim (a re-claim that finds the label already there posts none)
+META_FILE="$(pdo_state_dir)/agents/$REPO-$NUM.json"
+[[ -n "$AGENT" ]] || AGENT="$(jq -r '.name // empty' "$META_FILE" 2>/dev/null || true)"
+[[ -n "$AGENT" ]] || AGENT="$REPO-$NUM"
+CID=""
+if [[ "$HAD_LABEL" == 0 ]]; then
+  BODY="Claimed by $AGENT (manager: ${MANAGER:-$PROJECT}). Coordinate through that manager before working on this issue."
+  CID="$(gh api "repos/$R/issues/$NUM/comments" -f body="$BODY" --jq .id 2>/dev/null)" || CID=""
+  [[ -n "$CID" ]] || echo "claim: warning: claim comment not posted on $R#$NUM" >&2
+fi
+ASSIGNED=""; [[ "$CLAIM_ASSIGNS" == 1 ]] && ASSIGNED="$ME"
+write_meta "$REPO" "$NUM" "$(jq -nc --arg l "$LABEL" --arg c "$CID" --arg m "${MANAGER:-$PROJECT}" \
+  --arg a "$ASSIGNED" --argjson t "$(date +%s)" \
+  '{claim_label: $l, claim_manager: $m, claimed_at: $t, claim_released_at: null}
+   + (if $c != "" then {claim_comment_id: ($c | tonumber)} else {} end)
+   + (if $a != "" then {claim_assigned: $a} else {} end)')"
+board="board Status: $STATUS"
+[[ -z "${PROJECT_NUMBER:-}" ]] && board="no board"
+[[ $KEEP_STATUS -eq 1 ]] && board="board unchanged"
+say "claimed $R#$NUM for ${MANAGER:-$PROJECT} ($LABEL${CID:+, comment $CID}${ASSIGNED:+, assigned $ASSIGNED}), $board"

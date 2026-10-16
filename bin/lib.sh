@@ -175,12 +175,24 @@ pdo_finalize() {
   if [[ -z "${MANAGER+x}" ]]; then
     if [[ -n "${PROJECT_NUMBER:-}" ]]; then MANAGER="Orchestrator ($PROJECT)"; else MANAGER=""; fi
   fi
+  # coordination: the claim label (managed-by:<slug>) and whether claim also self-assigns
+  MANAGER_SLUG="$(pdo_slug "${MANAGER_SLUG:-${MANAGER:-$PROJECT}}")"
+  MANAGER_SLUG="${MANAGER_SLUG:0:39}"             # GitHub label names stop at 50 characters
+  CLAIM_ASSIGNS="${CLAIM_ASSIGNS:-0}"             # 1 = claim also assigns the gh login (legacy lock)
   PORTFOLIO_PRIORITY="${PORTFOLIO_PRIORITY:-3}"   # 1 = highest
   RESOURCE_PROFILE="${RESOURCE_PROFILE:-medium}"  # light | medium | heavy (bin/fleet has the weights)
   AGENT_MB="${AGENT_MB:-}"                        # override the profile's MB per active agent
   AGENT_USAGE_WEIGHT="${AGENT_USAGE_WEIGHT:-}"    # override the profile's usage weight
   FLEET_ADVICE="${FLEET_ADVICE:-ignore}"          # honour | ignore (fleet-advice.json in queue/watch)
   export ORG PRIMARY_REPO
+}
+
+# pdo_slug <text>: lower case, runs of anything but a-z0-9 become one "-", no leading/trailing "-"
+# ("Orchestrator (acme)" -> "orchestrator-acme"); used for MANAGER_SLUG
+pdo_slug() {
+  local s="${1,,}"
+  s="$(printf '%s' "$s" | tr -c 'a-z0-9' '-' | tr -s '-')"
+  s="${s#-}"; printf '%s' "${s%-}"
 }
 
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
@@ -214,7 +226,7 @@ pdo_config_json() {
     --arg cwt "$CWT_STATUS" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
     --arg max_active "${MAX_ACTIVE:-}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
-    --arg manager "${MANAGER:-}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
+    --arg manager "${MANAGER:-}" --arg manager_slug "${MANAGER_SLUG:-}" --arg claim_assigns "${CLAIM_ASSIGNS:-0}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
     --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
     --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
     '{project: $project, env_file: $env_file, env_dir: $env_dir, engine_home: $home, state_dir: $state,
@@ -233,7 +245,8 @@ pdo_config_json() {
       max_active: ($max_active | if . == "" then null else tonumber end),
       weekly_ceiling: ($weekly | if . == "" then null else tonumber end),
       five_hour_ceiling: ($five | if . == "" then null else tonumber end),
-      manager: $manager, repo_manager: $repo_mgr, portfolio_priority: ($prio | tonumber? // 3),
+      manager: $manager, manager_slug: $manager_slug, claim_assigns: ($claim_assigns == "1"),
+      claim_label: (if $manager_slug == "" then null else "managed-by:" + $manager_slug end), repo_manager: $repo_mgr, portfolio_priority: ($prio | tonumber? // 3),
       resource_profile: $profile, agent_mb: ($agent_mb | if . == "" then null else (tonumber? // null) end),
       agent_usage_weight: ($weight | if . == "" then null else (tonumber? // null) end),
       fleet_advice: $fleet, usage_cache: $usage_cache}'

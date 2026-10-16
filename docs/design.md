@@ -31,10 +31,12 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
 
 - `bin/spawn <repo> <n>` re-reads the issue live, picks the route, creates a worktree and branch, writes
   the dispatch brief, opens a herdr workspace and launches the agent there with Remote Control on and the
-  route's lifecycle skill as its first prompt. Then it claims the issue (`bin/claim`: assignee plus board
-  status) and records metadata in `$PDO_STATE_DIR/agents/<Repo>-<n>.json`.
+  route's lifecycle skill as its first prompt. Then it claims the issue (`bin/claim`: the `managed-by:`
+  label, a claim comment and the board status; see [Coordination between managers](#coordination-between-managers))
+  and records metadata in `$PDO_STATE_DIR/agents/<Repo>-<n>.json`.
 - It refuses duplicates (an open workspace, an existing worktree or branch), closed issues, pull requests,
-  and issues assigned to someone else (the human/interactive lock). It rolls back on failure. Every
+  issues with an assignee (the human lock; with `CLAIM_ASSIGNS=1` the gh login's own assignment is a legacy
+  claim and doesn't count), and issues carrying another manager's `managed-by:` label. It rolls back on failure. Every
   failure except `--dry-run` is logged, and `bin/queue` skips that issue for 24 h.
 - Launching goes through `launch_agent` in `bin/lib.sh`, the one seam for other agent CLIs (`AGENT_CLI`;
   only `claude` today). It runs the CLI through `herdr pane run`, accepts the "trust this folder?" dialog
@@ -93,10 +95,17 @@ without `--allow-phase`: the epic's build agent works every phase. Independent f
 - **Priority inheritance:** an issue that blocks others runs at the best P-level (and CWT) among the
   issues it transitively holds up, when being blocked is their only exclusion. A P4 blocking a P2 runs
   as P2; otherwise it would deadlock behind `drain`.
-- **Excluded** (listed with `--all`): assigned, `on-hold`, `likely-fixed`, `epic-phase`, a spawn failure
-  in the last 24 h, `needs-triage` (unless on CWT), blocked by an open issue, already In Progress / In
+- **Excluded** (listed with `--all`): assigned, another manager's `managed-by:<slug>` label (reason
+  `managed-by:<slug>`; this project's own label shows as `claimed`), `on-hold`, `likely-fixed`, `epic-phase`,
+  a spawn failure in the last 24 h, `needs-triage` (unless on CWT), GitHub's native "blocked by" an open issue
+  (reason `blocked-by:<ref>[,<ref>]`; see below), already In Progress / In
   Review / Done, an open workspace, Epics without a `route:*` label, and `orchestrator-system` work (the
   System Manager owns it).
+- **Native blockers.** The REST issue list carries `issue_dependencies_summary.blocked_by` (open blockers
+  only). For the issues where it is non-zero, one GraphQL query per repo (aliases, 50 issues each, about one
+  point) reads `blockedBy` to name them. If that read fails the reason falls back to the count
+  (`blocked-by:2`). GitHub updates the summary a few seconds after a dependency is added, so a brand-new
+  link can take one queue refresh to show.
 - The board fetch passes an explicit `--limit` and fails when the count equals it (silent truncation).
 
 ## Concurrency and the usage budget
@@ -238,6 +247,8 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
 | `REPO_MANAGER` | `()` | `declare -A`: self-managed repo → its manager's workspace/session name (`fleet`) |
 | `MANAGER` | `Orchestrator (<p>)` with a board, else empty | the project manager's workspace/session name; empty = the human |
+| `MANAGER_SLUG` | a slug of `MANAGER` (else of the project name), e.g. `orchestrator-acme` | the claim label is `managed-by:<slug>`; cut to 39 characters |
+| `CLAIM_ASSIGNS` | `0` | `1` = `claim` also assigns the gh login (the pre-0.6 lock); `0` leaves assignees to humans |
 | `PORTFOLIO_PRIORITY` | `3` | rank across projects, 1 = highest (`fleet` advice) |
 | `RESOURCE_PROFILE` | `medium` | `light` / `medium` / `heavy`: MB and usage weight per active agent |
 | `AGENT_MB` / `AGENT_USAGE_WEIGHT` | from the profile | override the profile's per-agent MB / usage weight |
@@ -387,14 +398,52 @@ different amounts of resources." It never does project work.
   `suggested_max_active`; `watch` computes `free_slots` with that bound. The default, `ignore`,
   changes nothing; `queue` shows the advice in its summary line either way. Stale advice is ignored.
 - **Cross-project dependencies:** `fleet deps add|list|done "<org/repo#n>" blocks "<org/repo#m>"`
-  in `$PDO_STATE_DIR/fleet-deps.json`. `fleet` lists the open ones and flags any whose blocker has
-  closed or merged.
+  in `$PDO_STATE_DIR/fleet-deps.json`, mirrored as GitHub's native dependency (below). `fleet` lists
+  the open ones, flags any whose blocker has closed or merged, and also lists native cross-repo
+  dependencies that exist only on GitHub.
+- **Claims:** per manager, the open issues carrying its `managed-by:<slug>` label, and **stale
+  claims**: an issue labelled by one of this install's managers with no live workspace and no
+  hibernated agent still in progress (needs herdr; without it, stale claims are unknown).
 - **Degrades gracefully.** No herdr (metadata only), no board (queue depth unknown), a gh failure
   or no usage data: each is a warning in the report, never a crash and never "fine".
 - **Escalation.** The other-repos rule escalates through it: an agent asks its manager; when another
   project's manager owns the repo, that manager asks the Portfolio Manager, which brokers with the
   owner. Peers never grant approvals; holding a project needs the human's yes, and it asks a
   project's manager rather than hibernating that project's agents itself.
+
+## Coordination between managers
+
+Several managers (project orchestrators, leads that self-manage a repo, people's own agents) can work
+the same repos. Three GitHub-side mechanisms keep them from colliding; anyone's agent can read them
+without the engine.
+
+- **Claim labels.** `bin/claim` adds `managed-by:<MANAGER_SLUG>` (it creates the label, colour `c5def5`,
+  description "Worked by agents of <MANAGER>", when the repo lacks it: the one label it may create), posts
+  one comment ("Claimed by <agent> (manager: <MANAGER>). Coordinate through that manager before working on
+  this issue.") and records the label and the comment id in the agent metadata (`claim_label`,
+  `claim_comment_id`). It refuses an issue with another manager's label, and one with an assignee.
+- **The assignee is a human lock again.** With `CLAIM_ASSIGNS=0` (the default) claim never assigns, and any
+  assignee blocks claim, spawn and the queue. `CLAIM_ASSIGNS=1` keeps the pre-0.6 behaviour (claim assigns
+  the gh login, whose own assignment then doesn't block) for installs whose live issues are still assigned
+  that way; switch it off after relabelling them.
+- **Release.** `bin/hibernate --closed-out` (merged, QC passed and wrapped up, or closed) removes the label;
+  plain hibernation keeps it (still in progress). The watcher (not under `--peek`) also releases finished
+  agents whose metadata still records the label: merged or closed after they hibernated, or a release that
+  failed. `pdo claim --release <repo> <n> [--unassign]` releases by hand.
+- **Native dependencies.** `pdo fleet deps add A blocks B` adds GitHub's "B is blocked by A":
+  `POST /repos/{o}/{r}/issues/{B}/dependencies/blocked_by` with `issue_id` = A's numeric issue id (the REST
+  `id`, not its number); an existing link (HTTP 422 "already been taken") counts as added. `deps done`
+  calls `DELETE …/dependencies/blocked_by/{A's id}`. GitHub refuses a pull request as blocker ("Target issue
+  may only be an issue"), and a repo or blocker the login can't read is a 404: then the pair stays local, a
+  coordination comment on B says so, and `deps add` warns; `deps done` posts the matching "no longer
+  blocked" comment. The queue holds natively blocked issues (`blocked-by:<ref>`).
+- **Coordination log.** `pdo fleet note <org/repo#n> "<text>" [--as NAME]` posts a comment headed
+  `**Coordination (<NAME>):**` (NAME defaults to `$PDO_COORDINATOR`, else `portfolio`) and appends it to
+  `$PDO_STATE_DIR/coordination-log.jsonl`. The portfolio manager logs every cross-manager agreement
+  (ordering, hand-off, ownership) this way on each issue involved.
+
+gh calls for another org run as the `GH_USER` of a project whose `ORG` owns the repo (`gh auth token -u`;
+never a switch).
 
 ## Overlays
 
@@ -410,7 +459,7 @@ fixes, final push and comment. Merging stays manual.
 
 ## Borrowed ideas
 
-- An atomic claim that rechecks the issue live, self-heals a stale card and sets both the assignee and
+- An atomic claim that rechecks the issue live, self-heals a stale card and sets the claim marker and
   the board status.
 - A stop-guard hook that blocks "done" while the branch has no PR, or a PR that is neither `ready for QC`
   nor merged (fails open; gives up after 3 blocks).

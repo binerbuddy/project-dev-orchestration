@@ -47,6 +47,7 @@ wrong (a "small" fix that needs a migration or a design decision) stops and asks
 | `likely-fixed` | The agent thinks main already does this; a human confirms and closes. |
 | `blocked-by-pr` | The PR can't merge until another PR lands. |
 | `orchestrator-system` | Work on the orchestration system itself, for its System Manager. |
+| `managed-by:<slug>` | Claimed: agents of that manager are working it (the label's description names the manager). Set by `pdo claim`, removed when the agent finishes. Not yours: don't work it; ask that manager. |
 
 ## The board
 
@@ -71,9 +72,10 @@ Deterministic, no model judgement:
 1. CWT first, then P1 → P4; within a level Security, then Bugs, then items of an epic already in
    progress, then oldest.
 2. A blocker runs at the P-level of what it holds up ("a P4 blocking a P2 runs as P2").
-3. Excluded: assigned issues (an assignee is a human lock), `needs-triage`, `on-hold`, `likely-fixed`,
-   `epic-phase`, blocked issues, issues already in flight, Epics without a `route:*` label,
-   `orchestrator-system`, and repos another manager owns.
+3. Excluded: assigned issues (an assignee is a human lock), another manager's `managed-by:` label
+   (this manager's own label means already in progress), `needs-triage`, `on-hold`, `likely-fixed`,
+   `epic-phase`, issues GitHub shows as "blocked by" an open issue, issues already in flight, Epics
+   without a `route:*` label, `orchestrator-system`, and repos another manager owns.
 4. CWT, P1, P2 and P3 start automatically; P4 and P- wait for an explicit "drain".
 5. **Spawn floor:** a maintainer can set the lowest P-level that may start (`pdo floor P2`).
    Nothing below it starts, CWT included.

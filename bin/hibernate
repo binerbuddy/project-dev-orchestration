@@ -21,7 +21,9 @@ bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibe
                 'ready for QC' (opt-in: the human may want the live stack for the review).
 --closed-out    close out a finished agent instead: its PR is MERGED, or carries 'QC complete -
                 ready to review' (the wrap-up after QC pass), or its issue is closed with no open
-                PR (likely-fixed confirmed, won't-fix). Same cleanup; the session is kept.
+                PR (likely-fixed confirmed, won't-fix). Same cleanup; the session is kept, and the
+                issue's managed-by claim label is removed (bin/claim --release). Plain hibernation
+                (still in progress) keeps the label.
 --dry-run       print what would be stopped or closed, and change nothing.
 """
 import argparse
@@ -232,8 +234,16 @@ def main():
         with open(meta_file + ".tmp", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=1)
         os.replace(meta_file + ".tmp", meta_file)
+    released = None
+    if a.closed_out:
+        # finished: the managed-by claim label comes off (a hibernated agent still in progress keeps it)
+        r = subprocess.run([os.path.join(HERE, "bin", "claim"), "--release", a.repo, str(a.number),
+                            "--project", cfg["project"], "--quiet"], capture_output=True, text=True)
+        released = r.returncode == 0
+        if not released:
+            print(f"hibernate: warning: claim label not released: {r.stderr.strip()[:200]}", file=sys.stderr)
     print(json.dumps({"workspace": meta.get("name"), "hibernated": not a.servers_only, "stopped": len(procs), "freed_side_mb": freed,
-                      "workspace_closed": not a.servers_only}))
+                      "workspace_closed": not a.servers_only, "claim_released": released}))
 
 
 if __name__ == "__main__":

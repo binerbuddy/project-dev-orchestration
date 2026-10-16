@@ -37,6 +37,9 @@ Otherwise, at the start of work, check for `.agents/local/guide-ack` (per clone,
 - `awaiting-ux-gate`: an agent is waiting for a prototype sign-off. `likely-fixed`: an agent thinks the issue is
   already done on `<base>`. `blocked-by-pr`: the PR can't merge until another PR lands. `needs-triage`: not yet
   triaged.
+- `managed-by:<manager>`: that manager's agents hold the issue (its claim comment names them). If it isn't your
+  manager's, don't work it: ask the human or your manager to coordinate with them. An assignee is a person's lock;
+  an issue GitHub shows as "blocked by" an open issue waits for it. Follow `**Coordination (…):**` comments.
 
 **Agents must**
 - Work in their own worktree and branch from `origin/<base>`, created with `--no-track` (so a bare `git push` never

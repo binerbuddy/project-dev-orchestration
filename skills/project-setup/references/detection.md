@@ -14,6 +14,27 @@ git remote get-url origin                                                # -> <o
 git -C "$common" config --get remote.origin.fetch                        # a bare clone needs this to fetch branches
 ```
 
+## Fresh origin/<base>
+
+Every default-branch check (`git show origin/<base>:…`) and the setup branch start from `origin/<base>`, so update
+it before reading it. A bare clone made with `git clone --bare` has no `remote.origin.fetch` refspec: a plain
+`git fetch origin <base>` then only writes `FETCH_HEAD`, and `refs/remotes/origin/<base>` stays stale (or missing).
+Detect that and fetch with an explicit refspec:
+
+```bash
+git fetch origin <base>
+want="$(git ls-remote origin "refs/heads/<base>" | cut -f1)"
+have="$(git rev-parse -q --verify "refs/remotes/origin/<base>" || true)"
+if [[ "$want" != "$have" ]]; then
+  git fetch origin "<base>:refs/remotes/origin/<base>"      # non-fast-forward refused? prefix the refspec with +
+fi
+git -C "$common" config --get-all remote.origin.fetch || echo "no fetch refspec on origin"
+```
+
+Report a missing refspec in the detection report. Offer the permanent fix (`git -C "$common" config
+remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`) and apply it only on the human's yes: it changes the
+clone's config.
+
 - **Bare-root layout:** the common dir is a bare repo (`core.bare=true`) and worktrees sit inside or beside it. The
   engine's `REPO_ROOT` is the bare root (the common dir). In a plain clone the common dir is `<top>/.git` and
   `REPO_ROOT` is `<top>`.
@@ -95,7 +116,7 @@ and the paths it exempts (`paths-ignore:`, or a pattern list in the script). Rec
 §Changelog. Note which of the setup PR's paths (`AGENTS.md`, `CLAUDE.md`, `.agents/`, the guide, `.gitignore`) the
 exempt list doesn't cover: step 8 needs it.
 
-## Engine registration (full mode)
+## Engine registration (repo+team)
 
 ```bash
 command -v pdo                                    # engine on PATH
@@ -103,6 +124,7 @@ pdo project-env 2>&1                              # from the repo: resolves the 
 printf '%s\n' "${PDO_CONFIG_DIRS:-${XDG_CONFIG_HOME:-$HOME/.config}/project-dev-orchestration}" | tr : '\n'
 ls <config dir>/projects/*.env                    # every registered project, per config dir
 gh auth status                                    # the gh logins on this machine (for GH_USER)
+[[ -n "${GH_TOKEN:-}" ]] && gh api user --jq .login # GH_TOKEN already set: this login is in use; don't re-pin
 ```
 
 When `pdo project-env` resolves a project from the repo's directory, the repo is already registered: edit that env

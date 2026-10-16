@@ -36,7 +36,7 @@ namespaced, as `/project-dev-orchestration:project-<name>`; it's the same skill 
    you say yes it writes `.agents/local/guide-ack` (per clone, gitignored) and won't ask again, unless the guide
    changes.
 4. **Repo not set up yet** (no `.agents/project-profile.md`, no "How work flows here" in `AGENTS.md`): run
-   `/project-setup collaborator`. It detects the build commands, drafts the profile, the `AGENTS.md` section and the
+   `/project-setup repo-only`. It detects the build commands, drafts the profile, the `AGENTS.md` section and the
    human guide, creates the missing labels, asks only what it can't detect, and opens a PR on
    `chore/agent-workflow-setup` for a maintainer to merge.
 
@@ -53,10 +53,11 @@ namespaced, as `/project-dev-orchestration:project-<name>`; it's the same skill 
 | You found a bug or have an idea | `/project-intake <what you saw or want>` |
 | "Where are things?" | `/project-status` (read-only) |
 | Your merged branches and worktrees pile up | `/project-cleanup-worktrees` |
-| The repo isn't set up, or its setup has drifted | `/project-setup collaborator` |
+| The repo isn't set up, or its setup has drifted | `/project-setup repo-only` |
 
 Only take issues a maintainer gave you, or ask first. An issue assigned to someone is theirs, and the orchestrator
-skips it too.
+skips it too. An issue labelled `managed-by:<manager>` is being worked by that manager's agents (its claim comment
+names them): don't start it; ask that manager. An issue GitHub shows as "blocked by" an open issue waits for it.
 
 ## 4. Labels and routes
 
@@ -71,6 +72,7 @@ skips it too.
 | `likely-fixed` | An agent thinks the issue is already done; a maintainer confirms and closes. |
 | `epic-phase` | One phase of an epic; worked only as part of the epic's build. |
 | `on-hold`, `blocked-by-pr`, `Security` | Parked; can't merge before another PR; ranks first in its priority. |
+| `managed-by:<manager>` | Claimed by that manager's agents. Ask that manager before touching it. |
 
 A repo may rename the priority and QC labels; its human guide lists the names it uses.
 
@@ -121,7 +123,8 @@ agents queue reports for an intake agent instead; a maintainer triages that queu
 
 - Don't merge, and don't apply `QC complete - ready to review` without doing the QC.
 - Don't set priorities or put issues in the board's queue column; maintainers do.
-- Don't start work on `on-hold`, `needs-triage` or `epic-phase` issues, or on someone else's assigned issue.
+- Don't start work on `on-hold`, `needs-triage` or `epic-phase` issues, on someone else's assigned issue, or on an
+  issue another manager holds (`managed-by:`) or that is "blocked by" an open issue.
 - Don't type into another agent's session. Talk to agents through PR comments, or ask a maintainer.
 - Don't commit `.agents/local/`, fixtures, or anything the profile's "Do not" lists.
 

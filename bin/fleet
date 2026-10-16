@@ -2,9 +2,10 @@
 """fleet — read-only portfolio view of every project, with allocation advice (the portfolio manager's probe).
 
 Usage: fleet [--json] [--project P] [--write-advice] [--no-queue]
-       fleet deps add "<org/repo#n>" blocks "<org/repo#m>" [--note TEXT]
+       fleet deps add "<org/repo#n>" blocks "<org/repo#m>" [--note TEXT] [--as NAME]
        fleet deps list [--all] [--json]
-       fleet deps done <id> | "<org/repo#n>" blocks "<org/repo#m>"
+       fleet deps done <id> | "<org/repo#n>" blocks "<org/repo#m>" [--as NAME]
+       fleet note "<org/repo#n>" "<text>" [--as NAME]
 
 Enumerates every project env along PDO_CONFIG_DIRS and reports, per project: its manager (MANAGER,
 and REPO_MANAGER for SELF_MANAGED_REPOS) and how to reach it; active, hibernated, stalled and
@@ -22,6 +23,23 @@ PORTFOLIO_PRIORITY (1 = highest), RESOURCE_PROFILE (light | medium | heavy, or A
 AGENT_USAGE_WEIGHT) and the constraints. --write-advice writes it to <state dir>/fleet-advice.json,
 which bin/queue and bin/watch honour only for projects with FLEET_ADVICE=honour. Without
 --write-advice nothing is written. Missing herdr, a missing board or a failing gh are warnings.
+
+Claims: every repo's open issues carrying a managed-by:<slug> label (bin/claim's marker) are
+counted per manager (the slug maps to a project's MANAGER_SLUG; unknown slugs are other managers).
+A claim of this install's own projects whose agent is gone (no live workspace, no hibernated
+agent still in progress) is flagged as a stale claim; release it with `pdo claim --release`.
+
+Dependencies: `deps add` records the pair locally ($PDO_STATE_DIR/fleet-deps.json) and adds
+GitHub's native dependency (the blocked issue's "blocked by", REST
+issues/{n}/dependencies/blocked_by with the blocker's numeric issue id). When GitHub refuses (a
+pull request as blocker, no access, the API missing), it falls back to the local record plus a
+coordination comment on the blocked issue, and warns. `deps done` removes the native link (or
+posts the matching comment). The report lists native cross-repo dependencies too.
+
+Coordination log: `note` posts a comment headed "**Coordination (<NAME>):**" on the issue, and
+appends it to $PDO_STATE_DIR/coordination-log.jsonl. NAME (--as, else $PDO_COORDINATOR, else
+"portfolio") is the manager or portfolio that agreed it. gh runs as the GH_USER of a project
+whose ORG owns the repo (never a switch).
 
 --project P limits the per-project sections to P (the advice still weighs every project).
 --no-queue skips the per-project bin/queue run (saves GitHub calls; queue depth shows as unknown).
@@ -203,7 +221,37 @@ def herdr_state():
 
 FLEET_Q = """query fleet($o:String!,$r:String!){repository(owner:$o,name:$r){
   pullRequests(states:OPEN,first:100){totalCount nodes{number title url isDraft headRefName labels(first:30){nodes{name}}}}
-  gates: issues(states:OPEN,labels:["awaiting-ux-gate"],first:50){nodes{number title url}}}}"""
+  gates: issues(states:OPEN,labels:["awaiting-ux-gate"],first:50){nodes{number title url}}
+  claims: labels(first:50,query:"managed-by:"){nodes{name issues(states:OPEN,first:100){totalCount nodes{number title url}}}}}}"""
+# native dependencies: every open issue's open blockers, 100 issues a page (~1 point a page)
+DEPS_Q = """query fleetdeps($o:String!,$r:String!,$c:String){repository(owner:$o,name:$r){
+  issues(states:OPEN,first:100,after:$c){pageInfo{hasNextPage endCursor}
+    nodes{number blockedBy(first:20){nodes{number state repository{nameWithOwner}}}}}}}"""
+DEPS_MAX_PAGES = 10
+
+
+def native_edges(org, repo, env):
+    """[{blocker, blocked}] for open issues in org/repo blocked by an open issue (GitHub's native
+    dependencies), or None when the read fails."""
+    out, cursor = [], None
+    for _ in range(DEPS_MAX_PAGES):
+        args = ["gh", "api", "graphql", "-f", f"query={DEPS_Q}", "-F", f"o={org}", "-F", f"r={repo}"]
+        if cursor:
+            args += ["-f", f"c={cursor}"]
+        raw = run(args, timeout=30, env=env) if env is not None else None
+        try:
+            iss = json.loads(raw)["data"]["repository"]["issues"]
+        except Exception:
+            return None
+        for n in iss["nodes"]:
+            for b in (n.get("blockedBy") or {}).get("nodes") or []:
+                if b.get("state") == "OPEN":
+                    out.append({"blocker": f"{b['repository']['nameWithOwner']}#{b['number']}",
+                                "blocked": f"{org}/{repo}#{n['number']}"})
+        if not iss["pageInfo"]["hasNextPage"]:
+            break
+        cursor = iss["pageInfo"]["endCursor"]
+    return out
 
 
 def repo_facts(org, repo, env):
@@ -215,7 +263,14 @@ def repo_facts(org, repo, env):
                 "branch": n["headRefName"], "labels": [l["name"] for l in n["labels"]["nodes"]]}
                for n in d["pullRequests"]["nodes"]]
         gates = [{"number": n["number"], "title": n["title"], "url": n["url"]} for n in d["gates"]["nodes"]]
-        return {"prs": prs, "open_total": d["pullRequests"]["totalCount"], "gates": gates}
+        claims = [{"label": l["name"], "slug": l["name"].split(":", 1)[1], "total": l["issues"]["totalCount"],
+                   "issues": [{"number": i["number"], "title": i["title"], "url": i["url"]} for i in l["issues"]["nodes"]]}
+                  for l in ((d.get("claims") or {}).get("nodes") or []) if l["name"].lower().startswith("managed-by:")]
+        native = native_edges(org, repo, env)
+        if native is None:
+            warn(f"gh: native dependency read failed for {org}/{repo}")
+        return {"prs": prs, "open_total": d["pullRequests"]["totalCount"], "gates": gates, "claims": claims,
+                "native_deps": native or []}
     except Exception:
         warn(f"gh: PR/gate fetch failed for {org}/{repo}")
         return None
@@ -355,6 +410,26 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
                 else:
                     active.append(row)
 
+    # claims: this project's managed-by label on open issues; stale = no live or in-progress agent
+    slug = (cfg.get("manager_slug") or "").lower()
+    live_keys = set(seen)
+    for f in sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []:
+        meta = read_json(os.path.join(agents_dir, f), {}) or {}
+        if meta.get("hibernated_at") and not (meta.get("closed_out") or meta.get("done_tracking")):
+            live_keys.add(f"{meta.get('repo')}#{meta.get('number')}")
+    claimed, stale = [], []
+    for repo in sorted(repos):
+        f = gh_facts.get((cfg["org"], repo))
+        for c in (f or {}).get("claims", []):
+            if c["slug"].lower() != slug:
+                continue
+            for i in c["issues"]:
+                row = {"repo": repo, "number": i["number"], "title": i["title"], "url": i["url"],
+                       "ref": f"{cfg['org']}/{repo}#{i['number']}"}
+                claimed.append(row)
+                if herdr_ok and f"{repo}#{i['number']}" not in live_keys:
+                    stale.append(row)
+
     # queue depth (needs a board and a managed repo)
     queue = {"eligible": None, "auto_spawn": None, "error": None}
     if not cfg.get("project_number"):
@@ -388,6 +463,8 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         # memory this project's live agents hold, self-managed ones included (they still use the machine)
         "est_agent_mb": (len(active) + len(parked) + len(owned)) * agent_mb,
         "questions": questions, "qc_ready": qc_ready, "qc_done": qc_done, "ux_gates": gates,
+        "claims": {"label": cfg.get("claim_label"), "claimed": claimed, "stale": stale,
+                   "stale_known": herdr_ok},
         "queue": queue,
         "prs": {"open": open_total, "awaiting_human": awaiting, "cap": cap, "reached": awaiting >= cap},
         "watch_snapshot_age_min": snap_age,
@@ -520,15 +597,112 @@ def ref_state(ref, envs):
     return d.get("state")
 
 
+def run_full(args, timeout=30, env=None):
+    """(returncode, stdout, stderr); returncode 127 when the command can't run."""
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
+    except (OSError, subprocess.SubprocessError) as e:
+        return 127, "", str(e)
+    return r.returncode, r.stdout, r.stderr
+
+
+def org_envs():
+    """lower(org) -> a gh environment for that org (the GH_USER of the first project whose ORG it
+    is; the active account when none sets one)."""
+    out = {}
+    for name in pdo_config.projects():
+        cfg, _ = pdo_config.try_load(name)
+        if cfg and cfg.get("org"):
+            out.setdefault(cfg["org"].lower(), cfg.get("gh_user") or "")
+    return {o: gh_env(u) for o, u in out.items()}
+
+
+def env_for(ref, envs):
+    m = REF_RE.match(ref)
+    e = envs.get(m.group(1).lower()) if m else None
+    return e if e is not None else dict(os.environ)
+
+
+def coordinator(a_as):
+    return a_as or os.environ.get("PDO_COORDINATOR") or "portfolio"
+
+
+def post_comment(ref, body, envs):
+    """(comment id, html url) or (None, error) for a new comment on org/repo#n."""
+    m = REF_RE.match(ref)
+    rc, out, err = run_full(["gh", "api", f"repos/{m.group(1)}/{m.group(2)}/issues/{m.group(3)}/comments",
+                             "-f", f"body={body}", "--jq", "[.id, .html_url] | @tsv"], env=env_for(ref, envs))
+    if rc != 0 or not out.strip():
+        return None, (err.strip() or out.strip() or f"exit {rc}")[:200]
+    cid, _, url = out.strip().partition("\t")
+    return int(cid), url
+
+
+def coord_log(entry):
+    p = os.path.join(pdo_config.global_state_dir(), "coordination-log.jsonl")
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(dict(entry, at=int(time.time()))) + "\n")
+    except OSError as e:
+        print(f"fleet: warning: coordination log not written: {e}", file=sys.stderr)
+
+
+def native_add(blocker, blocked, envs):
+    """Add GitHub's native dependency: <blocked> is blocked by <blocker>. (True, blocker issue id) or
+    (False, reason). An existing link counts as added."""
+    mb, md = REF_RE.match(blocker), REF_RE.match(blocked)
+    rc, out, err = run_full(["gh", "api", f"repos/{mb.group(1)}/{mb.group(2)}/issues/{mb.group(3)}",
+                             "--jq", "[.id, (.pull_request != null)] | @tsv"], env=env_for(blocker, envs))
+    if rc != 0 or not out.strip():
+        return False, f"cannot read {blocker}: {(err.strip() or 'no output')[:120]}"
+    bid, _, is_pr = out.strip().partition("\t")
+    if is_pr == "true":
+        return False, f"{blocker} is a pull request (GitHub dependencies link issues only)"
+    rc, out, err = run_full(["gh", "api", "-X", "POST",
+                             f"repos/{md.group(1)}/{md.group(2)}/issues/{md.group(3)}/dependencies/blocked_by",
+                             "-F", f"issue_id={bid}"], env=env_for(blocked, envs))
+    if rc == 0 or "already been taken" in err:
+        return True, int(bid)
+    return False, (err.strip().splitlines() or [f"exit {rc}"])[-1][:200]
+
+
+def native_remove(d, envs):
+    """Remove the native link recorded on dependency <d>. (True, None) or (False, reason)."""
+    md = REF_RE.match(d["blocked"])
+    rc, _, err = run_full(["gh", "api", "-X", "DELETE",
+                           f"repos/{md.group(1)}/{md.group(2)}/issues/{md.group(3)}/dependencies/blocked_by/{d['blocker_id']}"],
+                          env=env_for(d["blocked"], envs))
+    return (True, None) if rc == 0 or "404" in err else (False, (err.strip().splitlines() or [f"exit {rc}"])[-1][:200])
+
+
+def note_cmd(argv):
+    ap = argparse.ArgumentParser(prog="fleet note")
+    ap.add_argument("ref")
+    ap.add_argument("text")
+    ap.add_argument("--as", dest="as_", default="")
+    a = ap.parse_args(argv)
+    if not REF_RE.match(a.ref):
+        sys.exit('fleet note: expected "<org/repo#n>" "<text>"')
+    who = coordinator(a.as_)
+    cid, url = post_comment(a.ref, f"**Coordination ({who}):** {a.text}", org_envs())
+    if cid is None:
+        sys.exit(f"fleet note: comment on {a.ref} failed: {url}")
+    coord_log({"kind": "note", "ref": a.ref, "by": who, "text": a.text, "comment_id": cid, "url": url})
+    print(f"noted on {a.ref} ({who}): {url}")
+
+
 def deps_cmd(argv):
     ap = argparse.ArgumentParser(prog="fleet deps")
     ap.add_argument("action", choices=["add", "list", "done"])
     ap.add_argument("refs", nargs="*")
     ap.add_argument("--note", default="")
+    ap.add_argument("--as", dest="as_", default="", help="add/done: who agreed it (default $PDO_COORDINATOR or portfolio)")
     ap.add_argument("--all", action="store_true", help="list: include done dependencies")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     deps = deps_load()
+    who = coordinator(a.as_)
 
     def pair():
         if len(a.refs) != 3 or a.refs[1] != "blocks" or not all(REF_RE.match(r) for r in (a.refs[0], a.refs[2])):
@@ -544,10 +718,25 @@ def deps_cmd(argv):
             print(f"already recorded: #{dup['id']} {blocker} blocks {blocked}")
             return
         nid = max([d["id"] for d in deps] or [0]) + 1
-        deps.append({"id": nid, "blocker": blocker, "blocked": blocked, "note": a.note,
-                     "added_at": int(time.time()), "done_at": None})
+        envs = org_envs()
+        ok, info = native_add(blocker, blocked, envs)
+        d = {"id": nid, "blocker": blocker, "blocked": blocked, "note": a.note, "by": who,
+             "added_at": int(time.time()), "done_at": None, "native": ok}
+        if ok:
+            d["blocker_id"] = info
+        else:
+            body = (f"**Coordination ({who}):** Blocked by {blocker}" + (f": {a.note.rstrip('.')}." if a.note else ".")
+                    + f" GitHub's native dependency couldn't be added ({info}), so this is tracked in the"
+                    " portfolio's dependency list instead.")
+            cid, url = post_comment(blocked, body, envs)
+            d["fallback_comment_id"] = cid
+            print(f"fleet deps: warning: native dependency not added ({info}); "
+                  + (f"commented on {blocked} instead" if cid else f"and the comment on {blocked} failed too ({url})"),
+                  file=sys.stderr)
+        deps.append(d)
         deps_save(deps)
-        print(f"added #{nid}: {blocker} blocks {blocked}")
+        coord_log({"kind": "dep_add", "blocker": blocker, "blocked": blocked, "by": who, "note": a.note, "native": ok})
+        print(f"added #{nid}: {blocker} blocks {blocked}" + (" (native)" if ok else " (local + comment)"))
     elif a.action == "done":
         if len(a.refs) == 1 and a.refs[0].lstrip("#").isdigit():
             hits = [d for d in deps if d["id"] == int(a.refs[0].lstrip("#")) and not d.get("done_at")]
@@ -556,8 +745,16 @@ def deps_cmd(argv):
             hits = [d for d in deps if d["blocker"] == blocker and d["blocked"] == blocked and not d.get("done_at")]
         if not hits:
             sys.exit("fleet deps: no open dependency matches")
+        envs = org_envs()
         for d in hits:
             d["done_at"] = int(time.time())
+            if d.get("native") and d.get("blocker_id"):
+                ok, why = native_remove(d, envs)
+                if not ok:
+                    print(f"fleet deps: warning: native dependency on {d['blocked']} not removed ({why})", file=sys.stderr)
+            elif d.get("fallback_comment_id"):
+                post_comment(d["blocked"], f"**Coordination ({who}):** No longer blocked by {d['blocker']}.", envs)
+            coord_log({"kind": "dep_done", "blocker": d["blocker"], "blocked": d["blocked"], "by": who})
             print(f"done #{d['id']}: {d['blocker']} blocks {d['blocked']}")
         deps_save(deps)
     else:
@@ -567,7 +764,8 @@ def deps_cmd(argv):
             print()
             return
         for d in rows:
-            print(f"#{d['id']} {d['blocker']} blocks {d['blocked']}{' [done]' if d.get('done_at') else ''}"
+            kind = " [native]" if d.get("native") else (" [local]" if "native" in d else "")
+            print(f"#{d['id']} {d['blocker']} blocks {d['blocked']}{kind}{' [done]' if d.get('done_at') else ''}"
                   f"{'  - ' + d['note'] if d.get('note') else ''}")
         if not rows:
             print("no open cross-project dependencies")
@@ -654,6 +852,11 @@ def text_report(r, only):
             names = [x.get("workspace") or x["agent"] for x in rows]
             return (", ".join(names[:n]) + (f" +{len(names) - n} more" if len(names) > n else "")) or "-"
         print(f"  active {len(ag['active'])}/{v['max_active']}: {nm(ag['active'])}")
+        cl = v["claims"]
+        if cl["claimed"]:
+            print(f"  claimed {len(cl['claimed'])} ({cl['label']})"
+                  + (f", {len(cl['stale'])} stale" if cl["stale"] else "")
+                  + ("" if cl["stale_known"] else " (stale unknown: no herdr)"))
         by_owner = {}
         for x in ag["self_managed"]:
             by_owner.setdefault(x["owner"] or "REPO_MANAGER unset", []).append(x)
@@ -677,13 +880,25 @@ def text_report(r, only):
         ad = r["advice"][v["project"]]
         print(f"  advice: {ad['advice']} (suggested max active {ad['suggested_max_active']}): {ad['reason']}"
               f"  [FLEET_ADVICE={v['fleet_advice_mode']}]")
+    print("== claims (managed-by labels on open issues)")
+    if not r["claims"]:
+        print("  none")
+    for c in r["claims"]:
+        print(f"  managed-by:{c['slug']} {c['count']}: {c['manager'] or '(another manager: not in this install)'}")
+    for x in r["stale_claims"]:
+        print(f"  STALE claim: [{x['project']}] {x['ref']} {x['title'][:50]} - no live or in-progress agent"
+              f" (pdo claim --release {x['repo']} {x['number']} --project {x['project']})")
     print("== cross-project dependencies")
-    if not r["deps"]:
+    if not r["deps"] and not r["native_deps"]:
         print("  none open")
     for d in r["deps"]:
         flag = f"  <- blocker {d['blocker_state'].upper()}: mark done (pdo fleet deps done {d['id']})" \
             if d.get("blocker_state") in ("closed", "merged") else ""
-        print(f"  #{d['id']} {d['blocker']} blocks {d['blocked']}{'  - ' + d['note'] if d.get('note') else ''}{flag}")
+        kind = " [native]" if d.get("native") else (" [local]" if "native" in d else "")
+        print(f"  #{d['id']} {d['blocker']} blocks {d['blocked']}{kind}{'  - ' + d['note'] if d.get('note') else ''}{flag}")
+    for e in r["native_deps"]:
+        if not e["local"]:
+            print(f"  {e['blocker']} blocks {e['blocked']} [GitHub only]")
     if r["advice_written"]:
         print("== advice written: " + ", ".join(r["advice_written"]))
     if r["warnings"]:
@@ -695,6 +910,9 @@ def text_report(r, only):
 def main():
     if sys.argv[1:2] == ["deps"]:
         deps_cmd(sys.argv[2:])
+        return
+    if sys.argv[1:2] == ["note"]:
+        note_cmd(sys.argv[2:])
         return
     ap = argparse.ArgumentParser(prog="fleet")
     ap.add_argument("--json", action="store_true")
@@ -753,6 +971,34 @@ def main():
     deps = [d for d in deps_load() if not d.get("done_at")]
     for d in deps:
         d["blocker_state"] = ref_state(d["blocker"], org_env)
+    # native dependencies across repos (within one repo they are that project's own business)
+    local_pairs = {(d["blocker"].lower(), d["blocked"].lower()) for d in deps}
+    native, seen_edges = [], set()
+    for (org, repo), f in sorted(facts.items()):
+        for e in (f or {}).get("native_deps", []):
+            k = (e["blocker"].lower(), e["blocked"].lower())
+            if k in seen_edges or e["blocker"].split("#")[0].lower() == e["blocked"].split("#")[0].lower():
+                continue
+            seen_edges.add(k)
+            native.append(dict(e, local=k in local_pairs))
+    # claims per manager (managed-by:<slug>), across every repo this install knows
+    slug_names = {}
+    for c in cfgs:
+        if c.get("manager_slug"):
+            slug_names.setdefault(c["manager_slug"].lower(), c.get("manager") or c["project"])
+    claims, counted = {}, set()
+    for (org, repo), f in sorted(facts.items()):
+        for c in (f or {}).get("claims", []):
+            e = claims.setdefault(c["slug"].lower(), {"slug": c["slug"], "manager": slug_names.get(c["slug"].lower()),
+                                                       "count": 0, "issues": []})
+            for i in c["issues"]:
+                ref = f"{org}/{repo}#{i['number']}"
+                if (c["slug"].lower(), ref.lower()) in counted:
+                    continue
+                counted.add((c["slug"].lower(), ref.lower()))
+                e["count"] += 1
+                e["issues"].append(ref)
+    stale = [dict(x, project=v["project"]) for v in views for x in v["claims"]["stale"]]
 
     written = []
     if a.write_advice:
@@ -777,7 +1023,9 @@ def main():
               "projects": [v for v in views if not a.project or v["project"] == a.project],
               "waiting_on_you": waiting_list([v for v in views if not a.project or v["project"] == a.project],
                                              inboxes),
-              "advice": advice, "deps": deps, "advice_written": written, "warnings": WARN}
+              "advice": advice, "deps": deps, "native_deps": native,
+              "claims": sorted(claims.values(), key=lambda e: (-e["count"], e["slug"])), "stale_claims": stale,
+              "advice_written": written, "warnings": WARN}
     if a.json:
         json.dump(report, sys.stdout, indent=1)
         print()

@@ -22,9 +22,11 @@ below MAX_ACTIVE. With the default FLEET_ADVICE=ignore the advice is only shown 
 Further tie-breaks: parent epic In Progress, oldest first
 (original creation date when the issue was migrated from another tracker).
 
-Excluded (listed with --all): assigned (human/interactive lock), on-hold, likely-fixed, epic-phase (a phase is run by its
+Excluded (listed with --all): assigned (human/interactive lock), managed-by:<slug> (another
+manager's claim label; this project's own label shows as "claimed": already in progress), on-hold, likely-fixed, epic-phase (a phase is run by its
 parent Epic's build agent, never on its own), a spawn failure in the last 24h, needs-triage, blocked by
-an open issue, already In Progress / In Review / Done on the board, an open herdr workspace
+an open issue (GitHub's native "blocked by": reason blocked-by:<ref>, the open blockers read in one
+batched GraphQL query per repo, only for issues whose dependency summary shows open blockers), already In Progress / In Review / Done on the board, an open herdr workspace
 for the issue, Epics without a route:* label (containers, not work items), and
 orchestrator-system issues (work on the orchestrator itself; the System Manager owns those,
 named by SYSTEM_MANAGER_WORKSPACE).
@@ -173,6 +175,37 @@ def inherit_priority(org, rows):
                     r["unblocks"].append(ref)
 
 
+BLOCKERS_Q = """query blockers($o:String!,$r:String!){repository(owner:$o,name:$r){%s}}"""
+
+
+def blocker_refs(org, repo, numbers):
+    """{number: [ref of each OPEN native blocker]} for issues whose dependency summary says they are
+    blocked, read in one GraphQL query per 50 issues (aliases; ~1 point each). None when the read
+    fails (the caller falls back to the summary's count)."""
+    out = {}
+    nums = sorted(set(numbers))
+    for i in range(0, len(nums), 50):
+        part = " ".join(f"i{n}: issue(number:{n}){{blockedBy(first:20){{nodes{{number state repository{{nameWithOwner}}}}}}}}"
+                        for n in nums[i:i + 50])
+        r = subprocess.run(["gh", "api", "graphql", "-f", f"query={BLOCKERS_Q % part}", "-F", f"o={org}", "-F", f"r={repo}"],
+                           capture_output=True, text=True)
+        try:
+            data = json.loads(r.stdout)["data"]["repository"]
+        except (ValueError, KeyError, TypeError):
+            return None
+        for n in nums[i:i + 50]:
+            nodes = ((data.get(f"i{n}") or {}).get("blockedBy") or {}).get("nodes") or []
+            refs = []
+            for b in nodes:
+                if b.get("state") != "OPEN":
+                    continue
+                owner, _, name = (b.get("repository") or {}).get("nameWithOwner", "/").partition("/")
+                refs.append(pdo_config.ref(CFG, name, b["number"]) if owner.lower() == org.lower()
+                            else f"{owner}/{name}#{b['number']}")
+            out[n] = refs
+    return out
+
+
 def origin_date(issue):
     m = re.search(r"created (\d{4}-\d{2}-\d{2}) by", issue.get("body") or "")
     return m.group(1) if m else issue["created_at"][:10]
@@ -201,6 +234,16 @@ def main():
             i["_repo"] = repo
             issues.append(i)
     by_url = {i["url"]: i for i in issues}
+    # native "blocked by": the REST summary counts open blockers; name them for the reason
+    blockers = {}
+    for repo in repos:
+        nums = [i["number"] for i in issues if i["_repo"] == repo
+                and (i.get("issue_dependencies_summary") or {}).get("blocked_by")]
+        if nums:
+            got = blocker_refs(org, repo, nums)
+            for n, refs in (got or {}).items():
+                blockers[(repo, n)] = refs
+    my_label = CFG.get("claim_label")
 
     ranked, excluded = [], []
     for i in issues:
@@ -235,8 +278,13 @@ def main():
             reasons.append("epic-phase(run parent)")
         if (repo, n) in failures:
             reasons.append("spawn-failed<24h")
+        for l in labels:
+            if l.lower().startswith("managed-by:"):
+                # a managed-by label is a claim: ours = already in progress here; another manager's = theirs
+                reasons.append("claimed" if my_label and l.lower() == my_label.lower() else l)
         if blocked:
-            reasons.append(f"blocked-by:{blocked}")
+            refs = blockers.get((repo, n))
+            reasons.append("blocked-by:" + (",".join(refs) if refs else str(blocked)))
         if itype == "Epic" and not route:
             reasons.append("epic-without-route")
 
