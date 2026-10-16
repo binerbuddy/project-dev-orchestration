@@ -13,10 +13,11 @@ standing agents (agent metadata in the state dir, herdr's workspace/agent lists,
 saved snapshot); what waits on the human (ready-for-QC and QC-complete PRs, awaiting-ux-gate issues,
 agents with a question pending, the intake inbox); the queue's eligible count; open PRs awaiting
 the human against the PR cap. System constraints: weekly and 5-hour usage (USAGE_CACHE), free memory
-and swap, disk free on the state dir and repo roots, gh GraphQL/core rate limits per GH_USER, and
-the overall agent count. Agents working in a SELF_MANAGED_REPOS repo are listed apart, as
-"self-managed (owner: <REPO_MANAGER>)": the owning manager runs them, so they count toward neither
-the project's active/MAX nor its advice, but they are in the memory estimate.
+and swap, disk free on the state dir and repo roots, gh GraphQL/core rate limits per GH_USER, the
+overall agent count, and the gh identities shim (active or not, the map's owners). Agents working
+in a SELF_MANAGED_REPOS repo are listed apart, as "self-managed (owner: <REPO_MANAGER>)": the
+owning manager runs them, so they count toward neither the project's active/MAX nor its advice, but
+they are in the memory estimate.
 
 Allocation advice per project: go | slow | hold, a reason and a soft suggested_max_active, from
 PORTFOLIO_PRIORITY (1 = highest), RESOURCE_PROFILE (light | medium | heavy, or AGENT_MB /
@@ -827,6 +828,7 @@ def text_report(r, only):
         print(f"== gh {e['user']}: graphql {g.get('remaining', '?')}/{g.get('limit', '?')}, "
               f"core {c.get('remaining', '?')}/{c.get('limit', '?')}"
               + (f" (resets in {g['reset_min']} min)" if g.get("reset_min") is not None else ""))
+    print(f"== gh identities: {s.get('gh_identities', 'unknown')}")
     a = s["agents"]
     print(f"== agents: {a['herdr_total']} herdr agent(s) ({a['claude']} claude), "
           f"{a['project_active']} active and {a['project_hibernated']} hibernated project agent(s)"
@@ -956,6 +958,8 @@ def main():
         paths += [(f"{c['project']}:{r}", root) for r, root in sorted(c["repo_root"].items())]
     system = {
         "memory": memory(), "disk": disk(paths), "usage": usage(cfgs), "gh": rate_limits(users),
+        "gh_identities": (run([os.path.join(HERE, "bin", "install"), "--gh-identities", "--status"], timeout=10)
+                          or "unknown").strip(),
         "agents": {"herdr_total": len(agents), "claude": sum(1 for x in agents if x.get("agent") == "claude"),
                    "project_active": sum(len(v["agents"]["active"]) for v in views),
                    "self_managed_active": sum(len(v["agents"]["self_managed"]) for v in views),

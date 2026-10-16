@@ -143,6 +143,51 @@ project's resolved settings, and `pdo project-env --board` its board's ids. A pr
 each its own fixture format (`declare -A FIXTURE_EXT_BY_REPO=([other-repo]=".dump")`). The full key list and the hook contracts are in
 [docs/design.md](docs/design.md#configuration).
 
+## Multiple GitHub accounts
+
+`gh` has one active account for the whole machine, and git over HTTPS (credential helper
+`!gh auth git-credential`) follows it. Someone with a work org and personal repos, and agents in
+both, breaks the other context every time anything runs `gh auth switch`. The engine's per-project
+`GH_USER` pin covers only the agents it launches. `bin/install --gh-identities` covers everything
+else, without switching:
+
+1. **A map**, `~/.config/project-dev-orchestration/gh-identities`: one line per GitHub owner (org or
+   user), `<owner> <gh-login> [<commit-email>] [<commit-name>]`, plus `default <login>`. `#` starts a
+   comment.
+
+   ```
+   acme-corp  alice-work  alice@acme-corp.example  Alice Example
+   alice      alice       alice@example.com
+   default    alice
+   ```
+
+2. **A `gh` shim** (`~/.local/share/project-dev-orchestration/shims/gh`, first on PATH). It finds the
+   owner (from `-R/--repo`, the `OWNER/REPO` of `gh repo <sub>`, an `api` path `repos/OWNER/` or
+   `orgs/OWNER/` or a GraphQL `owner:`/`login:`, `project --owner`, a github.com URL, else the
+   current repo's `origin`), and runs the real gh with `GH_TOKEN` set to that login's token
+   (`gh auth token -u`, a local lookup). An owner not in the map gets `default`; no default leaves
+   the active account. When `GH_TOKEN` or `GITHUB_TOKEN` is already set (the engine's pin, a bot),
+   the shim changes nothing. `gh auth switch`, and `gh auth login` without `--hostname`, are refused
+   unless `PDO_GH_ALLOW_SWITCH=1`.
+3. **Git, per owner.** A generated `gitconfig-identities`, included from your global gitconfig by
+   one appended `[include]` line, sets a credential helper per `https://github.com/<owner>` (so
+   pushes, fetches and clones use that login's token, whichever account is active) and, through
+   `includeIf "hasconfig:remote.*.url:..."` for https and ssh remotes, that owner's `user.email` and
+   `user.name`. Nothing else in your gitconfig is changed.
+
+```
+bin/install --gh-identities --map ~/my-gh-identities   # or edit the template it writes, then re-run
+# add the printed line to your shell profile, open a new shell, then:
+pdo install --gh-identities --check                     # owner -> login -> email for this dir
+```
+
+Each login must be in gh once (`PDO_GH_ALLOW_SWITCH=1 gh auth login`, then
+`PDO_GH_ALLOW_SWITCH=1 gh auth switch` back to your usual account). Re-run the install after editing
+the map or updating the engine (the shim and the helper are copies). `--dry-run` shows what it would
+do; `--uninstall` removes the shim, the helper, the generated files and the include line, and keeps
+the map. Per-owner `user.email` needs git 2.36+. `sysreport` and `fleet` show whether the shim is
+active and the map's owners. `PDO_GH_SHIM=off` makes the shim a plain pass-through for one command.
+
 ## Docs
 
 - [docs/user-guide.md](docs/user-guide.md): running the team day to day.
@@ -155,8 +200,9 @@ each its own fixture format (`declare -A FIXTURE_EXT_BY_REPO=([other-repo]=".dum
 ## Tests
 
 `tests/smoke.sh` runs offline in a temp dir with fake `gh` and `herdr`: config resolution, project
-detection, the intake inbox, the spawn floor, `spawn --dry-run`, the QC dispatcher, fixture publishing and
-`bin/install --link`.
+detection, the intake inbox, the spawn floor, `spawn --dry-run`, the QC dispatcher, fixture publishing,
+`bin/install --link`, and the gh identities shim (owner detection, a real `git credential fill` per remote,
+install and uninstall).
 
 ## License
 

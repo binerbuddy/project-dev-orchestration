@@ -601,5 +601,170 @@ check "install linked claude skills dir" test -L "$HOME/.claude/skills/project-o
 check "install linked pdo" test -L "$T/home/bin/pdo"
 eq "linked pdo works" "$("$T/home/bin/pdo" floor)" none
 
+# --- gh identities: the gh shim, the git credential helper, install / uninstall ---
+# Own HOME / XDG dirs / global gitconfig; a stub "real gh" records GH_TOKEN and argv.
+G="$T/ghid"
+export HOME="$G/home" XDG_CONFIG_HOME="$G/home/.config" XDG_DATA_HOME="$G/home/.local/share" GIT_CONFIG_GLOBAL="$G/home/.gitconfig"
+unset PDO_GH_IDENTITIES PDO_GH_ALLOW_SWITCH PDO_GH_SHIM PDO_GH_EXPLAIN GITHUB_TOKEN
+mkdir -p "$G/real" "$G/shim2" "$HOME"
+GLOG="$G/calls.log" TLOG="$G/tokens.log"; export GLOG TLOG
+cat >"$G/real/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1 $2 $3" == "auth token -u" ]]; then
+  echo "$4" >>"$TLOG"
+  [[ "$4" == ghost ]] && exit 1
+  echo "tok-$4"; exit 0
+fi
+if [[ "$1 $2" == "auth git-credential" ]]; then cat >/dev/null; printf 'username=x-access-token\npassword=%s\n' "${GH_TOKEN:-}"; exit 0; fi
+printf 'token=%s argv=%s\n' "${GH_TOKEN:-}" "$*" >>"$GLOG"
+EOF
+chmod +x "$G/real/gh"
+cat >"$G/map" <<'EOF'
+# owners for the smoke test
+acme-corp  alice-work  alice@acme-corp.example  Alice Example   # work
+alice      alice       alice@example.com
+lone       ghost
+default    alice
+EOF
+printf '[init]\n\tdefaultBranch = main\n[user]\n\temail = base@example.com\n[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n' >"$GIT_CONFIG_GLOBAL"
+cp "$GIT_CONFIG_GLOBAL" "$G/gitconfig.orig"
+SHIMD="$XDG_DATA_HOME/project-dev-orchestration/shims"
+GCFG="$XDG_CONFIG_HOME/project-dev-orchestration"
+OLDPATH="$PATH"
+export PATH="$SHIMD:$G/real:$OLDPATH"
+out="$("$BIN/install" --gh-identities --map "$G/map" --dry-run 2>&1)"; rc=$?
+eq "ghid: --dry-run exits 0" "$rc" 0
+check "ghid: --dry-run writes nothing" test ! -e "$SHIMD/gh" -a ! -e "$GCFG/gh-identities"
+eq "ghid: --dry-run leaves the gitconfig" "$(cmp -s "$GIT_CONFIG_GLOBAL" "$G/gitconfig.orig" && echo same)" same
+out="$("$BIN/install" --gh-identities --map "$G/map" 2>&1)"; rc=$?
+eq "ghid: install exits 0" "$rc" 0
+check "ghid: shim installed as gh" test -x "$SHIMD/gh"
+check "ghid: map installed" cmp -s "$G/map" "$GCFG/gh-identities"
+has "ghid: prints the PATH line" "$out" "export PATH=\"$SHIMD:\$PATH\""
+eq "ghid: one include line" "$(git config --global --get-all include.path)" "$GCFG/gitconfig-identities"
+cp "$GIT_CONFIG_GLOBAL" "$G/gitconfig.installed"
+"$BIN/install" --gh-identities >/dev/null 2>&1
+eq "ghid: install is idempotent (gitconfig unchanged)" "$(cmp -s "$GIT_CONFIG_GLOBAL" "$G/gitconfig.installed" && echo same)" same
+eq "ghid: the original entries are untouched" "$(head -c "$(wc -c <"$G/gitconfig.orig")" "$GIT_CONFIG_GLOBAL" | cmp -s - "$G/gitconfig.orig" && echo same)" same
+
+# the shim: owner detection
+rm -f "$GLOG" "$TLOG"
+last() { tail -1 "$GLOG" 2>/dev/null; }
+gh pr list -R acme-corp/widget;                        eq "shim: -R owner/repo" "$(last)" "token=tok-alice-work argv=pr list -R acme-corp/widget"
+gh pr list --repo=alice/notes;                         eq "shim: --repo=owner/repo" "$(last)" "token=tok-alice argv=pr list --repo=alice/notes"
+gh issue list -Racme-corp/widget;                      has "shim: -Rowner/repo" "$(last)" "token=tok-alice-work"
+gh pr list -R github.com/acme-corp/widget;             has "shim: -R HOST/OWNER/REPO" "$(last)" "token=tok-alice-work"
+gh pr view https://github.com/alice/notes/pull/1 -R acme-corp/widget; has "shim: -R beats a URL" "$(last)" "token=tok-alice-work"
+gh repo clone acme-corp/widget;                        has "shim: gh repo <sub> OWNER/REPO" "$(last)" "token=tok-alice-work"
+gh api repos/acme-corp/widget/pulls;                   has "shim: api repos/OWNER/" "$(last)" "token=tok-alice-work"
+gh api /orgs/acme-corp/teams;                          has "shim: api /orgs/OWNER/" "$(last)" "token=tok-alice-work"
+gh api -X GET repos/ACME-CORP/widget;                  has "shim: owners are case-insensitive" "$(last)" "token=tok-alice-work"
+gh api graphql -f query='query { repository(owner: "acme-corp", name: "w") { id } }'; has "shim: GraphQL owner:\"X\"" "$(last)" "token=tok-alice-work"
+gh api graphql -f query='query { user(login:"alice") { id } }'; has "shim: GraphQL login:\"X\"" "$(last)" "token=tok-alice"
+gh api graphql -F owner=acme-corp -f query='query($owner: String!) { x }'; has "shim: GraphQL owner= field" "$(last)" "token=tok-alice-work"
+gh project item-list 3 --owner acme-corp;              has "shim: project --owner" "$(last)" "token=tok-alice-work"
+gh project list --owner=alice;                         has "shim: project --owner=" "$(last)" "token=tok-alice"
+gh pr view https://github.com/acme-corp/widget/pull/3; has "shim: a github.com URL" "$(last)" "token=tok-alice-work"
+gh browse https://github.com/orgs/acme-corp/projects/1; has "shim: an orgs/ URL names the org" "$(last)" "token=tok-alice-work"
+gh pr list -R stranger/thing;                          has "shim: unmapped owner = default" "$(last)" "token=tok-alice"
+mkdir -p "$G/repos"
+for f in https:https://github.com/acme-corp/widget.git ssh:git@github.com:acme-corp/widget.git sshurl:ssh://git@github.com/acme-corp/widget.git \
+         alice:https://github.com/alice/notes.git other:https://github.com/acme-corpx/widget.git; do
+  git init -q "$G/repos/${f%%:*}"; git -C "$G/repos/${f%%:*}" remote add origin "${f#*:}"
+done
+(cd "$G/repos/https" && gh issue list);  eq "shim: origin remote (https)" "$(last)" "token=tok-alice-work argv=issue list"
+(cd "$G/repos/ssh" && gh issue list);    has "shim: origin remote (git@ ssh)" "$(last)" "token=tok-alice-work"
+(cd "$G/repos/sshurl" && gh issue list); has "shim: origin remote (ssh://)" "$(last)" "token=tok-alice-work"
+(cd "$G/repos/other" && gh issue list);  has "shim: an owner prefix is not the owner" "$(last)" "token=tok-alice argv"
+(cd "$G/repos/alice" && gh pr list -R acme-corp/widget); has "shim: -R beats the origin remote" "$(last)" "token=tok-alice-work"
+(cd "$G" && gh issue list);              has "shim: no owner anywhere = default" "$(last)" "token=tok-alice argv"
+eq "shim: PDO_GH_EXPLAIN" "$(cd "$G/repos/ssh" && PDO_GH_EXPLAIN=1 gh status 2>&1 | cut -d' ' -f1-4)" "owner=acme-corp rule=origin login=alice-work via=map"
+grep -v '^default' "$G/map" >"$G/map-nodefault"
+PDO_GH_IDENTITIES="$G/map-nodefault" gh pr list -R stranger/thing; eq "shim: no match, no default = the active account" "$(last)" "token= argv=pr list -R stranger/thing"
+gh pr list -R lone/x 2>"$G/err"; eq "shim: a login without a token exits 4" "$?" 4
+has "shim: ... and says which login" "$(cat "$G/err")" "'ghost'"
+# pass-through: GH_TOKEN / GITHUB_TOKEN set, auth, PDO_GH_SHIM=off
+: >"$TLOG"
+GH_TOKEN=pinned gh pr list -R acme-corp/widget;        eq "shim: GH_TOKEN set = unchanged" "$(last)" "token=pinned argv=pr list -R acme-corp/widget"
+GITHUB_TOKEN=bot gh pr list -R acme-corp/widget;       eq "shim: GITHUB_TOKEN set = unchanged" "$(last)" "token= argv=pr list -R acme-corp/widget"
+eq "shim: pass-through looks up no token" "$(wc -l <"$TLOG")" 0
+PDO_GH_SHIM=off gh pr list -R acme-corp/widget;        eq "shim: PDO_GH_SHIM=off = unchanged" "$(last)" "token= argv=pr list -R acme-corp/widget"
+gh auth status;                                        eq "shim: other auth calls pass through" "$(last)" "token= argv=auth status"
+# auth switch / login refusal
+n0="$(wc -l <"$GLOG")"
+gh auth switch -u alice-work 2>"$G/err"; eq "shim: gh auth switch refused (exit 3)" "$?" 3
+has "shim: the refusal explains" "$(cat "$G/err")" "PDO_GH_ALLOW_SWITCH=1"
+gh auth login 2>/dev/null; eq "shim: gh auth login without --hostname refused" "$?" 3
+eq "shim: refused calls never reach gh" "$(wc -l <"$GLOG")" "$n0"
+gh auth login --hostname github.com;                   eq "shim: gh auth login --hostname passes" "$(last)" "token= argv=auth login --hostname github.com"
+PDO_GH_ALLOW_SWITCH=1 gh auth switch -u alice;         eq "shim: PDO_GH_ALLOW_SWITCH=1 allows a switch" "$(last)" "token= argv=auth switch -u alice"
+# no recursion: another shim copy earlier on PATH is skipped; a shim alone fails fast
+cp "$BIN/gh-identity-shim" "$G/shim2/gh"; chmod +x "$G/shim2/gh"
+PATH="$SHIMD:$G/shim2:$G/real:$OLDPATH" gh pr list -R alice/notes; eq "shim: skips other shim copies on PATH" "$(last)" "token=tok-alice argv=pr list -R alice/notes"
+mkdir -p "$G/tools"; for t in bash env readlink dirname head grep git timeout; do ln -sf "$(command -v "$t")" "$G/tools/$t"; done
+out="$(PATH="$SHIMD:$G/shim2:$G/tools" timeout 10 gh pr list 2>&1)"; rc=$?
+eq "shim: no real gh = exit 127, no loop" "$rc" 127
+has "shim: ... with a message" "$out" "no real gh on PATH"
+ln -sf "$SHIMD/gh" "$G/shim2/gh"
+out="$(PATH="$SHIMD:$G/shim2:$G/tools" timeout 10 gh pr list 2>&1)"; eq "shim: a symlink to the shim is skipped too" "$?" 127
+# the engine's pin still wins through the shim
+eq "shim: with-gh-user pin passes through" "$("$BIN/with-gh-user" --user octo gh pr list -R acme-corp/widget >/dev/null; last)" "token=tok-octo argv=pr list -R acme-corp/widget"
+
+# git: per-owner credentials (a real `git credential fill`) and per-owner user.email
+gcred() {  # gcred <dir> <path>: username:password git answers for https://github.com/<path>
+  (cd "$1" && printf 'protocol=https\nhost=github.com\npath=%s\n\n' "$2" | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null \
+    | awk -F= '/^username=/{u=$2} /^password=/{p=$2} END{print u ":" p}')
+}
+eq "git: https remote, its owner" "$(gcred "$G/repos/https" acme-corp/widget.git)" "alice-work:tok-alice-work"
+eq "git: ssh remote repo, https URL of its owner" "$(gcred "$G/repos/ssh" acme-corp/widget.git)" "alice-work:tok-alice-work"
+eq "git: another owner from the same repo" "$(gcred "$G/repos/https" alice/notes.git)" "alice:tok-alice"
+eq "git: outside any repo (clone)" "$(gcred "$G" acme-corp/new.git)" "alice-work:tok-alice-work"
+eq "git: an owner prefix is not the owner (default)" "$(gcred "$G" acme-corpx/widget.git)" "alice:tok-alice"
+eq "git: unmapped owner = default" "$(gcred "$G" stranger/x.git)" "alice:tok-alice"
+eq "git: includeIf email (https remote)" "$(git -C "$G/repos/https" config user.email)" "alice@acme-corp.example"
+eq "git: includeIf name (https remote)" "$(git -C "$G/repos/https" config user.name)" "Alice Example"
+eq "git: includeIf email (git@ remote)" "$(git -C "$G/repos/ssh" config user.email)" "alice@acme-corp.example"
+eq "git: includeIf email (ssh:// remote)" "$(git -C "$G/repos/sshurl" config user.email)" "alice@acme-corp.example"
+eq "git: second owner's email" "$(git -C "$G/repos/alice" config user.email)" "alice@example.com"
+eq "git: other owners keep the global email" "$(git -C "$G/repos/other" config user.email)" "base@example.com"
+eq "git: the env pin (with-gh-user) beats the owner helper" "$(cd "$G/repos/https" && printf 'protocol=https\nhost=github.com\npath=acme-corp/w.git\n\n' \
+  | GIT_TERMINAL_PROMPT=0 "$BIN/with-gh-user" --user octo git credential fill 2>/dev/null | sed -n 's/^password=//p')" "tok-octo"
+# helper order: a github.com helper appended after the include (a later `gh auth setup-git`)
+LATE='[credential "https://github.com"]\n\thelper =\n\thelper = "!f() { echo username=late; echo password=late; }; f"\n'
+printf "$LATE" >>"$GIT_CONFIG_GLOBAL"
+{ cat "$G/gitconfig.orig"; printf "$LATE"; } >"$G/gitconfig.late"
+eq "git: a later github.com reset overrides (the problem)" "$(gcred "$G/repos/https" acme-corp/widget.git)" "late:late"
+"$BIN/install" --gh-identities >/dev/null 2>&1
+eq "git: re-install moves the include below it" "$(gcred "$G/repos/https" acme-corp/widget.git)" "alice-work:tok-alice-work"
+eq "git: still one include line" "$(git config --global --get-all include.path | wc -l)" 1
+# --check / --status / fleet
+out="$(cd "$G/repos/https" && "$BIN/install" --gh-identities --check 2>&1)"; rc=$?
+eq "ghid --check: exit 0 when all is well" "$rc" 0
+has "ghid --check: owner -> login" "$out" "owner acme-corp (origin) -> login alice-work (map)"
+has "ghid --check: email" "$out" "<alice@acme-corp.example>"
+has "ghid --check: git answers as the login" "$out" "username alice-work"
+has "ghid --check: shim active" "$out" "shim: active"
+out="$(cd "$G/repos/https" && PATH="$G/real:$SHIMD:$OLDPATH" "$BIN/install" --gh-identities --check 2>&1)"; rc=$?
+eq "ghid --check: shim not first = exit 1" "$rc" 1
+has "ghid --check: says so" "$out" "not first on PATH"
+eq "ghid --status" "$("$BIN/install" --gh-identities --status)" "shim active; map: acme-corp->alice-work, alice->alice, lone->ghost; default alice"
+has "fleet: gh identities line" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --no-queue 2>/dev/null)" "== gh identities: shim active; map: acme-corp->alice-work"
+check "sysreport: gh identities line" grep -q 'gh identities: .*--gh-identities --status' "$BIN/sysreport"
+# a bad map is refused
+printf 'acme-corp\n' >"$G/badmap"
+"$BIN/install" --gh-identities --map "$G/badmap" >/dev/null 2>&1; eq "ghid: a malformed map is refused" "$?" 1
+check "ghid: ... and the installed map is kept" cmp -s "$G/map" "$GCFG/gh-identities"
+# uninstall
+out="$("$BIN/install" --gh-identities --uninstall 2>&1)"; rc=$?
+eq "ghid --uninstall: exit 0" "$rc" 0
+check "ghid --uninstall: shim removed" test ! -e "$SHIMD/gh"
+check "ghid --uninstall: helper and git files removed" test ! -e "$GCFG/gitconfig-identities" -a ! -e "$GCFG/gitconfig-identities.d" \
+  -a ! -e "$XDG_DATA_HOME/project-dev-orchestration/gh-identity-credential"
+check "ghid --uninstall: the map is kept" test -f "$GCFG/gh-identities"
+eq "ghid --uninstall: only the include line is gone" "$(cmp -s "$GIT_CONFIG_GLOBAL" "$G/gitconfig.late" && echo same || diff "$G/gitconfig.late" "$GIT_CONFIG_GLOBAL")" same
+"$BIN/install" --gh-identities --uninstall >/dev/null 2>&1; eq "ghid --uninstall: twice is fine" "$?" 0
+eq "ghid --status after uninstall" "$("$BIN/install" --gh-identities --status)" "shim not installed; map: acme-corp->alice-work, alice->alice, lone->ghost; default alice"
+export PATH="$OLDPATH"
+
 echo "smoke: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

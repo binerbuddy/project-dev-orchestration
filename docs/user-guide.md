@@ -131,6 +131,7 @@ start yourself (not dispatched) finds the engine through `pdo` on PATH, else thr
 | `pr-agent <pr#>`, `pr-priority`, `shots <pr#>`, `agent-meta backfill` | PR helpers |
 | `project-env [KEY]` / `project-env --board` | the current project's resolved settings / the board's ids (live) |
 | `with-gh-user --user <login> <cmd>` | run one command (`gh …`, `git push …`) as that GitHub login, without switching the account |
+| `install --gh-identities [--check\|--uninstall]` | one gh login per repo owner for every shell and agent (see [Multiple GitHub accounts](#multiple-github-accounts)) |
 | `fleet [--json] [--write-advice]` | every project at once, the machine's constraints, allocation advice (read-only by default) |
 | `fleet deps add\|list\|done …` | cross-project dependencies (also GitHub's native "blocked by") |
 | `fleet note <org/repo#n> "<text>" [--as NAME]` | log a cross-manager agreement as an issue comment |
@@ -176,6 +177,29 @@ human lock that the engine never touches or starts.
   (`blocked-by:<ref>`) until A closes. `deps done` removes it.
 - Agreements between managers (who goes first, a hand-off, who owns what) are logged on every issue
   involved with `pdo fleet note`, so a collaborator's agent sees them too.
+
+## Multiple GitHub accounts
+
+If you work a work org and your own repos from one machine, with agents in both, don't let anything
+run `gh auth switch`: gh has one active account for the whole machine, so a switch breaks every
+other session. Instead, list which login works which owner and install the gh identities shim:
+
+```
+$EDITOR ~/.config/project-dev-orchestration/gh-identities
+#   acme-corp  alice-work  alice@acme-corp.example  Alice Example
+#   alice      alice       alice@example.com
+#   default    alice
+pdo install --gh-identities
+# add the printed `export PATH=...shims:$PATH` line to your shell profile, open a new shell
+pdo install --gh-identities --check
+```
+
+From then on every `gh` call, from you or any agent, runs as the login that owns the repo it
+touches, and git pushes and commits in a repo use that owner's login and email. The shim refuses
+`gh auth switch` (set `PDO_GH_ALLOW_SWITCH=1` when you really mean it, such as adding an account).
+A project's `GH_USER` pin still wins for the agents the engine launches. `sysreport` shows a
+`gh identities:` line (shim active or not, and the owners). Details: the README's "Multiple
+GitHub accounts"; undo with `pdo install --gh-identities --uninstall`.
 
 ## When something looks wrong
 

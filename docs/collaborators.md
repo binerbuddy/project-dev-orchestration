@@ -128,4 +128,27 @@ agents queue reports for an intake agent instead; a maintainer triages that queu
 - Don't type into another agent's session. Talk to agents through PR comments, or ask a maintainer.
 - Don't commit `.agents/local/`, fixtures, or anything the profile's "Do not" lists.
 
+## 9. Multiple GitHub accounts
+
+If this repo belongs to a work org and you also work your own repos on the same machine (with agents in
+both), never run `gh auth switch`: gh has one active account per machine, and a switch breaks the other
+sessions. The engine ships a `gh` shim that picks the login per repo owner instead. You need a checkout of
+this repo for it (not the orchestrator):
+
+```
+git clone https://github.com/binerbuddy/project-dev-orchestration ~/src/project-dev-orchestration
+$EDITOR ~/.config/project-dev-orchestration/gh-identities
+#   acme-corp  alice-work  alice@acme-corp.example  Alice Example
+#   alice      alice       alice@example.com
+#   default    alice
+~/src/project-dev-orchestration/bin/install --gh-identities
+# add the printed `export PATH=...shims:$PATH` line to your shell profile, open a new shell
+~/src/project-dev-orchestration/bin/install --gh-identities --check
+```
+
+Every `gh` call then runs as the owner's login, and git uses that login's token and the map's commit email
+in that owner's repos. Each login must be in gh once (`PDO_GH_ALLOW_SWITCH=1 gh auth login`). Undo with
+`bin/install --gh-identities --uninstall`; it removes the one include line it added to your gitconfig and
+keeps the map.
+
 See also the [FAQ](faq.md), and the [maintainers' page](maintainers.md) if you run the team.

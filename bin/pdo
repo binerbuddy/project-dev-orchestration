@@ -12,7 +12,7 @@ case "$cmd" in
     echo "usage: pdo <command> [args...]; commands:"
     for f in "$BIN"/*; do
       n="$(basename "$f")"
-      [[ -x "$f" && -f "$f" && "$n" != pdo && "$n" != install && "$n" != *.* ]] || continue
+      [[ -x "$f" && -f "$f" && "$n" != pdo && "$n" != install && "$n" != gh-identity-* && "$n" != *.* ]] || continue
       printf '  %-20s %s\n' "$n" "$(sed -n '2{s/^# *//;s/^"""//;p}' "$f" | cut -c1-90)"
     done ;;
   */*|.*|lib.sh|pdo_config.py|pdo) echo "pdo: not a command: $cmd" >&2; exit 2 ;;

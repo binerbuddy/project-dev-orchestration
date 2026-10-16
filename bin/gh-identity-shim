@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# gh-identity-shim — runs gh as the GitHub login that owns the repo, from the gh-identities map.
+# PDO_GH_IDENTITY_SHIM (marker: a gh on PATH that carries it is a shim, never the real gh)
+#
+# Installed as `gh` in a shim dir that goes first on PATH (`pdo install --gh-identities`). gh has
+# one active account per machine; switching it breaks every other session. The shim never switches:
+# it picks a login per call and hands the real gh that login's token through GH_TOKEN.
+#
+#   - GH_TOKEN or GITHUB_TOKEN already set: exec the real gh unchanged (the engine's GH_USER pin,
+#     a bot identity, with-gh-user).
+#   - Otherwise the owner is, in this order: -R/--repo OWNER/REPO; the OWNER/REPO argument of
+#     `gh repo <sub>`; an `api` path repos/OWNER/... or orgs/OWNER/..., a GraphQL owner:"X" or
+#     login:"X" in query=..., or an owner=/org=/login= field; `project ... --owner OWNER`; a
+#     github.com URL in the arguments; the current directory's `origin` remote.
+#   - The owner maps to a login (map lines `<owner> <login> [<email>] [<name>]`, case-insensitive
+#     owner); no match uses the `default <login>` line; no default leaves the active account.
+#   - `gh auth switch`, and `gh auth login` without --hostname, are refused (exit 3) unless
+#     PDO_GH_ALLOW_SWITCH=1. Other `auth`, `config`, `alias`, `help`, `version`, `completion`
+#     calls pass straight through.
+#
+# Map: $PDO_GH_IDENTITIES, else ${XDG_CONFIG_HOME:-~/.config}/project-dev-orchestration/gh-identities.
+# PDO_GH_SHIM=off: plain pass-through. PDO_GH_EXPLAIN=1: print "owner=.. rule=.. login=.." to
+# stderr and exit 0 without running gh. The real gh is the first gh on PATH that is not a shim.
+# No network: the only extra process is `gh auth token -u LOGIN` (local), plus `git remote
+# get-url origin` when no argument names the owner.
+set -uo pipefail
+
+self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+
+find_real_gh() {
+  local d c IFS=:
+  for d in $PATH; do
+    [[ -n "$d" && -x "$d/gh" && -f "$d/gh" ]] || continue
+    [[ "$(cd "$d" 2>/dev/null && pwd -P)" == "$self_dir" ]] && continue
+    c="$(readlink -f "$d/gh" 2>/dev/null || echo "$d/gh")"
+    [[ "$c" == "$self" ]] && continue
+    head -c 400 "$c" 2>/dev/null | grep -q 'PDO_GH_IDENTITY_SHIM' && continue
+    printf '%s\n' "$d/gh"; return 0
+  done
+  return 1
+}
+
+REAL="$(find_real_gh)" || { echo "gh-identity-shim: no real gh on PATH (outside the shim dir)" >&2; exit 127; }
+
+[[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" || "${PDO_GH_SHIM:-}" == off ]] && exec "$REAL" "$@"
+
+# --- the first subcommand (skipping leading global flags) ---
+sub="" sub2=""
+for a in "$@"; do
+  case "$a" in
+    -*) ;;
+    *) if [[ -z "$sub" ]]; then sub="$a"; elif [[ -z "$sub2" ]]; then sub2="$a"; break; fi ;;
+  esac
+done
+
+case "$sub" in
+  auth)
+    refuse=0
+    if [[ "$sub2" == switch ]]; then refuse=1; fi
+    if [[ "$sub2" == login ]]; then
+      refuse=1
+      for a in "$@"; do case "$a" in -h|--hostname|--hostname=*|--help) refuse=0 ;; esac; done
+    fi
+    if [[ $refuse -eq 1 && "${PDO_GH_ALLOW_SWITCH:-}" != 1 ]]; then
+      cat >&2 <<'EOF'
+gh-identity-shim: refusing `gh auth switch` / `gh auth login`: they change the one active gh account
+for the whole machine, which breaks agents and shells working as another login.
+  - This shim already picks the login per repo owner (the gh-identities map); no switch is needed.
+  - One command as a given login: GH_TOKEN="$(gh auth token -u LOGIN)" gh ...  (or pdo with-gh-user --user LOGIN ...)
+  - To add an account or really switch: PDO_GH_ALLOW_SWITCH=1 gh auth login|switch ...
+EOF
+      exit 3
+    fi
+    exec "$REAL" "$@" ;;
+  ""|config|alias|completion|help|version|extension|--version|--help|-h) exec "$REAL" "$@" ;;
+esac
+
+# --- owner detection ---
+url_owner() {  # url_owner <text>: owner of the first github.com URL in the text
+  local re='(https?://([^/@[:space:]]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)((orgs|users)/)?([A-Za-z0-9][A-Za-z0-9-]*)'
+  [[ "$1" =~ $re ]] && { printf '%s\n' "${BASH_REMATCH[5]}"; return 0; }
+  return 1
+}
+slug_owner() {  # slug_owner <OWNER/REPO | HOST/OWNER/REPO | URL>
+  local v="$1"
+  url_owner "$v" && return 0
+  v="${v#github.com/}"
+  [[ "$v" =~ ^([A-Za-z0-9][A-Za-z0-9-]*)/[A-Za-z0-9._-]+/?$ ]] && { printf '%s\n' "${BASH_REMATCH[1]}"; return 0; }
+  return 1
+}
+
+owner="" rule=""
+detect() {
+  local args=("$@") n=$# i a v
+  # 1. -R / --repo
+  for ((i = 0; i < n; i++)); do
+    a="${args[i]}" v=""
+    case "$a" in
+      -R|--repo) v="${args[i + 1]:-}" ;;
+      --repo=*) v="${a#--repo=}" ;;
+      -R?*) v="${a#-R}" ;;
+      *) continue ;;
+    esac
+    owner="$(slug_owner "$v")" && { rule=repo-flag; return 0; }
+  done
+  # 1b. gh repo <sub> OWNER/REPO
+  if [[ "$sub" == repo && -n "$sub2" ]]; then
+    local seen=0
+    for a in "$@"; do
+      [[ "$a" == -* ]] && continue
+      seen=$((seen + 1)); [[ $seen -le 2 ]] && continue
+      owner="$(slug_owner "$a")" && { rule=repo-arg; return 0; }
+    done
+  fi
+  # 2. api: endpoint path, GraphQL owner:/login:, owner=/org=/login= fields
+  if [[ "$sub" == api ]]; then
+    for a in "$@"; do
+      if [[ "$a" =~ ^/?(repos|orgs)/([A-Za-z0-9][A-Za-z0-9-]*)(/|$|\?) ]]; then
+        owner="${BASH_REMATCH[2]}"; rule=api-path; return 0
+      fi
+    done
+    local qre='(owner|login)[[:space:]]*:[[:space:]]*\\?"([A-Za-z0-9][A-Za-z0-9-]*)\\?"'
+    for a in "$@"; do
+      if [[ "$a" == query=* && "$a" =~ $qre ]]; then
+        owner="${BASH_REMATCH[2]}"; rule=api-graphql; return 0
+      fi
+    done
+    for a in "$@"; do
+      if [[ "$a" =~ ^(owner|org|login)=([A-Za-z0-9][A-Za-z0-9-]*)$ ]]; then
+        owner="${BASH_REMATCH[2]}"; rule=api-field; return 0
+      fi
+    done
+  fi
+  # 3. project ... --owner OWNER
+  if [[ "$sub" == project ]]; then
+    for ((i = 0; i < n; i++)); do
+      case "${args[i]}" in
+        --owner) v="${args[i + 1]:-}" ;;
+        --owner=*) v="${args[i]#--owner=}" ;;
+        *) continue ;;
+      esac
+      [[ -n "$v" && "$v" != "@me" ]] && { owner="$v"; rule=project-owner; return 0; }
+    done
+  fi
+  # 4. a github.com URL anywhere in the arguments
+  for a in "$@"; do
+    owner="$(url_owner "$a")" && { rule=url; return 0; }
+  done
+  # 5. the current directory's origin remote
+  v="$(git remote get-url origin 2>/dev/null)" || v=""
+  if [[ -n "$v" ]]; then owner="$(url_owner "$v")" && { rule=origin; return 0; }; fi
+  owner=""; return 1
+}
+detect "$@" || true
+
+# --- owner -> login, from the map ---
+MAP="${PDO_GH_IDENTITIES:-${XDG_CONFIG_HOME:-$HOME/.config}/project-dev-orchestration/gh-identities}"
+login="" default="" how=""
+if [[ -r "$MAP" ]]; then
+  lo="${owner,,}"
+  while read -r k l _; do
+    [[ -z "$k" || "$k" == \#* || -z "$l" || "$l" == \#* ]] && continue
+    if [[ "$k" == default ]]; then default="$l"
+    elif [[ -n "$lo" && "${k,,}" == "$lo" ]]; then login="$l"; break
+    fi
+  done <"$MAP"
+fi
+if [[ -n "$login" ]]; then how=map
+elif [[ -n "$default" ]]; then login="$default" how=default
+else how=active
+fi
+
+if [[ "${PDO_GH_EXPLAIN:-}" == 1 ]]; then
+  echo "owner=${owner:--} rule=${rule:--} login=${login:-(active account)} via=$how real=$REAL" >&2
+  exit 0
+fi
+[[ -z "$login" ]] && exec "$REAL" "$@"
+
+token="$("$REAL" auth token -u "$login" 2>/dev/null)"
+if [[ -z "$token" ]]; then
+  echo "gh-identity-shim: no gh token for login '$login' (owner ${owner:-?}, from $MAP)." >&2
+  echo "  Add it once with: PDO_GH_ALLOW_SWITCH=1 gh auth login, then switch back to your usual account." >&2
+  exit 4
+fi
+GH_TOKEN="$token" exec "$REAL" "$@"
