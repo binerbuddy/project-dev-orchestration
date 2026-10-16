@@ -9,22 +9,26 @@ live in the profile and the skills.
 
 ## How work flows here
 
+**Session start: check the human guide acknowledgement (mandatory).** Skip this only if you were dispatched rather
+than started by a person: `PDO_DISPATCHED=1` is set in your environment, or your first prompt is a dispatch brief from
+an orchestrator. Otherwise, BEFORE answering the first request of the session, whatever it is (a task, a question
+about this repo, or a question about these instructions), check `.agents/local/guide-ack` (per clone, gitignored).
+- **Missing, or its `guide:` differs from the guide's current version:** your FIRST reply must ask whether the human
+  has read both guides: `<guide path>` (this repo's labels, routes, QC and who to ask) and the general guide at
+  https://binerbuddy.github.io/project-dev-orchestration/. Offer a 3-line summary of `<guide path>`. Don't wait for
+  implementation to start or for the human to ask about onboarding. You may carry on with their request in the same
+  reply while you wait for the answer.
+- **Record it only on an explicit yes** ("I've read them"). Reading your summary doesn't count. Then write the file
+  with two lines: `date: <YYYY-MM-DD>` and `guide: <version>`, where the version is the `guide-version:` value at the
+  top of `<guide path>` (no such line: the output of `git hash-object <guide path>`). If they decline or skip, carry on
+  and don't ask again this session.
+- **Present and current:** never ask.
+
 Work is tracked as GitHub issues in `<org>/<repo>` on org Project `<project#>`, and built by agents running the
 project-dev-orchestration skills. Project facts (build commands, ports, QC data, conventions) are in
 `.agents/project-profile.md`; read it before you start. To learn the whole pipeline, load the `project-how-it-works`
 skill. Engine commands are written `pdo <name>`. If `pdo` isn't on PATH, use `<engine checkout>/bin/<name>` (a
 dispatch brief's absolute path wins), or put `pdo` on PATH once with `<engine checkout>/bin/install --bin`.
-
-**First session in a clone: the human guide (once).** Skip this if you were dispatched rather than started by a
-person: `PDO_DISPATCHED=1` is set in your environment, or your first prompt is a dispatch brief from an orchestrator.
-Otherwise, at the start of work, check for `.agents/local/guide-ack` (per clone, gitignored).
-- Missing: ask the human once whether they've read the human guide, `<guide path>` (this repo's labels, routes, QC
-  and who to ask), and the general guide at https://binerbuddy.github.io/project-dev-orchestration/. Offer a 3-line
-  summary of `<guide path>`. When they confirm, create the file with two lines: `date: <YYYY-MM-DD>` and
-  `guide: <version>`, where the version is the `guide-version:` value at the top of `<guide path>` (no such line: the
-  output of `git hash-object <guide path>`). If they decline or skip, carry on and don't ask again this session.
-- Present: never ask again, unless its `guide:` differs from the guide's current version; then ask once more and
-  rewrite the file on confirmation.
 
 **Labels and routes**
 - `P1-urgent` … `P4-low`: priority, on issues and PRs. A PR takes the highest P-label of the issues it closes

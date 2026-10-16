@@ -18,18 +18,21 @@ orchestrator running. The rules are the same; only the tools differ.
    `## Project extras` (the project's own commands and conventions, if any), `## Do not`;
 3. the project-dev-orchestration README for the engine itself.
 
-## First session in a clone: the human guide (once)
+## Session start: the human guide acknowledgement (mandatory, once per clone)
 
 Mirrors the rule in the repo's `AGENTS.md`. **Skip it when you were dispatched** rather than started
 by a person: `PDO_DISPATCHED=1` is set in your environment (the engine's launcher sets it), or your
 first prompt is a dispatch brief. You aren't talking to a collaborator then.
 
-Otherwise, at the start of work in the repo, look for `.agents/local/guide-ack` (one per clone,
-gitignored; never commit it).
+Otherwise, check `.agents/local/guide-ack` (one per clone, gitignored; never commit it) BEFORE you
+answer the first request of the session, whatever it is: a task, a question about the repo, or a
+question about these instructions. If it's missing or out of date, your first reply asks. Don't wait
+for implementation to start or for the human to ask about onboarding; you may carry on with their
+request in the same reply.
 - **Missing:** ask the human once whether they've read the repo's human guide (`docs/agent-workflow.md`,
   or where the profile's `## Docs` puts it) and the general guide,
   https://binerbuddy.github.io/project-dev-orchestration/. Offer a 3-line summary of the repo guide:
-  how to request work (labels and routes), how QC works there, and who to ask. On their confirmation,
+  how to request work (labels and routes), how QC works there, and who to ask. Only on their explicit yes (reading your summary doesn't count),
   `mkdir -p .agents/local` and write `date: <YYYY-MM-DD>` and `guide: <version>` into the file. The
   version is the `guide-version:` value at the top of the guide, else `git hash-object <guide>`. A
   "no" or "skip": carry on without the file, and don't ask again this session.
