@@ -24,7 +24,7 @@ session, and again after a context compaction:
   once it exists, else `git -C <repo root> show origin/<default>:.agents/project-profile.md`.
 - `skills/project-how-it-works/references/qc-protocol.md` (checklist, fixtures, labels).
 
-Label names below are the defaults; `pdo project-env` prints the project's (`LABEL_QC_READY`,
+Label names below are the defaults; `pdo project-env --project <p> <KEY>` (one key per call) prints the project's (`LABEL_QC_READY`,
 `LABEL_QC_DONE`, `LABEL_MERGE_READY`, `LABEL_UX_SKIPPED`, `LABEL_NEEDS_UX`, `LABEL_QC_ESCALATED`).
 
 ## 0. Resume
