@@ -41,6 +41,13 @@ find_real_gh() {
   return 1
 }
 
+# Loop guard: another shim on PATH that lacks the marker could hand calls back here forever.
+PDO_GH_SHIM_DEPTH=$(( ${PDO_GH_SHIM_DEPTH:-0} + 1 )); export PDO_GH_SHIM_DEPTH
+if (( PDO_GH_SHIM_DEPTH > 4 )); then
+  echo "gh-identity-shim: gh shims are calling each other in a loop (PATH=$PATH); give every gh shim the PDO_GH_IDENTITY_SHIM marker." >&2
+  exit 126
+fi
+
 REAL="$(find_real_gh)" || { echo "gh-identity-shim: no real gh on PATH (outside the shim dir)" >&2; exit 127; }
 
 [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" || "${PDO_GH_SHIM:-}" == off ]] && exec "$REAL" "$@"
