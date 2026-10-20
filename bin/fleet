@@ -319,11 +319,15 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     self_managed = set(cfg["self_managed_repos"])
     managed = repos - self_managed
     labels_ready, labels_done = cfg["label_qc_ready"], cfg["label_qc_done"]
+    labels_merge, labels_esc = cfg["label_merge_ready"], cfg["label_qc_escalated"]
+    # repos where 'ready for QC' is the QC Agent's queue, not the human's
+    agent_qc = set(cfg.get("agent_qc_repos") or []) if cfg.get("agent_qc_ports") else set()
     prof, agent_mb, weight = profile_of(cfg)
     max_active = cfg.get("max_active") or 3
 
     # PR index by (repo, branch), and what waits on the human
     pr_by_branch, qc_ready, qc_done, gates, open_total, awaiting = {}, [], [], [], 0, 0
+    merge_ready, escalated = [], []
     for repo in sorted(repos):
         f = gh_facts.get((cfg["org"], repo))
         if not f:
@@ -332,11 +336,15 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         for pr in f["prs"]:
             pr_by_branch[(repo, pr["branch"])] = pr
             item = {"repo": repo, "number": pr["number"], "title": pr["title"], "url": pr["url"]}
-            if labels_done in pr["labels"]:
+            if labels_merge in pr["labels"]:
+                merge_ready.append(item)
+            elif labels_done in pr["labels"]:
                 qc_done.append(item)
+            elif labels_esc in pr["labels"]:
+                escalated.append(item)
             elif labels_ready in pr["labels"]:
-                qc_ready.append(item)
-            if repo in managed and {labels_ready, labels_done} & set(pr["labels"]):
+                qc_ready.append(dict(item, agent_qc=repo in agent_qc))
+            if repo in managed and {labels_ready, labels_done, labels_merge, labels_esc} & set(pr["labels"]):
                 awaiting += 1
         gates += [dict(g, repo=repo) for g in f["gates"]]
     try:
@@ -355,7 +363,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     gate_keys = {f"{g['repo']}#{g['number']}" for g in gates}
     active, parked, hibernated, stalled, questions, standing, owned = [], [], [], [], [], [], []
     seen = set()
-    standing_names = {f"Orchestrator ({p})": "orchestrator", f"QC ({p})": "qc"}
+    standing_names = {f"Orchestrator ({p})": "orchestrator", f"QC ({p})": "qc", f"QC Agent ({p})": "agent-qc"}
     for w in workspaces:
         label = w.get("label") or ""
         a = agents_by_ws.get(w.get("workspace_id"), {})
@@ -464,6 +472,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         # memory this project's live agents hold, self-managed ones included (they still use the machine)
         "est_agent_mb": (len(active) + len(parked) + len(owned)) * agent_mb,
         "questions": questions, "qc_ready": qc_ready, "qc_done": qc_done, "ux_gates": gates,
+        "merge_ready": merge_ready, "qc_escalated": escalated,
         "claims": {"label": cfg.get("claim_label"), "claimed": claimed, "stale": stale,
                    "stale_known": herdr_ok},
         "queue": queue,
@@ -776,12 +785,18 @@ def deps_cmd(argv):
 
 def waiting_list(views, inboxes):
     """One list across projects, ranked: merge blockers (QC passed, awaiting review/merge), questions,
-    UX gates, QC, then the intake inbox."""
+    QC escalations, UX gates and UX reviews, QC (unless the project's QC Agent has it), then the intake inbox."""
     out = []
     for v in views:
         p = v["project"]
-        for x in v["qc_done"]:
+        for x in v.get("merge_ready", []):
             out.append({"rank": 0, "why": "merge (QC passed)", "project": p,
+                        "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
+        for x in v.get("qc_escalated", []):
+            out.append({"rank": 1, "why": "QC escalated", "project": p,
+                        "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
+        for x in v["qc_done"]:
+            out.append({"rank": 2, "why": "UX review", "project": p,
                         "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
         for x in v["questions"]:
             out.append({"rank": 1, "why": "question", "project": p, "item": x["workspace"], "title": "", "url": None})
@@ -789,6 +804,8 @@ def waiting_list(views, inboxes):
             out.append({"rank": 2, "why": "UX gate", "project": p,
                         "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
         for x in v["qc_ready"]:
+            if x.get("agent_qc"):
+                continue
             out.append({"rank": 3, "why": "QC", "project": p,
                         "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
     for path, (count, projects) in inboxes.items():

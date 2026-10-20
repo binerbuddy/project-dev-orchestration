@@ -19,11 +19,13 @@ instead of trusting it; an orphan would consume events that nobody is woken for.
 Command agents are herdr workspaces labelled "<Repo>-<n> <brief>". For each one, it reports:
   - herdr status, and whether a question/menu is pending on screen;
   - its branch, and that branch's PR (state, labels);
-  - parked: PR open with "ready for QC" or "QC complete - ready to review", or the issue is
-    labelled likely-fixed / on-hold or closed (parked agents don't count toward the active cap);
+  - parked: PR open with "ready for QC", "QC complete - ready to review", "Ready for Merge" or
+    "QC escalated", or the issue is labelled likely-fixed / on-hold or closed (parked agents don't
+    count toward the active cap);
   - stalled: not parked, no pending question, not working, screen unchanged for STALL_MIN.
 It also lists waiting_on_you: agents whose next step is the human's (question, idle at a gate,
-QC, likely-fixed confirmation), with workspace name and pane, for the orchestrator's report.
+QC, likely-fixed confirmation), with workspace name and pane, for the orchestrator's report, and
+human_queue: open PRs by QC stage (agent QC, UX review, Ready for Merge, QC escalated).
 It also reports weekly/5-hour usage from the oh-my-claudecode HUD cache, and the top of bin/queue.
 
 Events are transitions against the previous snapshot (state file), so each fires once:
@@ -32,9 +34,11 @@ Events are transitions against the previous snapshot (state file), so each fires
   event_hook_failed, and any hook event marked "quiet") ride along with the next wake and never
   end --until-event on their own.
 
-QC handoff is label- and review-based. 'ready for QC' (LABEL_QC_READY) means the PR waits on the
-human; the human adding 'QC complete - ready to review' (LABEL_QC_DONE) is the pass, and fires
-qc_complete. A GitHub PR review with state CHANGES_REQUESTED from a trusted author (association
+QC handoff is label- and review-based. 'ready for QC' (LABEL_QC_READY) means the PR waits for QC
+(agent QC first, when AGENT_QC_PORTS is set; else the human). A pass adds 'QC complete - ready to
+review' (LABEL_QC_DONE: awaiting the human's UX review) or 'Ready for Merge' (LABEL_MERGE_READY), and
+qc_complete fires once, on whichever appears first; the human's later UX pass (QC complete -> Ready
+for Merge) fires nothing more, so the command agent is told to wrap up exactly once per pass. A GitHub PR review with state CHANGES_REQUESTED from a trusted author (association
 OWNER, MEMBER or COLLABORATOR) on an open PR becomes a qc_feedback event.
 
 WATCH_EVENT_HOOK (project env): an executable run on each snapshot with a JSON context on stdin
@@ -48,8 +52,9 @@ PR priority: unless --peek, every queue refresh also runs bin/pr-priority, so op
 the highest P-label of the issues they close (it never downgrades).
 
 Hibernation: unless --peek, agents idle >= HIBERNATE_AFTER_MIN with no question pending and a
-session recorded are released with bin/hibernate when parked at 'ready for QC' (quiet event
-'hibernated') or finished: PR merged, or 'QC complete' plus "wrap-up done" on screen, or the issue
+session recorded are released with bin/hibernate when parked at 'ready for QC' or 'QC escalated'
+(quiet event 'hibernated') or finished: PR merged, or 'QC complete' / 'Ready for Merge' plus
+"wrap-up done" on screen, or the issue
 closed with no open PR (quiet event 'closed_out'). They are released: side processes stopped,
 workspace closed. They stay in `agents` with status "hibernated" (built from metadata), so
 qc_complete / pr_merged still fire; bin/resume-agent brings them back.
@@ -87,7 +92,10 @@ HOOK_MAX_EVENTS = 200
 WAIT_MIN = 10  # a non-parked agent idle this long, with no question, is probably waiting on a human gate
 QUEUE_EVERY_SEC = 300  # bin/queue costs ~7 API calls; don't run it every poll
 QC_READY, QC_DONE = "ready for QC", "QC complete - ready to review"  # LABEL_QC_READY / LABEL_QC_DONE
-PARKED_LABELS = {QC_READY, QC_DONE}
+MERGE_READY, QC_ESCALATED = "Ready for Merge", "QC escalated"  # LABEL_MERGE_READY / LABEL_QC_ESCALATED
+PASSED = {QC_DONE, MERGE_READY}  # QC passed (the first of these to appear fires qc_complete)
+PARKED_LABELS = {QC_READY, QC_DONE, MERGE_READY, QC_ESCALATED}
+AGENT_QC = set()  # repos whose 'ready for QC' waits on the QC Agent, not the human (AGENT_QC_REPOS, when AGENT_QC_PORTS is set)
 QUESTION_MARKERS = ("Enter to select", "Do you want to proceed", "❯ 1.")
 
 
@@ -106,6 +114,7 @@ def load_repos(project):
     manager owns; this orchestrator never touches them). Also applies the project's state dir,
     labels and limits to this module."""
     global STATE_DIR, MAX_ACTIVE, WEEKLY_CEILING, FIVE_HOUR_CEILING, QC_READY, QC_DONE, PARKED_LABELS, AWAITING_HUMAN
+    global MERGE_READY, QC_ESCALATED, PASSED, AGENT_QC
     if not CFG or CFG.get("_asked") != project:
         CFG.clear()
         CFG.update(pdo_config.load(project, "watch"), _asked=project)
@@ -121,7 +130,10 @@ def load_repos(project):
     WEEKLY_CEILING = CFG["weekly_ceiling"] or WEEKLY_CEILING
     FIVE_HOUR_CEILING = CFG["five_hour_ceiling"] or FIVE_HOUR_CEILING
     QC_READY, QC_DONE = CFG["label_qc_ready"], CFG["label_qc_done"]
-    PARKED_LABELS = AWAITING_HUMAN = {QC_READY, QC_DONE}
+    MERGE_READY, QC_ESCALATED = CFG["label_merge_ready"], CFG["label_qc_escalated"]
+    PASSED = {QC_DONE, MERGE_READY}
+    PARKED_LABELS = AWAITING_HUMAN = {QC_READY, QC_DONE, MERGE_READY, QC_ESCALATED}
+    AGENT_QC = set(CFG.get("agent_qc_repos") or []) if CFG.get("agent_qc_ports") else set()
     return CFG["org"], set(CFG["repo_root"]) - set(CFG["self_managed_repos"])
 
 
@@ -169,7 +181,8 @@ def restore_agent_names(project, repos):
     """herdr agent names don't survive a herdr/session restart, and other agents address these by
     name (e.g. `herdr agent prompt intake`), so put the standard names back."""
     labels = {w["workspace_id"]: w.get("label") or "" for w in herdr("workspace", "list").get("workspaces", [])}
-    fixed = dict(FIXED_NAMES, **{f"Orchestrator ({project})": f"orchestrator-{project}", f"QC ({project})": f"qc-{project}"})
+    fixed = dict(FIXED_NAMES, **{f"Orchestrator ({project})": f"orchestrator-{project}", f"QC ({project})": f"qc-{project}",
+                                 f"QC Agent ({project})": f"qc-agent-{project}"})
     for a in herdr("agent", "list").get("agents", []):
         if a.get("name") or a.get("agent") != "claude":
             continue
@@ -295,9 +308,10 @@ def auto_hibernate(project, ag):
                 or not a.get("session_id") or a["unchanged_min"] < HIBERNATE_AFTER_MIN):
             continue
         # finished: merged, or QC passed and the agent printed its wrap-up marker
-        closed_out = (state == "MERGED" or (QC_DONE in labels and a.get("wrapup_done"))
+        closed_out = (state == "MERGED" or (PASSED & labels and a.get("wrapup_done"))
                       or (a.get("issue_state") == "closed" and state != "OPEN"))  # likely-fixed / won't-fix
-        parked_qc = state == "OPEN" and QC_READY in labels and QC_DONE not in labels  # both labels = passed
+        # waiting for QC, or escalated to the human after failed agent-QC rounds; a pass label wins
+        parked_qc = state == "OPEN" and bool({QC_READY, QC_ESCALATED} & labels) and not PASSED & labels
         if not (closed_out or parked_qc):
             continue
         cmd = [os.path.join(HERE, "bin", "hibernate"), a["repo"], str(a["number"]), "--project", project]
@@ -353,7 +367,11 @@ def waiting_on_you(ag):
             why = "UX gate"
         elif a["question_pending"]:
             why = "question"
-        elif QC_READY in labels and QC_DONE not in labels:  # a human may add the pass label without removing ready
+        elif QC_ESCALATED in labels and not PASSED & labels:
+            why = "QC escalated"
+        elif QC_READY in labels and not PASSED & labels:  # a human may add the pass label without removing ready
+            if a["repo"] in AGENT_QC:
+                continue  # the QC Agent's queue (human_queue.agent_qc), not the human's
             why = "QC"
         elif a["likely_fixed"]:
             why = "confirm likely-fixed"
@@ -417,7 +435,9 @@ def hook_context(project, org, repos, since, now, peek):
                   for (r, b), p in PR_INDEX.items() if p["state"] == "OPEN"), key=lambda x: (x["repo"], x["number"]))
     return {"version": 1, "project": project, "org": org, "repos": sorted(repos), "since": since, "now": now,
             "peek": peek, "trusted_associations": sorted(TRUSTED), "state_dir": STATE_DIR,
-            "labels": {"qc_ready": QC_READY, "qc_done": QC_DONE}, "prs": prs}
+            "labels": {"qc_ready": QC_READY, "qc_done": QC_DONE, "merge_ready": MERGE_READY,
+                       "qc_escalated": QC_ESCALATED, "ux_skipped": CFG.get("label_ux_skipped"),
+                       "needs_ux": CFG.get("label_needs_ux")}, "prs": prs}
 
 
 def event_hook(project, prev, cur, peek):
@@ -517,12 +537,12 @@ def graphql_remaining():
 
 
 PR_CAP_DEFAULT = 10
-AWAITING_HUMAN = {QC_READY, QC_DONE}
+AWAITING_HUMAN = PARKED_LABELS  # replaced per project in load_repos()
 REBASE_CONCURRENCY = 2
 
 
 def pr_cap(project, org, repos):
-    """Open PRs waiting on the human (QC or review/merge). At or over the cap, nothing new is
+    """Open PRs waiting on QC, UX review, an escalation or review/merge. At or over the cap, nothing new is
     spawned (the urgent bypass excepted), so the team's pace follows the human's merge rate and
     later PRs don't pile up conflicts against unmerged earlier ones. Cap: <project>-pr-cap file
     (default 10)."""
@@ -532,6 +552,26 @@ def pr_cap(project, org, repos):
         cap = PR_CAP_DEFAULT
     n = sum(1 for p in PR_INDEX.values() if p["state"] == "OPEN" and AWAITING_HUMAN & set(p["labels"]))
     return {"open_awaiting_human": n, "cap": cap, "reached": n >= cap}
+
+
+def human_queue():
+    """Open PRs by QC stage, oldest first: agent_qc ('ready for QC' while agent QC is on), ux_review
+    ('QC complete': agent QC passed, awaiting the human's UX review), ready_for_merge, qc_escalated."""
+    out = {"agent_qc": [], "ux_review": [], "ready_for_merge": [], "qc_escalated": []}
+    for (repo, _b), p in sorted(PR_INDEX.items(), key=lambda kv: (kv[0][0], kv[1].get("number") or 0)):
+        labels = set(p["labels"])
+        if p["state"] != "OPEN" or p.get("draft"):
+            continue
+        item = {"pr": f"{repo}#{p.get('number')}", "url": p.get("url")}
+        if MERGE_READY in labels:
+            out["ready_for_merge"].append(dict(item, ux_skipped=CFG.get("label_ux_skipped") in labels))
+        elif QC_DONE in labels:
+            out["ux_review"].append(item)
+        elif QC_ESCALATED in labels:
+            out["qc_escalated"].append(item)
+        elif QC_READY in labels and repo in AGENT_QC:
+            out["agent_qc"].append(item)
+    return out
 
 
 def conflicting(ag):
@@ -586,7 +626,7 @@ def snapshot(project, prev):
         cap = prev["pr_cap"]  # the PR fetch failed: an undercount would wrongly lift the cap
     return {
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "agents": ag, "active": active,
-        "waiting_on_you": waiting_on_you(ag),
+        "waiting_on_you": waiting_on_you(ag), "human_queue": human_queue(),
         "free_slots": 0 if (over or cap["reached"]) else max(0, MAX_ACTIVE - len(active)),
         "pr_cap": cap, "github": {"graphql_left": gql_left, "rate_low": rate_low, "prs_ok": prs_ok},  # free_slots is 0 while reached; the urgent bypass still spawns
         "conflicting": conflicting(ag), "rebase_concurrency": REBASE_CONCURRENCY,
@@ -608,8 +648,10 @@ def events(prev, cur):
         if a["parked"] and not o.get("parked"):
             ev.append({"type": "slot_freed", "agent": k, "pr": (a["pr"] or {}).get("url")})
         labels, old_labels = set((a["pr"] or {}).get("labels", [])), set((o.get("pr") or {}).get("labels", []))
-        if QC_DONE in labels - old_labels:
-            ev.append({"type": "qc_complete", "agent": k, "pr": a["pr"]["url"]})
+        new_pass = PASSED & (labels - old_labels)
+        if new_pass and not PASSED & old_labels:  # once per pass: the human's QC complete -> Ready for Merge is silent
+            ev.append({"type": "qc_complete", "agent": k, "pr": a["pr"]["url"],
+                       "label": sorted(new_pass)[0], "awaiting_ux_review": QC_DONE in labels and MERGE_READY not in labels})
         if a.get("design_ready") and not o.get("design_ready"):
             ev.append({"type": "design_ready", "agent": k, "workspace_id": a["workspace_id"]})
         if a["merged"] and not o.get("merged"):

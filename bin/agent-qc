@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""agent-qc — the deterministic half of agent QC (the standing "QC Agent (<project>)" workspace,
+skill project-agent-qc): which PR is next, the in-progress marker, a PR's QC facts, and the label flips.
+
+Usage: agent-qc next     [--project P] [--json]     the highest-priority PR waiting for agent QC, or nothing
+       agent-qc queue    [--project P] [--json]     every PR waiting for agent QC, best first
+       agent-qc claim    <repo> <pr#> [--project P] write the in-progress marker (refuses if another PR holds it)
+       agent-qc release  [--project P]              clear the marker (after the PR's verdict is posted)
+       agent-qc status   [--project P]              the marker and the last few outcomes
+       agent-qc facts    <repo> <pr#> [--project P] JSON: head, files, linked issues, needs-UX signals,
+                                                    QC checklist, fixtures, failed rounds so far
+       agent-qc verdict  <repo> <pr#> fail|pass-ux|pass-skip [--project P] [--dry-run]
+                                                    flip the labels for a verdict (comments are the skill's job)
+
+Waiting for agent QC = open, not draft, labelled LABEL_QC_READY, and carrying none of LABEL_QC_DONE,
+LABEL_MERGE_READY, LABEL_QC_ESCALATED, in AGENT_QC_REPOS. Order: P-label (P_LABELS, best first;
+none = last), then client-requested (CARRY_LABELS' first label), then the oldest PR. A PR whose head
+the marker already holds is skipped (one at a time).
+
+Verdicts:
+  fail       remove LABEL_QC_READY (the command agent re-applies it after fixing). When this was round
+             AGENT_QC_MAX_ROUNDS (rounds = "Agent QC findings" comments since the last agent-QC pass,
+             including the one just posted), also add LABEL_QC_ESCALATED: the human decides next.
+  pass-ux    LABEL_QC_READY -> LABEL_QC_DONE (agent QC passed; awaiting the human's UX review)
+  pass-skip  LABEL_QC_READY -> LABEL_MERGE_READY + LABEL_UX_SKIPPED
+The watcher's qc_complete fires once, on whichever of LABEL_QC_DONE / LABEL_MERGE_READY appears
+first, and the orchestrator has the command agent wrap up then. The human's later UX pass
+(LABEL_QC_DONE -> LABEL_MERGE_READY) fires nothing more.
+
+Comment markers (the skill posts the comments; this script counts them):
+  <!-- agent-qc:findings round=N -->   heading "Agent QC findings (round N)"
+  <!-- agent-qc:pass -->               the pass classification comment
+State: $PDO_STATE_DIR/agent-qc/in-progress.json (marker), outcomes.jsonl (one line per verdict),
+heartbeat (touched by every `next`).
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+FINDINGS_RE = re.compile(r"<!--\s*agent-qc:findings\b")
+PASS_RE = re.compile(r"<!--\s*agent-qc:pass\b")
+CHECKLIST_MARK = "<!-- ux-qc-checklist -->"
+BODY_REF = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|part of)\s+#(\d+)", re.I)
+MARKER_STALE_SEC = 6 * 3600
+
+
+def die(msg, code=1):
+    print(f"agent-qc: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def gh(*args, check=True):
+    r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        if check:
+            die(f"gh {' '.join(args[:3])}…: {r.stderr.strip()[:300]}")
+        return ""  # e.g. a 404 (no fixtures folder): gh still prints the error body on stdout
+    return r.stdout
+
+
+def state(cfg):
+    d = os.path.join(cfg["state_dir"], "agent-qc")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def marker(cfg):
+    try:
+        return json.load(open(os.path.join(state(cfg), "in-progress.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def waiting(cfg):
+    lower = lambda xs: {x.lower() for x in xs}  # noqa: E731  (labels are case-insensitive)
+    ready = cfg["label_qc_ready"].lower()
+    blocked = lower([cfg["label_qc_done"], cfg["label_merge_ready"], cfg["label_qc_escalated"]])
+    p_rank = {p.lower(): i for i, p in enumerate(cfg["p_labels"])}
+    carry = (cfg["carry_labels"] or [""])[0].lower()
+    held = marker(cfg)
+    out = []
+    for repo in cfg["agent_qc_repos"]:
+        prs = json.loads(gh("pr", "list", "-R", f"{cfg['org']}/{repo}", "--state", "open", "--label",
+                            cfg["label_qc_ready"], "--limit", "100", "--json",
+                            "number,title,url,isDraft,labels,headRefOid,createdAt") or "[]")
+        for p in prs:
+            labels = lower(l["name"] for l in p["labels"])
+            if p["isDraft"] or ready not in labels or labels & blocked:
+                continue
+            best = min((p_rank[l] for l in labels if l in p_rank), default=len(p_rank))
+            in_progress = bool(held and held.get("repo") == repo and held.get("pr") == p["number"])
+            out.append({"repo": repo, "number": p["number"], "title": p["title"], "url": p["url"],
+                        "head": p["headRefOid"], "p": (cfg["p_labels"] + ["P-"])[best],
+                        "client": carry in labels, "in_progress": in_progress,
+                        "needs_ux_label": cfg["label_needs_ux"].lower() in labels,
+                        "_key": (best, 0 if carry in labels else 1, p["number"])})
+    out.sort(key=lambda x: x["_key"])
+    for x in out:
+        del x["_key"]
+    return out
+
+
+def comments(cfg, repo, n):
+    out = gh("api", f"repos/{cfg['org']}/{repo}/issues/{n}/comments", "--paginate",
+             "--jq", ".[] | {id, body, created_at, html_url, user: .user.login}")
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+def failed_rounds(cs):
+    """'Agent QC findings' comments since the last agent-QC pass comment."""
+    n = 0
+    for c in cs:
+        body = c["body"] or ""
+        if PASS_RE.search(body):
+            n = 0
+        elif FINDINGS_RE.search(body):
+            n += 1
+    return n
+
+
+def facts(cfg, repo, n):
+    org = cfg["org"]
+    pr = json.loads(gh("pr", "view", str(n), "-R", f"{org}/{repo}", "--json",
+                       "number,title,url,body,state,isDraft,headRefName,headRefOid,baseRefName,labels,files,"
+                       "closingIssuesReferences,additions,deletions"))
+    issue_nums = {i["number"] for i in pr.get("closingIssuesReferences") or []}
+    issue_nums |= {int(m) for m in BODY_REF.findall(pr.get("body") or "")}
+    needs_ux = cfg["label_needs_ux"].lower()
+    issues = []
+    for i in sorted(issue_nums):
+        d = json.loads(gh("api", f"repos/{org}/{repo}/issues/{i}", "--jq",
+                          "{number, title, state, type: (.type.name // null), labels: [.labels[].name]}",
+                          check=False) or "null")
+        if d:
+            issues.append(d)
+    pr_labels = [l["name"] for l in pr["labels"]]
+    cs = comments(cfg, repo, n)
+    checklist = next((c for c in reversed(cs) if CHECKLIST_MARK in (c["body"] or "")), None)
+    br = cfg.get("fixture_branch") or "qc-fixtures"
+    out = gh("api", f"repos/{org}/{repo}/contents/{n}?ref={br}", "--jq", ".[] | {name, path, size}",  # no download_url: it carries a token
+             check=False)
+    fixtures = [json.loads(line) for line in out.splitlines() if line.strip()]
+    return {
+        "repo": repo, "number": n, "title": pr["title"], "url": pr["url"], "state": pr["state"],
+        "draft": pr["isDraft"], "branch": pr["headRefName"], "head": pr["headRefOid"], "base": pr["baseRefName"],
+        "labels": pr_labels, "files": [f["path"] for f in pr.get("files") or []],
+        "additions": pr.get("additions"), "deletions": pr.get("deletions"),
+        "issues": issues,
+        # the visible-change rule's hard signals: either one means the PR needs UX review
+        "needs_ux_forced": {"pr_label": needs_ux in {l.lower() for l in pr_labels},
+                            "issue_label": [i["number"] for i in issues
+                                            if needs_ux in {l.lower() for l in i["labels"]}]},
+        "checklist": {"url": checklist["html_url"], "body": checklist["body"]} if checklist else None,
+        "fixtures": fixtures, "fixture_branch": br,
+        "failed_rounds": failed_rounds(cs), "max_rounds": cfg["agent_qc_max_rounds"],
+        "previous_agent_qc": [{"url": c["html_url"], "at": c["created_at"],
+                               "kind": "pass" if PASS_RE.search(c["body"] or "") else "findings"}
+                              for c in cs if PASS_RE.search(c["body"] or "") or FINDINGS_RE.search(c["body"] or "")],
+    }
+
+
+def edit_labels(cfg, repo, n, add, remove, dry):
+    args = ["pr", "edit", str(n), "-R", f"{cfg['org']}/{repo}"]
+    for l in add:
+        args += ["--add-label", l]
+    for l in remove:
+        args += ["--remove-label", l]
+    if dry:
+        print("dry run: gh " + " ".join(json.dumps(a) if " " in a else a for a in args))
+        return
+    gh(*args)
+
+
+def log_outcome(cfg, rec):
+    with open(os.path.join(state(cfg), "outcomes.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps(dict(rec, at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))) + "\n")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="agent QC: next PR, marker, facts, verdict labels")
+    ap.add_argument("cmd", choices=["next", "queue", "claim", "release", "status", "facts", "verdict"])
+    ap.add_argument("args", nargs="*")
+    ap.add_argument("--project")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+    cfg = pdo_config.load(a.project, "agent-qc")
+    if not cfg["agent_qc_ports"]:
+        die("agent QC is off for this project (set AGENT_QC_PORTS in its env)")
+    mpath = os.path.join(state(cfg), "in-progress.json")
+
+    def target():
+        if len(a.args) < 2 or not a.args[1].lstrip("#").isdigit():
+            die(f"usage: agent-qc {a.cmd} <repo> <pr#>")
+        repo = a.args[0]
+        if repo not in cfg["repo_root"]:
+            die(f"unknown repo '{repo}' (REPO_ROOT has {', '.join(sorted(cfg['repo_root']))})")
+        return repo, int(a.args[1].lstrip("#"))
+
+    if a.cmd in ("next", "queue"):
+        q = waiting(cfg)
+        if a.cmd == "next":  # the loop's heartbeat (bin/start-agent-qc restarts a loop that stopped ticking)
+            open(os.path.join(state(cfg), "heartbeat"), "w").close()
+        if a.cmd == "next":
+            q = [x for x in q if not x["in_progress"]][:1]
+        if a.json:
+            print(json.dumps(q[0] if a.cmd == "next" and q else (None if a.cmd == "next" else q), indent=1))
+        elif not q:
+            print("nothing waiting for agent QC")
+        else:
+            for x in q:
+                flags = " ".join(f for f, on in (("client", x["client"]), ("needs-UX", x["needs_ux_label"]),
+                                                 ("IN PROGRESS", x["in_progress"])) if on)
+                print(f"{x['p']:<10} {x['repo']}#{x['number']}  {x['title']}{'  [' + flags + ']' if flags else ''}")
+    elif a.cmd == "claim":
+        repo, n = target()
+        held = marker(cfg)
+        if held and (held["repo"], held["pr"]) != (repo, n):
+            age = time.time() - held.get("since", 0)
+            if age < MARKER_STALE_SEC:
+                die(f"{held['repo']}#{held['pr']} is in progress since {int(age // 60)} min ago "
+                    f"(agent-qc release first)", 3)
+            print(f"agent-qc: replacing a stale marker for {held['repo']}#{held['pr']} ({int(age // 3600)}h old)",
+                  file=sys.stderr)
+        head = gh("pr", "view", str(n), "-R", f"{cfg['org']}/{repo}", "--json", "headRefOid", "--jq", ".headRefOid").strip()
+        with open(mpath + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"repo": repo, "pr": n, "head": head, "since": int(time.time())}, f)
+        os.replace(mpath + ".tmp", mpath)
+        print(f"agent-qc: {repo}#{n} claimed at {head[:8]}")
+    elif a.cmd == "release":
+        held = marker(cfg)
+        if os.path.exists(mpath):
+            os.remove(mpath)
+        print(f"agent-qc: released {held['repo']}#{held['pr']}" if held else "agent-qc: nothing held")
+    elif a.cmd == "status":
+        held = marker(cfg)
+        print(f"in progress: {held['repo']}#{held['pr']} at {held['head'][:8]}, "
+              f"{int((time.time() - held['since']) // 60)} min" if held else "in progress: none")
+        try:
+            lines = open(os.path.join(state(cfg), "outcomes.jsonl"), encoding="utf-8").read().splitlines()[-5:]
+        except OSError:
+            lines = []
+        for line in lines:
+            o = json.loads(line)
+            print(f"  {o['at']}  {o['repo']}#{o['pr']}  {o['verdict']}{' (escalated)' if o.get('escalated') else ''}")
+    elif a.cmd == "facts":
+        repo, n = target()
+        print(json.dumps(facts(cfg, repo, n), indent=1))
+    elif a.cmd == "verdict":
+        repo, n = target()
+        if len(a.args) < 3 or a.args[2] not in ("fail", "pass-ux", "pass-skip"):
+            die("usage: agent-qc verdict <repo> <pr#> fail|pass-ux|pass-skip")
+        v = a.args[2]
+        ready = cfg["label_qc_ready"]
+        rec = {"repo": repo, "pr": n, "verdict": v}
+        if v == "fail":
+            rounds = failed_rounds(comments(cfg, repo, n))
+            if rounds == 0:
+                die("post the 'Agent QC findings (round N)' comment (with its <!-- agent-qc:findings round=N --> "
+                    "marker) before the fail verdict")
+            esc = rounds >= cfg["agent_qc_max_rounds"]
+            edit_labels(cfg, repo, n, [cfg["label_qc_escalated"]] if esc else [], [ready], a.dry_run)
+            rec.update(round=rounds, escalated=esc)
+            print(f"agent-qc: {repo}#{n} failed round {rounds}"
+                  + (f": escalated ('{cfg['label_qc_escalated']}'); don't resume the agent, the human decides"
+                     if esc else "; resume the command agent with the findings"))
+        else:
+            add = [cfg["label_qc_done"]] if v == "pass-ux" else [cfg["label_merge_ready"], cfg["label_ux_skipped"]]
+            edit_labels(cfg, repo, n, add, [ready], a.dry_run)
+            print(f"agent-qc: {repo}#{n} passed agent QC: " + ", ".join(f"'{l}'" for l in add) + " on")
+        if not a.dry_run:
+            log_outcome(cfg, rec)
+
+
+if __name__ == "__main__":
+    main()

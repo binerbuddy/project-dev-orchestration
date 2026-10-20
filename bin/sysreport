@@ -41,9 +41,16 @@ echo "== snapshot (peek)"
   "  active: \(.active | join(", "))  free_slots: \(.free_slots)",
   "  hibernated: \([.agents | to_entries[] | select(.value.hibernated) | .key] | join(", "))",
   "  waiting on human: \([.waiting_on_you[] | "\(.why): \(.agent // .workspace)"] | join("; "))",
+  "  UX review (QC complete): \([.human_queue.ux_review[]?.pr] | join(", "))",
+  "  Ready for Merge: \([.human_queue.ready_for_merge[]? | "\(.pr)\(if .ux_skipped then " (UX skipped)" else "" end)"] | join(", "))",
+  "  QC escalated: \([.human_queue.qc_escalated[]?.pr] | join(", "))",
+  "  agent QC queue: \([.human_queue.agent_qc[]?.pr] | join(", "))",
   "  queue top: \([.queue[:3][] | "\(.p) \(.ref)\(if .auto_spawn then "" else " (held)" end)"] | join(", "))"'
 
 echo "== local QC: $("$HERE/bin/qc" status --project "$PROJECT" 2>/dev/null | head -1)"
+if [[ -n "${AGENT_QC_PORTS:-}" ]]; then
+  echo "== agent QC: $("$HERE/bin/agent-qc" status --project "$PROJECT" 2>/dev/null | head -1)"
+fi
 echo "== gh identities: $("$HERE/bin/install" --gh-identities --status 2>/dev/null || echo unknown)"
 echo "== intake inbox: $(find "$PDO_INBOX" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l) pending"
 if [[ -n "${SYSREPORT_HOOK:-}" && -x "$SYSREPORT_HOOK" ]]; then

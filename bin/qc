@@ -5,7 +5,12 @@
 #        qc start --ref <branch> [hook options...]      serve a branch (e.g. main) the same way
 #        qc stop [hook options...]                       stop the servers
 #        qc status                                       what is being served, and whether it is up
-#        [--project P]
+#        [--project P] [--agent]
+#
+# --agent  the agent-QC instance (the standing "QC Agent" workspace, skill project-agent-qc): its own
+#          worktree (<repo root>/$AGENT_QC_WORKTREE, default "qc-agent"), state ($PDO_STATE_DIR/agent-qc)
+#          and ports (AGENT_QC_PORTS), so it never disturbs what the human is QCing. The hook is told
+#          with PDO_QC_INSTANCE=agent and picks its ports and data store from that.
 #
 # The engine owns the worktree; the project's QC_HOOK owns the servers. One QC worktree
 # (<repo root>/$QC_WORKTREE, default "qc") is reused for every PR, detached at the PR head, so
@@ -22,6 +27,8 @@
 #   PDO_QC_PREV_SHA   the worktree's HEAD before this checkout (empty on first use), so the
 #                     hook can skip a dependency install when the lockfile didn't change
 #   PDO_QC_KEY        "pr:<n>" or "ref:<branch>" (e.g. to decide whether to reseed a database)
+#   PDO_QC_INSTANCE   "human" (default) or "agent" (--agent); PDO_QC_PORTS the instance's ports
+#                     (QC_PORTS or AGENT_QC_PORTS). The agent instance must use its own data store.
 # Order on start: hook stop, fetch + checkout + clean, hook start, current.json written, hook wait.
 # `start` may add fields to current.json by writing $PDO_QC_STATE/hook-current.json (an object).
 # `status` prints extra lines after the engine's. A project without QC_HOOK gets worktree
@@ -34,14 +41,15 @@ PDO_SCRIPT=qc
 die() { echo "qc: $*" >&2; exit 1; }
 
 CMD="${1:-}"; shift || true
-PROJECT="" PR="" REF="" REPO="" HOOK_ARGS=()
+PROJECT="" PR="" REF="" REPO="" INSTANCE=human HOOK_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --project) PROJECT="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --ref) REF="$2"; shift 2 ;;
     [0-9]*|\#[0-9]*) PR="${1#\#}"; shift ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    --agent) INSTANCE=agent; shift ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     --*=*) HOOK_ARGS+=("$1"); shift ;;
     --*) # a hook option, with its value when the next word isn't another option
       HOOK_ARGS+=("$1"); shift
@@ -49,20 +57,25 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown argument: $1" ;;
   esac
 done
-case "$CMD" in -h|--help|"") sed -n '2,29p' "$0"; [[ -n "$CMD" ]] && exit 0; exit 1 ;; esac
+case "$CMD" in -h|--help|"") sed -n '2,36p' "$0"; [[ -n "$CMD" ]] && exit 0; exit 1 ;; esac
 pdo_resolve_project "$PROJECT"
 # shellcheck source=/dev/null
 HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
 REPO="${REPO:-$QC_REPO}" ROOT="" WT=""
+WT_NAME="$QC_WORKTREE" STATE="$PDO_STATE_DIR/qc" PORTS="$QC_PORTS"
+if [[ "$INSTANCE" == agent ]]; then
+  [[ -n "$AGENT_QC_PORTS" ]] || die "agent QC is off for this project (set AGENT_QC_PORTS)"
+  WT_NAME="$AGENT_QC_WORKTREE" STATE="$PDO_STATE_DIR/agent-qc" PORTS="$AGENT_QC_PORTS"
+fi
 if [[ -n "$REPO" ]]; then ROOT="${REPO_ROOT[$REPO]:-}"; fi
-if [[ -n "$ROOT" ]]; then WT="$ROOT/$QC_WORKTREE"
+if [[ -n "$ROOT" ]]; then WT="$ROOT/$WT_NAME"
 elif [[ "$CMD" == start ]]; then
   [[ -n "$REPO" ]] || die "pass --repo (the project sets neither QC_REPO nor PRIMARY_REPO)"
   die "no local root configured for repo '$REPO'"
 fi
-STATE="$PDO_STATE_DIR/qc"
 mkdir -p "$STATE"
-export PDO_QC_STATE="$STATE" PDO_QC_REPO="$REPO" PDO_QC_ROOT="$ROOT" PDO_QC_WORKTREE="$WT"
+export PDO_QC_STATE="$STATE" PDO_QC_REPO="$REPO" PDO_QC_ROOT="$ROOT" PDO_QC_WORKTREE="$WT" \
+  PDO_QC_INSTANCE="$INSTANCE" PDO_QC_PORTS="$PORTS"
 
 hook() {  # hook <subcommand>: run QC_HOOK if the project has one
   [[ -n "${QC_HOOK:-}" ]] || return 0

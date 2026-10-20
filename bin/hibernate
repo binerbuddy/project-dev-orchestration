@@ -4,13 +4,13 @@
 Usage: hibernate <repo> <issue#> [--project P] [--servers-only] [--ux-gate] [--dry-run]
 
 Default (full hibernation): requires the agent to be idle, with no question pending, its PR
-labelled 'ready for QC', and a Claude session id recorded (so bin/resume-agent can bring the
+labelled 'ready for QC' (or 'QC escalated'), and a Claude session id recorded (so bin/resume-agent can bring the
 same session back later). It then:
   1. stops the agent's side processes: anything whose cwd, or whose command line, is inside the
      agent's worktree or its Claude scratchpad (/tmp/claude-*/*/<session_id>/). That covers dev
      servers (API servers, bundler dev servers, esbuild), headless Chromium, playwright-mcp and their
      children. Never touched: claude itself (step 2 ends it), the shared QC worktree and the QC
-     ports (QC_PORTS), and database clones (disk, not RAM).
+     ports (QC_PORTS and AGENT_QC_PORTS), and database clones (disk, not RAM).
   2. closes the herdr workspace, which ends claude and its MCP servers;
   3. records hibernated_at in agents/<Repo>-<n>.json.
 bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibernated_at.
@@ -20,7 +20,7 @@ bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibe
 --ux-gate       allow full hibernation of an agent parked at 'awaiting-ux-gate' instead of
                 'ready for QC' (opt-in: the human may want the live stack for the review).
 --closed-out    close out a finished agent instead: its PR is MERGED, or carries 'QC complete -
-                ready to review' (the wrap-up after QC pass), or its issue is closed with no open
+                ready to review' or 'Ready for Merge' (the wrap-up after QC pass), or its issue is closed with no open
                 PR (likely-fixed confirmed, won't-fix). Same cleanup; the session is kept, and the
                 issue's managed-by claim label is removed (bin/claim --release). Plain hibernation
                 (still in progress) keeps the label.
@@ -41,8 +41,9 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
-QC_PORTS = set()  # the project's QC_PORTS: never stopped (the human's QC servers)
+QC_PORTS = set()  # the project's QC_PORTS + AGENT_QC_PORTS: never stopped (the human's and the QC Agent's servers)
 QC_READY, QC_DONE = "ready for QC", "QC complete - ready to review"  # LABEL_QC_READY / LABEL_QC_DONE
+MERGE_READY, QC_ESCALATED = "Ready for Merge", "QC escalated"  # LABEL_MERGE_READY / LABEL_QC_ESCALATED
 
 
 def run(*a):
@@ -158,11 +159,12 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
-    global QC_PORTS, QC_READY, QC_DONE
+    global QC_PORTS, QC_READY, QC_DONE, MERGE_READY, QC_ESCALATED
     cfg = pdo_config.load(a.project, "hibernate")
     org, roots = cfg["org"], cfg["repo_root"]
-    QC_PORTS = set(cfg["qc_ports"])
+    QC_PORTS = set(cfg["qc_ports"]) | set(cfg.get("agent_qc_ports") or [])
     QC_READY, QC_DONE = cfg["label_qc_ready"], cfg["label_qc_done"]
+    MERGE_READY, QC_ESCALATED = cfg["label_merge_ready"], cfg["label_qc_escalated"]
     STATE = cfg["state_dir"]
     meta_file = os.path.join(STATE, "agents", f"{a.repo}-{a.number}.json")
     if not os.path.exists(meta_file):
@@ -200,14 +202,15 @@ def main():
         issue_labels = set(issue.get("labels", []))
         # finished: merged; QC passed; or the issue closed with no open PR (likely-fixed
         # confirmed, won't-fix)
-        finished = pr_state == "MERGED" or QC_DONE in labels \
+        finished = pr_state == "MERGED" or bool({QC_DONE, MERGE_READY} & labels) \
             or (issue.get("state") == "closed" and pr_state != "OPEN")
         if a.closed_out:
             if not finished:
-                die(f"--closed-out needs a merged PR, a PR labelled '{QC_DONE}', "
+                die(f"--closed-out needs a merged PR, a PR labelled '{QC_DONE}' or '{MERGE_READY}', "
                     "or a closed issue with no open PR", 3)
-        elif pr_state != "OPEN" or (QC_READY not in labels and not (a.ux_gate and "awaiting-ux-gate" in issue_labels)):
-            die(f"its PR isn't labelled '{QC_READY}' (use --ux-gate for an agent at a UX sign-off)", 3)
+        elif pr_state != "OPEN" or (not {QC_READY, QC_ESCALATED} & labels
+                                    and not (a.ux_gate and "awaiting-ux-gate" in issue_labels)):
+            die(f"its PR isn't labelled '{QC_READY}' or '{QC_ESCALATED}' (use --ux-gate for an agent at a UX sign-off)", 3)
 
     procs = side_processes(worktree, session, qc_wt, keep_mcp=a.servers_only)
     rss = 0

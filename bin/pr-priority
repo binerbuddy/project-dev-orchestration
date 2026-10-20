@@ -9,7 +9,8 @@ For every open PR (or just --pr N in --repo), it reads the issues the PR closes
 build PRs, the body's "Closes/Fixes/Resolves/Part of #N" references), takes the best P-label among them
 (P1-urgent > P2-high > P3-medium > P4-low), adds it to the PR, and removes any other P-label.
 
-Also copies the project's CARRY_LABELS (space-separated; default client-requested) from the
+Also copies the project's CARRY_LABELS (space-separated, or comma-separated when a name has spaces;
+default client-requested) from the
 issues onto the PR, add-only.
 
 Never downgrades: if the PR already carries a higher P-label than its issues, that label stays

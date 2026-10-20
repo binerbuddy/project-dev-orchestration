@@ -144,7 +144,7 @@ pdo_finalize() {
   PDO_PROJECT="$PROJECT"
   export PDO_STATE_DIR PDO_INBOX PDO_PROJECT
   local k
-  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK BRIEF_TEMPLATE CONTROL_DIR; do
+  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES; do
     [[ -n "${!k:-}" ]] && printf -v "$k" '%s' "$(_pdo_abs "${!k}")"
   done
   BRIEF_TEMPLATE="${BRIEF_TEMPLATE:-$(pdo_find_prompt dispatch-brief.md)}"
@@ -158,18 +158,29 @@ pdo_finalize() {
   QC_WORKTREE="${QC_WORKTREE:-qc}"
   QC_REPO="${QC_REPO:-$PRIMARY_REPO}"
   QC_PORTS="${QC_PORTS:-}"
+  # agent QC (the standing "QC Agent (<project>)" workspace): off unless AGENT_QC_PORTS is set
+  AGENT_QC_PORTS="${AGENT_QC_PORTS:-}"            # its reserved ports (e.g. "3200 4400"); hibernation never stops them
+  AGENT_QC_REPOS="${AGENT_QC_REPOS:-$QC_REPO}"    # repos whose 'ready for QC' PRs it takes (space-separated)
+  AGENT_QC_WORKTREE="${AGENT_QC_WORKTREE:-qc-agent}"  # its own worktree under each repo root
+  AGENT_QC_MAX_ROUNDS="${AGENT_QC_MAX_ROUNDS:-2}" # failed rounds before 'QC escalated'
+  AGENT_QC_NOTES="${AGENT_QC_NOTES:-}"            # optional: the project's agent-QC know-how (a markdown file)
   WATCH_EVENT_HOOK="${WATCH_EVENT_HOOK:-}"   # optional: bin/watch runs it each snapshot for project-specific events
   WATCH_EVENT_HOOK_TIMEOUT="${WATCH_EVENT_HOOK_TIMEOUT:-120}"  # seconds before the watcher gives up on it
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
   ORCHESTRATE_SKILL="${ORCHESTRATE_SKILL:-${PDO_SKILL_PREFIX}project-orchestrate}"
   QC_SKILL="${QC_SKILL:-${PDO_SKILL_PREFIX}project-qc-review}"
   INTAKE_SKILL="${INTAKE_SKILL:-${PDO_SKILL_PREFIX}project-intake}"
+  AGENT_QC_SKILL="${AGENT_QC_SKILL:-${PDO_SKILL_PREFIX}project-agent-qc}"
   # board Status and label vocabulary (today's names are the defaults)
   CWT_STATUS="${CWT_STATUS:-Claude Work This}"
   P_LABELS="${P_LABELS:-P1-urgent P2-high P3-medium P4-low}"   # best first
   LABEL_QC_READY="${LABEL_QC_READY:-ready for QC}"
-  LABEL_QC_DONE="${LABEL_QC_DONE:-QC complete - ready to review}"
-  CARRY_LABELS="${CARRY_LABELS:-client-requested}"
+  LABEL_QC_DONE="${LABEL_QC_DONE:-QC complete - ready to review}"   # agent QC passed, awaiting human UX review
+  LABEL_MERGE_READY="${LABEL_MERGE_READY:-Ready for Merge}"         # all QC done, awaiting code review + merge
+  LABEL_UX_SKIPPED="${LABEL_UX_SKIPPED:-UX testing skipped}"        # with LABEL_MERGE_READY: agent QC judged no visible change
+  LABEL_NEEDS_UX="${LABEL_NEEDS_UX:-needs UX review}"               # on an issue or PR: always route through UX review
+  LABEL_QC_ESCALATED="${LABEL_QC_ESCALATED:-QC escalated}"          # agent QC failed AGENT_QC_MAX_ROUNDS times
+  CARRY_LABELS="${CARRY_LABELS:-client-requested}"   # separate with commas when a name has spaces
   SCREENSHOT_DIR="${SCREENSHOT_DIR:-.omc/qa}"
   # portfolio (bin/fleet): who manages this project, its rank and resource weight across projects
   if [[ -z "${MANAGER+x}" ]]; then
@@ -224,6 +235,9 @@ pdo_config_json() {
     --arg sm "$SYSTEM_MANAGER_WORKSPACE" --arg control "$CONTROL_DIR" \
     --arg carry "$CARRY_LABELS" --arg shots "$SCREENSHOT_DIR" \
     --arg cwt "$CWT_STATUS" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
+    --arg merge_ready "$LABEL_MERGE_READY" --arg ux_skipped "$LABEL_UX_SKIPPED" --arg needs_ux "$LABEL_NEEDS_UX" --arg qc_escalated "$LABEL_QC_ESCALATED" \
+    --arg aqc_ports "$AGENT_QC_PORTS" --arg aqc_repos "$AGENT_QC_REPOS" --arg aqc_wt "$AGENT_QC_WORKTREE" \
+    --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --arg aqc_skill "$AGENT_QC_SKILL" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
     --arg max_active "${MAX_ACTIVE:-}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
     --arg manager "${MANAGER:-}" --arg manager_slug "${MANAGER_SLUG:-}" --arg claim_assigns "${CLAIM_ASSIGNS:-0}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
@@ -237,11 +251,16 @@ pdo_config_json() {
       qc_worktree: $qc_worktree, qc_repo: $qc_repo,
       watch_event_hook: $watch_hook, watch_event_hook_timeout: ($watch_hook_timeout | tonumber? // 120),
       qc_ports: ($qc_ports | split(" ") | map(select(length > 0) | tonumber)),
+      agent_qc_ports: ($aqc_ports | split(" ") | map(select(length > 0) | tonumber)),
+      agent_qc_repos: ($aqc_repos | split(" ") | map(select(length > 0))), agent_qc_worktree: $aqc_wt,
+      agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes, agent_qc_skill: $aqc_skill,
       system_manager_workspace: $sm, control_dir: $control,
       cwt_status: $cwt, p_labels: ($plabels | split(" ") | map(select(length > 0))),
-      label_qc_ready: $qc_ready, label_qc_done: $qc_done, skill_prefix: $prefix,
+      label_qc_ready: $qc_ready, label_qc_done: $qc_done, label_merge_ready: $merge_ready,
+      label_ux_skipped: $ux_skipped, label_needs_ux: $needs_ux, label_qc_escalated: $qc_escalated, skill_prefix: $prefix,
       orchestrate_skill: $orch, qc_skill: $qc_skill, intake_skill: $intake,
-      carry_labels: ($carry | split(" ") | map(select(length > 0))), screenshot_dir: $shots,
+      carry_labels: ($carry | (if test(",") then split(",") else split(" ") end) | map(gsub("^\\s+|\\s+$"; "") | select(length > 0))),
+      screenshot_dir: $shots,
       max_active: ($max_active | if . == "" then null else tonumber end),
       weekly_ceiling: ($weekly | if . == "" then null else tonumber end),
       five_hour_ceiling: ($five | if . == "" then null else tonumber end),
