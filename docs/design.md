@@ -154,13 +154,14 @@ A parked agent holds several hundred MB (the agent CLI, browser automation, MCP 
 them push the machine into swap, where low-memory reapers start killing background shells (including the
 watcher).
 
-- `bin/hibernate <repo> <n>` requires idle, no question pending, `ready for QC` on the PR (or
-  `awaiting-ux-gate` with `--ux-gate`) and a resumable session on disk. It stops the processes whose cwd or
+- `bin/hibernate <repo> <n>` requires idle, no question pending, `ready for QC` or `QC escalated` on the
+  PR (or `awaiting-ux-gate` with `--ux-gate`) and a resumable session on disk. It stops the processes whose cwd or
   command line lies in the agent's worktree or session scratchpad (plus descendants), closes the workspace
   and records `hibernated_at`. It never touches the agent CLI's ancestors (the pane shell), the QC worktree
-  or anything on `QC_PORTS`. `--servers-only` keeps the session and stops just the dev stack and browser.
+  or anything on `QC_PORTS` / `AGENT_QC_PORTS`. `--servers-only` keeps the session and stops just the dev stack and browser.
 - **Automatic.** The watcher (not under `--peek`) hibernates agents idle at `ready for QC` for 5+ min,
-  and closes out finished ones (`--closed-out`): PR merged, or QC complete plus "wrap-up done" on screen,
+  and closes out finished ones (`--closed-out`): PR merged, or `QC complete` / `Ready for Merge` plus
+  "wrap-up done" on screen,
   or the issue closed with no open PR.
 - Hibernated agents stay in the snapshot with status `hibernated`, so `qc_complete` and `pr_merged` still
   fire. `bin/resume-agent` brings one back with the same session (`--resume <id>`), recreating the
@@ -176,11 +177,37 @@ watcher).
   incremental and agents' worktrees are never touched. The project's `QC_HOOK` owns the servers.
 - **Feedback** is posted on the PR as "QC feedback (round N)" and delivered to the agent with
   `bin/resume-agent`; `ready for QC` comes off, and the agent re-applies it after fixing.
-- **Pass** flips the label to `QC complete - ready to review` (`LABEL_QC_DONE`); the agent wraps up and
-  says "wrap-up done", and the watcher closes it out.
-- **The handoff is labels and reviews.** `ready for QC` (`LABEL_QC_READY`) means the PR waits on the human.
-  The human adding `QC complete - ready to review` (`LABEL_QC_DONE`) is the pass: the watcher's `qc_complete`
-  fires on that label, whoever added it. A PR carrying both labels counts as passed.
+- **Pass** flips the label to `Ready for Merge` (`LABEL_MERGE_READY`); the agent wraps up and says
+  "wrap-up done", and the watcher closes it out.
+- **The handoff is labels and reviews.** `ready for QC` (`LABEL_QC_READY`) means the PR waits for QC.
+  A pass label is `QC complete - ready to review` (`LABEL_QC_DONE`: agent QC passed, a human UX review
+  follows) or `Ready for Merge` (`LABEL_MERGE_READY`). The watcher's `qc_complete` fires once per pass, on
+  whichever appears first, whoever added it; the UX pass (QC complete → Ready for Merge) fires nothing,
+  so the agent is told to wrap up exactly once, at the first pass. Feedback on a PR at QC complete
+  removes that label, so the next pass fires again. A PR carrying `ready for QC` and a pass label
+  counts as passed.
+- **Agent QC** (on when `AGENT_QC_PORTS` is set). A standing "QC Agent (<project>)" workspace
+  (`bin/start-agent-qc`, started by `team-up`, `/loop` over the `project-agent-qc` skill) QCs every
+  `ready for QC` PR in `AGENT_QC_REPOS` before a human sees it, one at a time, highest P-label first
+  (`bin/agent-qc next`), with an in-progress marker under `$PDO_STATE_DIR/agent-qc`. It doesn't use a
+  command-agent slot.
+  - `bin/qc --agent` is a second QC instance: worktree `<repo root>/$AGENT_QC_WORKTREE` (default
+    `qc-agent`), state `$PDO_STATE_DIR/agent-qc`, ports `AGENT_QC_PORTS`; the hook sees
+    `PDO_QC_INSTANCE=agent` and must use its own data store, never the human's.
+  - It tests the checklist, the touched areas and their neighbours (browser, direct API calls,
+    two-user concurrency). A fail posts "Agent QC findings (round N)" (marker
+    `<!-- agent-qc:findings round=N -->`), removes `ready for QC` and resumes the agent; round
+    `AGENT_QC_MAX_ROUNDS` (default 2) adds `QC escalated` instead and stops. A pass posts a short
+    classification (`<!-- agent-qc:pass -->`) by the visible-change rule, then `bin/agent-qc verdict`
+    flips the labels: `QC complete - ready to review` (UX review) or `Ready for Merge` +
+    `UX testing skipped`. A PR or linked issue labelled `needs UX review` (`LABEL_NEEDS_UX`; intake sets
+    it, `CARRY_LABELS` copies it onto PRs) always gets UX review; when unsure, review.
+  - Project know-how (login, seed users, review-path extras such as a hosted preview request) lives in
+    the file `AGENT_QC_NOTES` names.
+- **Awaiting the human** (the PR cap, parking, the waiting lists): `ready for QC`, `QC complete - ready to
+  review`, `Ready for Merge` and `QC escalated`. The snapshot's `human_queue` lists open PRs by stage
+  (`agent_qc`, `ux_review`, `ready_for_merge`, `qc_escalated`); where agent QC runs, `ready for QC` PRs
+  leave `waiting_on_you`.
 - **Remote QC feedback** is a standard GitHub PR review with state *Request changes* (`CHANGES_REQUESTED`)
   from a trusted author (association OWNER, MEMBER or COLLABORATOR). The watcher reads the newest reviews
   of each open PR in its existing PR query (no extra call), and raises each new one once as `qc_feedback`
@@ -198,8 +225,8 @@ watcher).
   and prints the link for the checklist. Fixtures never go on the PR branch, or they merge with it.
 - **Screenshots.** `bin/shots <pr#>` opens the PR's newest screenshot folder under
   `<worktree>/$SCREENSHOT_DIR`.
-- **Ports.** Command agents never bind `QC_PORTS`; their own headless QC uses per-issue ports from the
-  profile.
+- **Ports.** Command agents never bind `QC_PORTS` or `AGENT_QC_PORTS`; their own headless QC uses
+  per-issue ports from the profile.
 
 ## PR priority labels
 
@@ -271,10 +298,15 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `WATCH_EVENT_HOOK_TIMEOUT` | `120` | seconds before the watcher abandons a hook run |
 | `FIXTURE_BRANCH` | `qc-fixtures` | never-merged fixture branch |
 | `SCREENSHOT_DIR` | `.omc/qa` | screenshot root inside a worktree |
-| `CARRY_LABELS` | `client-requested` | issue labels copied onto PRs |
+| `CARRY_LABELS` | `client-requested` | issue labels copied onto PRs (comma-separated when a name has spaces) |
 | `CWT_STATUS` | `Claude Work This` | board status that jumps the queue |
 | `P_LABELS` | `P1-urgent P2-high P3-medium P4-low` | priority labels, best first |
-| `LABEL_QC_READY` / `LABEL_QC_DONE` | `ready for QC` / `QC complete - ready to review` | QC state labels |
+| `LABEL_QC_READY` / `LABEL_QC_DONE` | `ready for QC` / `QC complete - ready to review` | QC state labels (QC done = agent QC passed, UX review next) |
+| `LABEL_MERGE_READY` / `LABEL_UX_SKIPPED` | `Ready for Merge` / `UX testing skipped` | all QC passed; agent QC judged no visible change |
+| `LABEL_NEEDS_UX` / `LABEL_QC_ESCALATED` | `needs UX review` / `QC escalated` | force a UX review; agent QC failed `AGENT_QC_MAX_ROUNDS` times |
+| `AGENT_QC_PORTS` | (none: agent QC off) | the QC Agent's reserved ports; hibernation never stops them |
+| `AGENT_QC_REPOS` / `AGENT_QC_WORKTREE` | `QC_REPO` / `qc-agent` | repos agent QC takes; its worktree under each repo root |
+| `AGENT_QC_MAX_ROUNDS` / `AGENT_QC_NOTES` / `AGENT_QC_SKILL` | `2` / (none) / `<prefix>project-agent-qc` | failed rounds before escalation; the project's agent-QC know-how file; the skill |
 | `SYSTEM_MANAGER_WORKSPACE` | `System Manager` | named in the queue's `orchestrator-system` reason |
 | `CONTROL_DIR` | the env's config dir | cwd of the standing orchestrator, QC and intake agents |
 | `ORCHESTRATE_SKILL` / `QC_SKILL` / `INTAKE_SKILL` | `${PDO_SKILL_PREFIX}project-orchestrate` / `…project-qc-review` / `…project-intake` | standing agents' skills |
@@ -323,7 +355,8 @@ with no arguments and a JSON context on stdin:
 {"version": 1, "project": "acme", "org": "acme", "repos": ["widget"],
  "since": "2026-10-16T18:00:00Z", "now": "2026-10-16T18:05:00Z", "peek": false,
  "trusted_associations": ["COLLABORATOR", "MEMBER", "OWNER"], "state_dir": "/home/u/.local/state/pdo",
- "labels": {"qc_ready": "ready for QC", "qc_done": "QC complete - ready to review"},
+ "labels": {"qc_ready": "ready for QC", "qc_done": "QC complete - ready to review", "merge_ready": "Ready for Merge",
+            "qc_escalated": "QC escalated", "ux_skipped": "UX testing skipped", "needs_ux": "needs UX review"},
  "prs": [{"repo": "widget", "number": 5, "url": "https://github.com/acme/widget/pull/5", "head": "feat/5",
           "head_sha": "abc123", "base": "main", "labels": ["ready for QC"], "draft": false,
           "mergeable": "MERGEABLE"}]}

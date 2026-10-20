@@ -58,15 +58,20 @@ request in the same reply.
 5. **PR.** It opens a PR (`Closes #n`), which gets the P-label of its issues, gets a consortium review,
    and is labelled **`ready for QC`** with a **QC Checklist** comment. The agent then idles (and is
    hibernated) until QC.
-6. **QC.** A human QCs locally, with whatever the profile's `## Project extras` offers, or (in a
-   headless repo) by checking the fixture inputs' outputs. Feedback (in the agent's session, or a PR
-   review with *Request changes*) comes back to the same agent, which fixes, pushes and re-labels. The
-   human passes QC by adding **`QC complete - ready to review`**, and the agent wraps up.
+6. **QC.** Where the project runs agent QC, the standing QC Agent tests every `ready for QC` PR first:
+   findings go back to the PR's agent ("Agent QC findings (round N)"; after two failed rounds,
+   `QC escalated` and a human decides). On a pass it classifies the PR: a visible change gets
+   **`QC complete - ready to review`** (the human's UX review); anything else gets **`Ready for Merge`**
+   + `UX testing skipped`. A human QCs (or UX-reviews) locally, with whatever the profile's
+   `## Project extras` offers, or (in a headless repo) by checking the fixture inputs' outputs.
+   Feedback (in the agent's session, or a PR review with *Request changes*) comes back to the same
+   agent, which fixes, pushes and re-labels `ready for QC`. The human's pass gives **`Ready for Merge`**, and the
+   agent wraps up once.
 7. **Merge.** A human merges by hand. Finished agents close out on their own.
 
 Labels, routes, P-levels, board statuses, the queue rules and the spawn floor in full:
 `references/labels-and-board.md`. Names there are engine defaults; the project's env may rename
-the queue status, the P-labels and the two QC labels.
+the queue status, the P-labels and the QC labels.
 
 ## What you must do
 
@@ -141,11 +146,15 @@ the queue status, the P-labels and the two QC labels.
 
 ## QC handoff
 
-- `ready for QC`: the agent is done; the PR waits on the human.
+- `ready for QC`: the agent is done; the PR waits for QC (the QC Agent first, where it runs).
+- Agent QC: fail → "Agent QC findings (round N)" and the agent is resumed; two failed rounds →
+  `QC escalated`. Pass → `QC complete - ready to review` (UX review needed) or `Ready for Merge` +
+  `UX testing skipped`. `needs UX review` on the PR or a linked issue always means UX review.
 - Feedback: in the agent's session, or a GitHub PR review with **Request changes** from a trusted
   author (OWNER, MEMBER or COLLABORATOR); the orchestrator resumes the PR's agent with it, and the
   agent replies on the PR.
-- Pass: the human adds `QC complete - ready to review`; the agent wraps up.
+- Pass: the human's pass gives `Ready for Merge` (by hand: add it and remove `ready for QC` /
+  `QC complete - ready to review`); the agent wraps up.
 - Anything else (comment commands, a hosted preview) is project-specific: the profile's
   `## Project extras`.
 

@@ -48,13 +48,14 @@ skimmed for these; sysreport plus the lessons is enough.
 
 | They say | You do |
 |---|---|
-| "status" / "how's the team" | Summarise `pdo sysreport` in ≤8 lines: health, active/hibernated agents, what's waiting on them (questions, UX gates, QC, intake inbox), queue top, spawn floor, usage. |
-| "fire up the dev team" / "start everything" | `pdo team-up [--project <p>]`. It starts only what's missing: agent names, intake, QC, the orchestrator, then the project's `TEAM_UP_HOOK` (e.g. a remote preview host and its seed data). Report like "status", plus anything that failed to start and why. |
+| "status" / "how's the team" | Summarise `pdo sysreport` in ≤8 lines: health, active/hibernated agents, what's waiting on them (questions, UX gates, QC, UX review, Ready for Merge, QC escalated, intake inbox), the agent-QC queue, queue top, spawn floor, usage. |
+| "fire up the dev team" / "start everything" | `pdo team-up [--project <p>]`. It starts only what's missing: agent names, intake, QC, the QC Agent (when `AGENT_QC_PORTS` is set), the orchestrator, then the project's `TEAM_UP_HOOK` (e.g. a remote preview host and its seed data). Report like "status", plus anything that failed to start and why. |
 | "pause new work" | `pdo floor P1`: only P1 starts; running agents finish. "resume" → `pdo floor P2` (or what they name). |
 | "set the floor to Px" / "clear the floor" | `pdo floor Px` / `pdo floor clear`, then tell the orchestrator in one line. |
 | "work #N now" | `pdo board-status <Repo> N "Claude Work This"` (the project's queue status). Never `pdo claim`: it labels the issue `managed-by:` (in progress), so the queue skips it. Check it's at or above the floor; if not, say so and offer to raise its P-level or the floor. Tell the orchestrator in one line. |
 | "show me the screenshots for #N" | `pdo shots N` (opens the folder in the file manager; `--list` if there are several). |
 | "QC PR #N" | Tell the QC agent: `herdr agent prompt qc-<p> "$(pdo project-env --project <p> QC_SKILL) N"` (or `pdo start-qc N`). |
+| "agent QC #N" / "what's agent QC doing" | `herdr agent prompt qc-agent-<p> "$(pdo project-env --project <p> AGENT_QC_SKILL) <Repo>#N"` (only when it's idle between ticks; else it takes the queue in order), or `pdo agent-qc status` / `pdo agent-qc queue`. |
 | "what's waiting on me" | The "waiting on human" part of sysreport, grouped and named by workspace, with PR links. |
 | "stop the team" / "shut it down" | Ask which parts first. The orchestrator is stopped by telling it to end its `/loop`. Never close command agents' workspaces; they hibernate on their own. |
 

@@ -225,7 +225,9 @@ checkout". For a headless repo, use the template's headless wording in the QC Ch
 
 Check every label the engine and skills rely on, then create the missing ones with `gh label create` (in this repo
 only): `route:small`, `route:design`, `route:build`; the P-labels (`P_LABELS`, default `P1-urgent P2-high P3-medium
-P4-low`); `LABEL_QC_READY` and `LABEL_QC_DONE` (default `ready for QC`, `QC complete - ready to review`); the
+P4-low`); `LABEL_QC_READY` and `LABEL_QC_DONE` (default `ready for QC`, `QC complete - ready to review`),
+`LABEL_MERGE_READY`, `LABEL_UX_SKIPPED`, `LABEL_NEEDS_UX`, `LABEL_QC_ESCALATED` (default `Ready for Merge`,
+`UX testing skipped`, `needs UX review`, `QC escalated`); the
 `CARRY_LABELS` (default `client-requested`); and `needs-triage`, `epic-phase`, `awaiting-ux-gate`, `likely-fixed`,
 `blocked-by-pr`, `on-hold`, `needs-design`, `Security`, `small-win`, `orchestrator-system`. Also check (never
 create) the repo-specific labels the profile, the workflow section or CI name, such as the changeset skip label.
@@ -283,6 +285,8 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # FIXTURE_EXT=".<ext>"          # from step 5: the primary repo's fixture format
 # declare -A FIXTURE_EXT_BY_REPO=([<other repo>]=".<ext>")   # repos with another format
 # QC_PORTS="<ports>"            # the human's reserved QC ports, from §Dev servers
+# AGENT_QC_PORTS="<ports>"      # agent QC (QC Agent workspace) ports, distinct from QC_PORTS and agents' ranges; off when unset
+# AGENT_QC_NOTES="docs/agent-qc-<name>.md"   # the project's agent-QC know-how (login, seed users, review-path extras)
 # WATCH_EVENT_HOOK="hooks/<name>"  # only for project events of its own (e.g. §Project extras comment commands)
 # MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
 # PORTFOLIO_PRIORITY=3          # portfolio manager (pdo fleet): 1 = highest
@@ -294,7 +298,7 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
   only if the human says the active account is fine (the engine then pins nothing).
 - **A secondary repo** (step 0): its entry in the project's `REPO_ROOT` is already there or is added; add its
   `FIXTURE_EXT_BY_REPO` entry if its format differs. Don't change `PRIMARY_REPO` or `PROJECT_NUMBER`.
-- Write renamed label keys (`CWT_STATUS`, `P_LABELS`, `LABEL_QC_READY`, `LABEL_QC_DONE`) only when the repo already
+- Write renamed label keys (`CWT_STATUS`, `P_LABELS`, the `LABEL_*` keys) only when the repo already
   uses other names; otherwise the defaults apply and the keys stay out.
 - Hooks (`QC_HOOK`, `IDENTITY_HOOK`, `TEAM_UP_HOOK`) are project-specific code: list them as next steps, don't write
   them. An `IDENTITY_HOOK` wrapper that sets `GIT_CONFIG_*` should append after the existing `GIT_CONFIG_COUNT`, as

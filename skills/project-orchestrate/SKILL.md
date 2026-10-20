@@ -125,7 +125,10 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling or the PR cap) and
      workspace), likely-fixed confirmations. One line per group:
      `<why>: <workspace name>[ (hibernated)][, <PR #>]`, no pane or workspace ids, a group's agents
      joined with `;`. Omit empty groups. Nothing: `Waiting on you: nothing`.
-   - One status line: active N/<max>, parked N, PRs awaiting human N/cap, weekly %, next in queue.
+     Then the PR stages from `human_queue`, one line each when non-empty: `UX review: #a, #b`
+     (`ux_review`), `QC escalated: …`, `Ready for Merge: … (UX skipped: #x)`. `agent_qc` is the QC
+     Agent's queue, not the human's: count it in the status line only.
+   - One status line: active N/<max>, parked N, PRs awaiting human N/cap, agent QC queue N, weekly %, next in queue.
    - Say nothing else.
 
 ## Restarts

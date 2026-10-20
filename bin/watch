@@ -390,7 +390,8 @@ def waiting_on_you(ag):
         out.append({"agent": None, "why": "intake inbox", "workspace": "intake", "pane_id": None,
                     "hibernated": False, "pr": None, "count": len(pending),
                     "waiting_min": int((time.time() - oldest) / 60)})
-    order = {"question": 0, "UX gate": 1, "idle - gate/review?": 2, "QC": 3, "intake inbox": 4, "confirm likely-fixed": 5}
+    order = {"question": 0, "QC escalated": 1, "UX gate": 1, "idle - gate/review?": 2, "QC": 3, "intake inbox": 4,
+             "confirm likely-fixed": 5}
     return sorted(out, key=lambda x: (order[x["why"]], -x["waiting_min"]))
 
 

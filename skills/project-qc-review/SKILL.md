@@ -1,6 +1,6 @@
 ---
 name: project-qc-review
-description: QC orchestrator for the standing "QC (<project>)" workspace — serve one PR on the project's reserved QC ports for the human's hands-on QC, turn their free-text feedback into a posted "QC feedback (round N)" comment delivered to the PR's command agent (resuming it if hibernated), and on pass flip the labels and have the agent wrap up. Use when asked to QC a PR, serve PR #N for QC, pass QC, or stop the QC servers.
+description: QC orchestrator for the standing "QC (<project>)" workspace — serve one PR on the project's reserved QC ports for the human's hands-on QC or UX review, turn their free-text feedback into a posted "QC feedback (round N)" comment delivered to the PR's command agent (resuming it if hibernated), and on pass flip the PR to Ready for Merge (having the agent wrap up when agent QC hadn't already). Use when asked to QC a PR, serve PR #N for QC, pass QC, or stop the QC servers.
 argument-hint: "<PR#> | feedback text | pass | stop"
 ---
 
@@ -22,8 +22,14 @@ the project's `QC_HOOK`, which owns how the app is built and served, which ports
 how QC data is reset; the profile's `## Dev servers` and `## QC data` describe the same for humans.
 State is under `$PDO_STATE_DIR`.
 
-With no argument: run `pdo qc status` and list PRs labelled `ready for QC`
-(`gh pr list -R <ORG>/<PRIMARY_REPO> --label "ready for QC"`).
+With no argument: run `pdo qc status` and list the PRs waiting on the human: `QC complete - ready to
+review` (agent QC passed, awaiting UX review), `QC escalated`, and, where the project runs no agent
+QC (`AGENT_QC_PORTS` unset, or the repo isn't in `AGENT_QC_REPOS`), `ready for QC`
+(`gh pr list -R <ORG>/<repo> --label "<label>"`).
+
+Label names below are the defaults; `pdo project-env` prints the project's (`LABEL_QC_READY`,
+`LABEL_QC_DONE`, `LABEL_MERGE_READY`, `LABEL_QC_ESCALATED`). Where the QC Agent passed the PR, its
+"Agent QC passed" comment says what it tested: focus the human on look and flow.
 
 ## A. `<PR#>`: serve a PR
 
@@ -69,20 +75,29 @@ after a restart.
      hibernates again by itself once back at `ready for QC`.
    - **No agent metadata** (someone else's PR): say so, and offer
      `pdo spawn <repo> <issue#> --no-claim`.
-4. Remove `ready for QC` from the PR (`gh pr edit --remove-label`). The agent re-applies it when its
-   fixes are pushed.
+4. Remove `ready for QC` and `QC complete - ready to review` from the PR (`gh pr edit --remove-label`,
+   whichever are on). The agent re-applies `ready for QC` when its fixes are pushed, so agent QC (where
+   it runs) checks the fixes before the human sees the PR again.
 5. Tell the human in 1–2 lines that the feedback was delivered and to which workspace, and "re-run
    `/project-qc-review <N>` when it's back in QC"; the servers keep serving the old head until then.
 
 ## C. `pass`: QC passed for the current PR
 
-1. `gh pr edit <N> --remove-label "ready for QC" --add-label "QC complete - ready to review"`.
+**The PR is at `QC complete - ready to review`** (agent QC passed; this was the UX review):
+`gh pr edit <N> --remove-label "QC complete - ready to review" --remove-label "QC escalated" --add-label "Ready for Merge"`.
+The agent already wrapped up when agent QC passed, so don't prompt it; tell the human in one line
+and stop here (step 5).
+
+**Otherwise** (the human QC'd a `ready for QC` or `QC escalated` PR themselves):
+
+1. `gh pr edit <N> --remove-label "ready for QC" --remove-label "QC escalated" --add-label "Ready for Merge"`
+   (drop a `--remove-label` for a label that isn't on).
 2. Write a marker so the orchestrator doesn't also send a wrap-up prompt:
    `mkdir -p "$PDO_STATE_DIR/qc/handled" && touch "$PDO_STATE_DIR/qc/handled/<Repo>-<N>"`.
 3. Tell the owning agent to wrap up:
 
    ```
-   pdo resume-agent <repo> <issue#> --project <p> --prompt "QC PASSED on PR #N ('QC complete - ready to review' is on). Finish the PR per your dispatch brief (address any remaining PR comments, final push, final PR comment). Don't merge. Say 'wrap-up done' as your last line."
+   pdo resume-agent <repo> <issue#> --project <p> --prompt "QC PASSED on PR #N ('Ready for Merge' is on). Finish the PR per your dispatch brief (address any remaining PR comments, final push, final PR comment). Don't merge. Say 'wrap-up done' as your last line."
    ```
 
    Exit 3: have the human answer the pending question, then retry.

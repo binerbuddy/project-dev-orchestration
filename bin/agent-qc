@@ -5,6 +5,7 @@ skill project-agent-qc): which PR is next, the in-progress marker, a PR's QC fac
 Usage: agent-qc next     [--project P] [--json]     the highest-priority PR waiting for agent QC, or nothing
        agent-qc queue    [--project P] [--json]     every PR waiting for agent QC, best first
        agent-qc claim    <repo> <pr#> [--project P] write the in-progress marker (refuses if another PR holds it)
+       agent-qc mark     key=value… [--project P]   add notes to the marker (e.g. delivery=pending comment=<url>)
        agent-qc release  [--project P]              clear the marker (after the PR's verdict is posted)
        agent-qc status   [--project P]              the marker and the last few outcomes
        agent-qc facts    <repo> <pr#> [--project P] JSON: head, files, linked issues, needs-UX signals,
@@ -186,7 +187,7 @@ def log_outcome(cfg, rec):
 
 def main():
     ap = argparse.ArgumentParser(description="agent QC: next PR, marker, facts, verdict labels")
-    ap.add_argument("cmd", choices=["next", "queue", "claim", "release", "status", "facts", "verdict"])
+    ap.add_argument("cmd", choices=["next", "queue", "claim", "mark", "release", "status", "facts", "verdict"])
     ap.add_argument("args", nargs="*")
     ap.add_argument("--project")
     ap.add_argument("--json", action="store_true")
@@ -235,6 +236,21 @@ def main():
             json.dump({"repo": repo, "pr": n, "head": head, "since": int(time.time())}, f)
         os.replace(mpath + ".tmp", mpath)
         print(f"agent-qc: {repo}#{n} claimed at {head[:8]}")
+    elif a.cmd == "mark":
+        held = marker(cfg)
+        if not held:
+            die("nothing is in progress (agent-qc claim first)")
+        for kv in a.args:
+            k, sep, v = kv.partition("=")
+            if not sep or not k:
+                die(f"expected key=value, got '{kv}'")
+            if k in ("repo", "pr", "head", "since"):
+                die(f"'{k}' is set by claim")
+            held[k] = v
+        with open(mpath + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(held, f)
+        os.replace(mpath + ".tmp", mpath)
+        print(json.dumps(held))
     elif a.cmd == "release":
         held = marker(cfg)
         if os.path.exists(mpath):
@@ -242,8 +258,10 @@ def main():
         print(f"agent-qc: released {held['repo']}#{held['pr']}" if held else "agent-qc: nothing held")
     elif a.cmd == "status":
         held = marker(cfg)
+        notes = {k: v for k, v in (held or {}).items() if k not in ("repo", "pr", "head", "since")}
         print(f"in progress: {held['repo']}#{held['pr']} at {held['head'][:8]}, "
-              f"{int((time.time() - held['since']) // 60)} min" if held else "in progress: none")
+              f"{int((time.time() - held['since']) // 60)} min"
+              + "".join(f", {k}={v}" for k, v in notes.items()) if held else "in progress: none")
         try:
             lines = open(os.path.join(state(cfg), "outcomes.jsonl"), encoding="utf-8").read().splitlines()[-5:]
         except OSError:

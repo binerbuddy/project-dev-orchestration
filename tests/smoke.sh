@@ -152,7 +152,7 @@ echo 'Custom brief {{REF}} via {{ENGINE}}' >"$T/cfg-a/prompts/dispatch-brief.md"
 printf '#!/usr/bin/env bash\n[[ "$1" == *docs* ]] && printf %%s extra-identity\n' >"$T/cfg-a/hooks/identity"
 cat >"$T/cfg-a/hooks/qc" <<'EOF'
 #!/usr/bin/env bash
-echo "hook $* pr=${PDO_QC_PR:-} ref=${PDO_QC_REF:-} key=${PDO_QC_KEY:-} wt=${PDO_QC_WORKTREE:-}" >>"$SMOKE_LOG"
+echo "hook $* pr=${PDO_QC_PR:-} ref=${PDO_QC_REF:-} key=${PDO_QC_KEY:-} wt=${PDO_QC_WORKTREE:-} inst=${PDO_QC_INSTANCE:-} ports=${PDO_QC_PORTS:-}" >>"$SMOKE_LOG"
 case "$1" in
   start) echo '{"db":"fake"}' >"$PDO_QC_STATE/hook-current.json" ;;
   wait) echo "qc: up (fake)" ;;
@@ -197,6 +197,11 @@ eq "skill prefix default" "$(jq -r .route_skill.small <<<"$J")" "/project-dev-or
 eq "PDO_SKILL_PREFIX override" "$(PDO_SKILL_PREFIX=/ "$BIN/pdo-config" --project acme --json | jq -r .orchestrate_skill)" "/project-orchestrate"
 eq "label defaults" "$(jq -r '.label_qc_ready + "|" + .cwt_status + "|" + (.p_labels | join(","))' <<<"$J")" "ready for QC|Claude Work This|P1-urgent,P2-high,P3-medium,P4-low"
 eq "qc ports" "$(jq -c .qc_ports <<<"$J")" "[3999]"
+eq "QC-stage label defaults" "$(jq -r '[.label_merge_ready, .label_ux_skipped, .label_needs_ux, .label_qc_escalated] | join("|")' <<<"$J")" "Ready for Merge|UX testing skipped|needs UX review|QC escalated"
+eq "agent QC off by default" "$(jq -c '[.agent_qc_ports, .agent_qc_repos, .agent_qc_max_rounds]' <<<"$J")" '[[],["widget"],2]'
+eq "CARRY_LABELS with commas keeps spaces" "$(CARRY_LABELS="client-requested, needs UX review" "$BIN/pdo-config" --project acme --json | jq -c .carry_labels)" '["client-requested","needs UX review"]'
+eq "CARRY_LABELS with spaces still splits" "$(CARRY_LABELS="a b" "$BIN/pdo-config" --project acme --json | jq -c .carry_labels)" '["a","b"]'
+check "agent-qc refuses while agent QC is off" bash -c '! "$0/agent-qc" queue' "$BIN"
 eq "default state dir" "$(env -u PDO_STATE_DIR "$BIN/pdo-config" --state-dir)" "$T/home/.local/state/project-dev-orchestration"
 eq "python state_dir agrees" "$(env -u PDO_STATE_DIR python3 -c "import sys; sys.path.insert(0, '$BIN'); import pdo_config; print(pdo_config.state_dir())")" "$T/home/.local/state/project-dev-orchestration"
 eq "python load() agrees" "$(python3 -c "import sys; sys.path.insert(0, '$BIN'); import pdo_config; c = pdo_config.load('acme'); print(c['org'], pdo_config.ref(c, 'widget', 3), pdo_config.ref(c, 'docs', 4))")" "acme #3 docs#4"
@@ -334,6 +339,14 @@ eq "current.json merged hook fields" "$(jq -r '.ref + "/" + .db' "$T/state/qc/cu
 out="$("$BIN/qc" status)"; has "qc status shows current" "$out" '"ref":"main"'; has "qc status runs hook" "$out" ":3999 down"
 eq "qc stop" "$("$BIN/qc" stop)" "qc: servers stopped"
 check "qc stop removed current.json" test ! -e "$T/state/qc/current.json"
+check "qc --agent refuses while agent QC is off" bash -c '! "$0/qc" start --ref main --agent' "$BIN"
+out="$(AGENT_QC_PORTS="3998 4998" "$BIN/qc" start --ref main --agent 2>&1)"; rc=$?
+eq "qc --agent start exit" "$rc" 0
+check "qc --agent uses its own worktree" test -f "$T/repos/widget.git/qc-agent/README.md"
+check "qc --agent hook told instance and ports" grep -q "hook start pr= ref=main key=ref:main wt=$T/repos/widget.git/qc-agent inst=agent ports=3998 4998" "$SMOKE_LOG"
+check "qc --agent state kept apart" test -f "$T/state/agent-qc/current.json"
+check "human qc state untouched by --agent" test ! -e "$T/state/qc/current.json"
+AGENT_QC_PORTS="3998 4998" "$BIN/qc" stop --agent >/dev/null
 
 # --- qc-fixture-push against the local origin ---
 echo data >"$T/sample.acme"
@@ -386,7 +399,7 @@ iss() { jq -nc --argjson n "$1" --arg t "$2" --arg l "$3" '{number: $n, title: $
 } >"$T/alpha-issues.jsonl"
 jq -n '{data: {repository: {pullRequests: {totalCount: 2, nodes: [
   {number: 10, title: "agent three", url: "https://github.com/alpha/tool/pull/10", isDraft: false, headRefName: "feat/3", labels: {nodes: [{name: "ready for QC"}]}},
-  {number: 11, title: "agent four", url: "https://github.com/alpha/tool/pull/11", isDraft: false, headRefName: "feat/4", labels: {nodes: [{name: "QC complete - ready to review"}]}}]},
+  {number: 11, title: "agent four", url: "https://github.com/alpha/tool/pull/11", isDraft: false, headRefName: "feat/4", labels: {nodes: [{name: "Ready for Merge"}]}}]},
   gates: {nodes: [{number: 6, title: "a prototype", url: "https://github.com/alpha/tool/issues/6"}]},
   claims: {nodes: [
     {name: "managed-by:orchestrator-alpha", issues: {totalCount: 3, nodes: [
@@ -550,6 +563,26 @@ eq "watch: the QC done label is the pass (qc_complete)" "$(jq -c '[.events[] | s
 eq "watch: a passed PR no longer waits on QC" "$(jq -c '[.waiting_on_you[] | select(.agent == "widget#5")] | length' <<<"$out" 2>/dev/null)" 0
 out="$(W)"
 eq "watch: qc_complete fires once" "$(jq -c '[.events[] | select(.type == "qc_complete")] | length' <<<"$out" 2>/dev/null)" 0
+eq "watch: human_queue lists the UX review" "$(jq -c .human_queue.ux_review <<<"$out" 2>/dev/null)" '[{"pr":"widget#5","url":"https://github.com/acme/widget/pull/5"}]'
+# the human's UX pass: QC complete -> Ready for Merge prompts nobody again
+mkprs '["Ready for Merge"]' '[]' >"$T/prs.json"
+out="$(W)"
+eq "watch: the UX pass (QC complete -> Ready for Merge) fires no qc_complete" "$(jq -c '[.events[] | select(.type == "qc_complete")] | length' <<<"$out" 2>/dev/null)" 0
+eq "watch: Ready for Merge counts toward the PR cap" "$(jq -c .pr_cap.open_awaiting_human <<<"$out" 2>/dev/null)" 1
+eq "watch: human_queue lists Ready for Merge" "$(jq -c '[.human_queue.ready_for_merge[].pr]' <<<"$out" 2>/dev/null)" '["widget#5"]'
+# feedback took the pass labels off; agent QC escalates; then a direct no-UX pass fires once
+mkprs '["QC escalated"]' '[]' >"$T/prs.json"
+out="$(W)"
+eq "watch: QC escalated waits on the human" "$(jq -c '[.waiting_on_you[] | select(.agent == "widget#5") | .why]' <<<"$out" 2>/dev/null)" '["QC escalated"]'
+mkprs '["Ready for Merge","UX testing skipped"]' '[]' >"$T/prs.json"
+out="$(W)"
+eq "watch: Ready for Merge as the first pass fires qc_complete" "$(jq -c '[.events[] | select(.type == "qc_complete") | .label]' <<<"$out" 2>/dev/null)" '["Ready for Merge"]'
+eq "watch: human_queue marks UX skipped" "$(jq -c '[.human_queue.ready_for_merge[].ux_skipped]' <<<"$out" 2>/dev/null)" '[true]'
+# with agent QC on, 'ready for QC' is the QC Agent's queue, not the human's
+mkprs '["ready for QC"]' '[]' >"$T/prs.json"
+out="$(AGENT_QC_PORTS="3998 4998" W)"
+eq "watch: agent QC on: ready for QC leaves waiting_on_you" "$(jq -c '[.waiting_on_you[] | select(.agent == "widget#5")] | length' <<<"$out" 2>/dev/null)" 0
+eq "watch: agent QC on: human_queue.agent_qc" "$(jq -c '[.human_queue.agent_qc[].pr]' <<<"$out" 2>/dev/null)" '["widget#5"]'
 
 # WATCH_EVENT_HOOK: context in, events out, merged; quiet ones ride along
 cat >"$T/hook-ok" <<'EOF'

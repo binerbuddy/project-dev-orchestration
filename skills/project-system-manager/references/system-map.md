@@ -23,7 +23,7 @@ under `$PDO_STATE_DIR` (default `${XDG_STATE_HOME:-~/.local/state}/project-dev-o
 **GitHub:** org `ORG`, board = Project `PROJECT_NUMBER` (its queue status, default "Claude Work
 This", is the orchestrator's queue). Label families: P1–P4, `Security`, `route:*`, `epic-phase`,
 `on-hold`, `likely-fixed`, `awaiting-ux-gate`, `orchestrator-system`, `ready for QC`,
-`QC complete - ready to review`. Repos in `SELF_MANAGED_REPOS` are owned end to end by another
+`QC complete - ready to review`, `Ready for Merge`, `UX testing skipped`, `needs UX review`, `QC escalated`. Repos in `SELF_MANAGED_REPOS` are owned end to end by another
 manager: the queue and watcher skip them. Humans merge product PRs by hand.
 
 ## Engine defaults (overridable per install)

@@ -21,7 +21,7 @@ merge with the PR.
 
 **How do I give QC feedback or pass QC from the browser?**
 Feedback: a PR review with **Request changes** (on a PR you opened yourself GitHub won't allow that; tell the agent
-in its session). Pass: add the `QC complete - ready to review` label. Anything beyond that, such as a hosted preview
+in its session). Pass: add the `Ready for Merge` label. Anything beyond that, such as a hosted preview
 or comment commands, is specific to the repo; its human guide lists them.
 
 **My agent found a bug unrelated to its task. Should it fix it?**

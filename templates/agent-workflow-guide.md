@@ -82,8 +82,14 @@ each, plus any evidence the agent already gathered. <!-- profile §QC data -->
   reads first). The PR's agent gets it and replies on the PR. If you opened the PR yourself, GitHub won't let you
   request changes on it: tell the agent in its session instead. Without an orchestrator, point the agent that built
   the PR at your review.
-- **Pass it:** add the `<QC-done label>` label (and remove `<QC-ready label>`); only a human does. The agent then
-  wraps the PR up for review. <!-- env LABEL_QC_READY, LABEL_QC_DONE -->
+- **Pass it:** add the `<merge-ready label>` label (and remove `<QC-ready label>` / `<QC-done label>`); only a human
+  does. The agent then wraps the PR up for review. <!-- env LABEL_QC_READY, LABEL_QC_DONE, LABEL_MERGE_READY -->
+[if the env sets AGENT_QC_PORTS]
+- **Agent QC first:** the team's QC Agent tests every `<QC-ready label>` PR before a human does. It posts
+  "Agent QC findings (round N)" (the PR's agent fixes them) or "Agent QC passed" with a UX call: `<QC-done label>`
+  means a human UX review is next; `<merge-ready label>` plus `UX testing skipped` means no visible change. After two
+  failed rounds it adds `QC escalated` and a human decides. Add `needs UX review` to a PR to force a UX review.
+[end if]
 [if repo+team and the env sets QC_HOOK]
 - **QC servers on the manager's machine:** the manager can start this PR's QC servers with `/project-qc-review
   <PR#>`; ask them in the PR if you want that.
@@ -115,7 +121,7 @@ Your agent writes the entry; check it reads well to a user.
 
 ## Don't
 
-- Don't merge, or apply `<QC-done label>` without doing QC.
+- Don't merge, or apply `<merge-ready label>` without doing QC.
 - Don't put issues on the board's queue column or set priorities unless you're the manager.
 - Don't type into another agent's session; talk to agents through PR comments or the manager.
 - Don't commit `.agents/local/`.

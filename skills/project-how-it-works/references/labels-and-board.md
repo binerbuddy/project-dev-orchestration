@@ -1,6 +1,6 @@
 # Labels, routes and the board
 
-The names below are the engine defaults. A project's env may rename four of them: `CWT_STATUS` (the queue status), `P_LABELS` (the P-levels, best first), `LABEL_QC_READY` and `LABEL_QC_DONE`
+The names below are the engine defaults. A project's env may rename some of them: `CWT_STATUS` (the queue status), `P_LABELS` (the P-levels, best first), and the QC labels `LABEL_QC_READY`, `LABEL_QC_DONE`, `LABEL_MERGE_READY`, `LABEL_UX_SKIPPED`, `LABEL_NEEDS_UX`, `LABEL_QC_ESCALATED`
 (`pdo project-env <KEY>` prints the value in use). Its `.agents/project-profile.md` and `AGENTS.md`
 say which names it uses; theirs win over this table.
 
@@ -41,8 +41,12 @@ wrong (a "small" fix that needs a migration or a design decision) stops and asks
 | `client-requested` | A client or customer asked for it; carried onto PRs. |
 | `on-hold` | Parked by a human; never started. |
 | `epic-phase` | A phase of an epic; worked only by the epic's build agent, never dispatched alone. |
-| `ready for QC` | The PR is ready for human QC (and has its QC checklist). |
-| `QC complete - ready to review` | QC passed; awaiting code review and a manual merge. |
+| `ready for QC` | The PR is ready for QC (and has its QC checklist). Where agent QC runs, the QC Agent takes it first. |
+| `QC complete - ready to review` | Agent QC passed; awaiting the human's UX review. |
+| `Ready for Merge` | All QC done; awaiting code review and a manual merge. |
+| `UX testing skipped` | With `Ready for Merge`: agent QC found no visible change, so no human UX review. Its comment says why. |
+| `needs UX review` | On an issue or PR: the change is visible or design-sensitive, so it always gets a human UX review. Carried from issues onto PRs. Add it to a PR any time to pull it back into review. |
+| `QC escalated` | Agent QC failed twice; a human decides what happens next. |
 | `awaiting-ux-gate` | The agent waits for a human's prototype sign-off. |
 | `likely-fixed` | The agent thinks main already does this; a human confirms and closes. |
 | `blocked-by-pr` | The PR can't merge until another PR lands. |

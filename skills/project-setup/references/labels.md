@@ -1,7 +1,7 @@
 # The label set
 
 Every label the engine scripts and the lifecycle skills read or write. `/project-setup` checks for each one and
-creates the missing ones. Names in the first four groups follow the project env when it renames them (repo+team:
+creates the missing ones. Names with an env key follow the project env when it renames them (repo+team:
 `pdo project-env <KEY>`; repo-only: the names the repo's `AGENTS.md` or profile already uses, else the
 defaults below).
 
@@ -17,8 +17,12 @@ difference; never rename it.
 | `P2-high` | `P_LABELS` (2nd) | `d93f0b` | Security flaws, wrong results, things users need soon | queue, pr-priority, intake |
 | `P3-medium` | `P_LABELS` (3rd) | `fbca04` | Real but tolerable bugs; normal features | queue, pr-priority, intake |
 | `P4-low` | `P_LABELS` (4th) | `c2e0c6` | Polish, clean-up, ideas | queue, pr-priority, intake |
-| `ready for QC` | `LABEL_QC_READY` | `e8b339` | Automated review+triage done; awaiting human UX QC | lifecycle skills, watch, hibernate, qc-review |
-| `QC complete - ready to review` | `LABEL_QC_DONE` | `0e8a16` | Human QC passed; awaiting code review and a manual merge | qc-review, watch |
+| `ready for QC` | `LABEL_QC_READY` | `e8b339` | Automated review+triage done; awaiting QC (agent QC first, where it runs) | lifecycle skills, watch, hibernate, qc-review, agent-qc |
+| `QC complete - ready to review` | `LABEL_QC_DONE` | `2da44e` | Agent QC passed; awaiting human UX review | qc-review, agent-qc, watch |
+| `Ready for Merge` | `LABEL_MERGE_READY` | `0e8a16` | QC passed (agent, plus human UX review where needed); awaiting code review and a manual merge | qc-review, agent-qc, watch, fleet |
+| `UX testing skipped` | `LABEL_UX_SKIPPED` | `c5def5` | Agent QC passed; no visible change, so no human UX review (the agent's comment says why) | agent-qc, watch |
+| `needs UX review` | `LABEL_NEEDS_UX` | `d4c5f9` | Change is visible to users or design-sensitive: a human UX review is required after agent QC | intake, agent-qc, pr-priority (via `CARRY_LABELS`) |
+| `QC escalated` | `LABEL_QC_ESCALATED` | `b60205` | Agent QC failed twice; waiting on the human to decide | agent-qc, watch, hibernate, fleet |
 | `client-requested` | `CARRY_LABELS` (each) | `0052cc` | A client or customer asked for it; carried onto PRs | pr-priority, intake |
 | `needs-triage` | | `ededed` | Not yet reviewed by a human; the queue skips it | queue, intake, collaborators |
 | `epic-phase` | | `c5def5` | A phase of an epic; worked only by the epic's build agent | queue, spawn, feature-design |
@@ -30,6 +34,9 @@ difference; never rename it.
 | `Security` | | `ee0701` | Authn/authz, injection, secrets, exposure, unsafe input | queue (ranks first in its P-level), intake |
 | `small-win` | | `7ee787` | Cheap and worthwhile | intake, status |
 | `orchestrator-system` | | `5a5a5a` | Work on the orchestration system itself (System Manager) | queue (excluded) |
+
+The last four QC labels matter only where agent QC runs (`AGENT_QC_PORTS`), but create them everywhere: a human can
+still pass a PR to `Ready for Merge` by hand, and `needs UX review` is set at intake.
 
 Not in the set: the `managed-by:<slug>` claim labels. `pdo claim` creates its own manager's label the first time
 it claims an issue in a repo; setup never creates them.

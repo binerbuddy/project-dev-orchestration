@@ -69,9 +69,18 @@ the shared QC worktree through your project's `QC_HOOK`. Type your findings in p
 PR's agent and get posted on the PR. Say `pass` when it's good.
 
 **From a browser:** a reviewer submits a PR review with **Request changes**. The watcher hands it to the
-PR's agent, which replies on the PR. To pass, add the `QC complete - ready to review` label (and remove
-`ready for QC`): the watcher sees the label and the agent wraps up. GitHub won't let a PR's author request
+PR's agent, which replies on the PR. To pass, add the `Ready for Merge` label (and remove
+`ready for QC` / `QC complete - ready to review`): the watcher sees the label and the agent wraps up (once per
+pass: after agent QC already passed it, nobody is prompted again). GitHub won't let a PR's author request
 changes on their own PR, so as the author give feedback in the agent's session or through `/project-qc-review`.
+
+**Agent QC** (when the project env sets `AGENT_QC_PORTS`): `team-up` also starts the **QC Agent (acme)**
+workspace (`pdo start-agent-qc`). It takes `ready for QC` PRs one at a time, highest priority first, and tests them
+on its own ports and database clone: the checklist, the touched areas and their neighbours in a browser, the API
+directly, and two users at once. A fail posts "Agent QC findings (round N)" and resumes the PR's agent; two failed
+rounds add `QC escalated` for you. A pass posts a short UX call by the visible-change rule: `QC complete - ready to
+review` means your UX review is next, `Ready for Merge` + `UX testing skipped` means no visible change. Add
+`needs UX review` to an issue or PR to force the review. `pdo agent-qc queue` lists what it will take next.
 
 **Your project's extras:** comment commands, a hosted preview service or other conventions of your own go in
 the repo profile's "Project extras" section. A `WATCH_EVENT_HOOK` in the project env can turn them into
@@ -94,7 +103,11 @@ the command that checks each; you QC by running them or by reading the evidence 
 |---|---|
 | `P1-urgent` … `P4-low` | Priority, on issues and PRs. A PR never gets downgraded. |
 | `Security` | Ranks first within its P-level. |
-| `ready for QC` / `QC complete - ready to review` | QC state of a PR. |
+| `ready for QC` | Waiting for QC (the QC Agent first, where it runs). |
+| `QC complete - ready to review` | Agent QC passed; your UX review is next. |
+| `Ready for Merge` / `UX testing skipped` | All QC done; awaiting code review and merge (UX skipped: no visible change). |
+| `QC escalated` | Agent QC failed twice; you decide. |
+| `needs UX review` | Always gets a human UX review. Intake sets it on issues; it's carried onto their PRs. |
 | `awaiting-ux-gate` | The agent is waiting for your prototype sign-off. |
 | `likely-fixed` | The agent thinks it's already done; you confirm and close. |
 | `on-hold` | Parked by you; never started. |
@@ -105,7 +118,7 @@ the command that checks each; you QC by running them or by reading the evidence 
 | `managed-by:<manager>` | Claimed by that manager's agents (set and removed by the engine). Another manager's label means: ask that manager first. |
 
 The P-labels, the CWT status and the QC labels can be renamed per project (`P_LABELS`, `CWT_STATUS`,
-`LABEL_QC_READY`, `LABEL_QC_DONE`).
+`LABEL_QC_READY`, `LABEL_QC_DONE`, `LABEL_MERGE_READY`, `LABEL_UX_SKIPPED`, `LABEL_NEEDS_UX`, `LABEL_QC_ESCALATED`).
 
 ## The engine's commands
 

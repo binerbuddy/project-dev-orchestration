@@ -46,13 +46,20 @@ Skip all of this when the seed already covers the checklist.
 
 The engine's QC handoff uses only GitHub labels and PR reviews, so it works for any project, with or
 without extra tooling. Label names are the defaults; the project env may rename them
-(`LABEL_QC_READY`, `LABEL_QC_DONE`).
+(`LABEL_QC_READY`, `LABEL_QC_DONE`, `LABEL_MERGE_READY`, `LABEL_UX_SKIPPED`, `LABEL_NEEDS_UX`,
+`LABEL_QC_ESCALATED`).
 
 | Step | Who | How |
 |---|---|---|
-| Ready | the agent | labels the PR `ready for QC` after review and triage, posts the checklist, stops. The PR now waits on the human. |
-| Feedback | the human | in the agent's session (local QC), or a GitHub PR review with **Request changes** (state `CHANGES_REQUESTED`). The orchestrator's watcher raises each new review from a trusted author (repo OWNER, MEMBER or COLLABORATOR) as `qc_feedback`, and the agent is resumed with it. |
-| Pass | the human | adds `QC complete - ready to review` (and removes `ready for QC`). The watcher's `qc_complete` fires on the label and the agent wraps up. Only a human applies it. |
+| Ready | the agent | labels the PR `ready for QC` after review and triage, posts the checklist, stops. The PR now waits for QC. |
+| Agent QC | the QC Agent (where `AGENT_QC_PORTS` is set) | tests the PR on its own servers and data (`/project-agent-qc`). **Fail:** posts "Agent QC findings (round N)", removes `ready for QC` and resumes the agent; after 2 failed rounds adds `QC escalated` and stops (a human decides). **Pass:** posts a short classification by the visible-change rule, then either `QC complete - ready to review` (UX review needed) or `Ready for Merge` + `UX testing skipped`. A PR or linked issue labelled `needs UX review` always gets UX review. |
+| Feedback | the human | in the agent's session (local QC), or a GitHub PR review with **Request changes** (state `CHANGES_REQUESTED`). The orchestrator's watcher raises each new review from a trusted author (repo OWNER, MEMBER or COLLABORATOR) as `qc_feedback`, and the agent is resumed with it; `ready for QC` and `QC complete - ready to review` come off, and the agent re-applies `ready for QC` after fixing (so agent QC runs again). |
+| Pass | the human | adds `Ready for Merge` and removes `ready for QC` / `QC complete - ready to review`. Only a human applies it, except agent QC's no-UX pass. |
+| Wrap-up | the watcher | `qc_complete` fires once per pass, on whichever of `QC complete - ready to review` / `Ready for Merge` appears first; the orchestrator tells the agent to wrap up. The human's later UX pass (QC complete → Ready for Merge) prompts nobody. |
+
+Every label here except `ready for QC` and `needs UX review` means "waiting on a human" for the
+orchestrator's PR cap: `QC complete - ready to review` (UX review), `Ready for Merge` (code review and
+merge), `QC escalated` (a decision).
 
 GitHub won't let a PR's author request changes on their own PR: an author gives feedback in the
 agent's session (or via `/project-qc-review` on an engine install) instead.
@@ -67,4 +74,4 @@ service of its own. They are documented in the profile's `## Project extras`; fo
 engine itself never reads PR comments.
 
 With no orchestrator at all, reviews wait until someone points the PR's agent at them, and a human
-applies `QC complete - ready to review` by hand.
+applies `Ready for Merge` by hand.

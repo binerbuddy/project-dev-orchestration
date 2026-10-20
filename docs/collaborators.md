@@ -67,7 +67,10 @@ names them): don't start it; ask that manager. An issue GitHub shows as "blocked
 | `P1-urgent` … `P4-low` | Priority. Maintainers set it. A PR takes the highest P-label of the issues it closes, automatically. |
 | `needs-triage` | Filed but not yet prioritised. Put it on anything you file. |
 | `ready for QC` | The agent is done; the PR's QC checklist is a human's to work. |
-| `QC complete - ready to review` | A human passed QC. Only a human applies it. |
+| `QC complete - ready to review` | Agent QC passed; a human UX review is next. |
+| `Ready for Merge` | QC is done; awaiting code review and merge. Only a human applies it by hand. |
+| `QC escalated` | The team's QC Agent failed the PR twice; a maintainer decides. |
+| `needs UX review` | The change is visible to users: it always gets a human UX review. |
 | `awaiting-ux-gate` | An agent waits for a human to sign off a prototype. |
 | `likely-fixed` | An agent thinks the issue is already done; a maintainer confirms and closes. |
 | `epic-phase` | One phase of an epic; worked only as part of the epic's build. |
@@ -87,7 +90,7 @@ and the command that checks them.
 | You want to | Do this |
 |---|---|
 | Give feedback or answer the agent's questions | Submit a PR review with **Request changes**. Where the team runs the orchestrator, the PR's agent gets it, fixes, pushes, replies on the PR, and re-labels `ready for QC`. |
-| Pass QC | Add the `QC complete - ready to review` label (and remove `ready for QC`). Only a human does. |
+| Pass QC | Add the `Ready for Merge` label (and remove `ready for QC` / `QC complete - ready to review`). Only a human does. |
 
 Only reviews from the repo's owners, members and collaborators count. GitHub won't let you request changes on a
 PR you opened yourself; tell the agent in its session instead. Where no orchestrator runs, point the agent that
@@ -121,7 +124,7 @@ agents queue reports for an intake agent instead; a maintainer triages that queu
 
 ## 8. What not to do
 
-- Don't merge, and don't apply `QC complete - ready to review` without doing the QC.
+- Don't merge, and don't apply `Ready for Merge` without doing the QC.
 - Don't set priorities or put issues in the board's queue column; maintainers do.
 - Don't start work on `on-hold`, `needs-triage` or `epic-phase` issues, on someone else's assigned issue, or on an
   issue another manager holds (`managed-by:`) or that is "blocked by" an open issue.
