@@ -194,7 +194,7 @@ def main():
             if pane.get("agent_status") == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed")):
                 die("a question is pending in the agent's workspace", 3)
         pr = json.loads(run("gh", "pr", "list", "-R", f"{org}/{a.repo}", "--head", meta.get("branch", ""),
-                            "--state", "all", "--json", "number,labels,state", "--limit", "1") or "[]")
+                            "--state", "all", "--json", "number,labels,state,isDraft", "--limit", "1") or "[]")
         labels = {l["name"] for l in (pr[0]["labels"] if pr else [])}
         pr_state = pr[0]["state"] if pr else ""
         issue = json.loads(run("gh", "api", f"repos/{org}/{a.repo}/issues/{a.number}", "--jq",
@@ -211,6 +211,10 @@ def main():
         elif pr_state != "OPEN" or (not {QC_READY, QC_ESCALATED} & labels
                                     and not (a.ux_gate and "awaiting-ux-gate" in issue_labels)):
             die(f"its PR isn't labelled '{QC_READY}' or '{QC_ESCALATED}' (use --ux-gate for an agent at a UX sign-off)", 3)
+        # PRs are opened as drafts (draft CI skips the heavy jobs); one labelled ready for QC but still a
+        # draft is flipped here, since agent QC only takes non-draft PRs
+        if pr_state == "OPEN" and QC_READY in labels and pr[0].get("isDraft") and not a.dry_run:
+            run("gh", "pr", "ready", str(pr[0]["number"]), "-R", f"{org}/{a.repo}")
 
     procs = side_processes(worktree, session, qc_wt, keep_mcp=a.servers_only)
     rss = 0

@@ -134,7 +134,8 @@ doesn't cover the cases; and it ends with the QC handoff block (plus any §Proje
 ## 8. Changelog, push, PR
 
 1. Ensure the changelog entry is up to date per §Changelog.
-2. Push the branch and open the PR: `git push -u origin <branch>`, then `gh pr create -R <org>/<repo> --base <base>`
+2. Push the branch and open the PR: `git push -u origin <branch>`, then `gh pr create -R <org>/<repo> --draft --base <base>`
+   (always a **draft**: draft CI skips the heavy jobs, which saves Actions minutes while review/triage pushes land)
    with a body summarizing what/why and the automated-QC evidence, with `Closes #<issue>` for every issue it resolves
    (cross-repo: `Closes <org>/<other-repo>#<n>`, only after the human said yes to closing an issue in that repo:
    reading other repos is fine, writing to them needs the check). Record the PR number. Then give the PR the priority of its issues:
@@ -185,6 +186,7 @@ the scratchpad as well as returning it.
    session is hibernated a few minutes after this label goes on, and resumed with full context for QC feedback. Then,
    once the triage session has pushed and posted its fixed/not-fixed comment, **and you have confirmed both that
    comment and the review exist by id**, add the `ready for QC` label:
+   `gh pr ready <number> -R <org>/<repo>` (out of draft: this triggers the one full CI run), then
    `gh pr edit <number> -R <org>/<repo> --add-label "ready for QC"`
    (create it first with `gh label create "ready for QC" -R <org>/<repo> --color e8b339 --description "Automated
    review+triage done; awaiting human UX QC"` if the repo doesn't have it; GitHub label names cannot contain commas).

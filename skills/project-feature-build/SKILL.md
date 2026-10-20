@@ -167,7 +167,7 @@ Once every phase is done and every gate approved:
    `pdo qc-fixture-push <PR#> <file>` to the never-merged `qc-fixtures` branch (never on the PR branch), with a "Test data"
    item linking it and giving the import steps. End with the QC handoff block (plus any §Project extras QC commands). Record the comment id (from the URL
    the command returned) in the ledger and the resumability note.
-4. **PR**: mark ready (`gh pr ready`), write the final body: what/why, phase table with commit ranges, QC evidence,
+4. **PR**: keep it a **draft** (draft CI skips the heavy jobs while review/triage pushes land), write the final body: what/why, phase table with commit ranges, QC evidence,
    divergences, follow-ups, then the close list: `Closes #<epic>` and one `Closes #<n>` line per phase issue and per
    fixed-by issue from the doc's §Tracking (cross-repo: `Closes <org>/<other-repo>#<n>`, only where the design's decisions
    gate or the human approved that write; otherwise ask first), and the attribution line
@@ -179,7 +179,8 @@ Once every phase is done and every gate approved:
    its commits to the ledger.
 
    **Before the `ready for QC` label goes on**, stop every dev server of this build (and their child processes) and
-   close any automation browser (e.g. Playwright MCP: `browser_close`). Under the orchestrator the session is
+   close any automation browser (e.g. Playwright MCP: `browser_close`), then take the PR out of draft with
+   `gh pr ready` (this triggers the one full CI run). Under the orchestrator the session is
    hibernated shortly after the label goes on, and resumed with full context for QC feedback.
 
    **Do not apply the `ready for QC` label until you have confirmed the review artifact exists**, and confirm it by
