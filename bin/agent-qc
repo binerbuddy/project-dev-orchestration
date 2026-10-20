@@ -22,7 +22,8 @@ Verdicts:
   fail       remove LABEL_QC_READY (the command agent re-applies it after fixing). When this was round
              AGENT_QC_MAX_ROUNDS (rounds = "Agent QC findings" comments since the last agent-QC pass,
              including the one just posted), also add LABEL_QC_ESCALATED: the human decides next.
-  pass-ux    LABEL_QC_READY -> LABEL_QC_DONE (agent QC passed; awaiting the human's UX review)
+  pass-ux    LABEL_QC_READY -> LABEL_QC_DONE (agent QC passed; awaiting the human's UX review), then
+             AGENT_QC_REVIEW_HOOK <repo> <pr#> if the project sets one (e.g. request a hosted preview)
   pass-skip  LABEL_QC_READY -> LABEL_MERGE_READY + LABEL_UX_SKIPPED
 The watcher's qc_complete fires once, on whichever of LABEL_QC_DONE / LABEL_MERGE_READY appears
 first, and the orchestrator has the command agent wrap up then. The human's later UX pass
@@ -294,6 +295,19 @@ def main():
             add = [cfg["label_qc_done"]] if v == "pass-ux" else [cfg["label_merge_ready"], cfg["label_ux_skipped"]]
             edit_labels(cfg, repo, n, add, [ready], a.dry_run)
             print(f"agent-qc: {repo}#{n} passed agent QC: " + ", ".join(f"'{l}'" for l in add) + " on")
+            hook = cfg.get("agent_qc_review_hook")
+            if v == "pass-ux" and hook:
+                if a.dry_run:
+                    print(f"dry run: {hook} {repo} {n}")
+                else:
+                    try:
+                        r = subprocess.run([hook, repo, str(n)], capture_output=True, text=True, timeout=120)
+                    except (OSError, subprocess.TimeoutExpired) as e:
+                        r = subprocess.CompletedProcess([hook], 127, "", str(e))
+                    out = (r.stdout + r.stderr).strip()
+                    print(f"agent-qc: review hook {'ok' if r.returncode == 0 else f'failed (exit {r.returncode})'}"
+                          + (f": {out[:300]}" if out else ""))
+                    rec["review_hook"] = r.returncode
         if not a.dry_run:
             log_outcome(cfg, rec)
 

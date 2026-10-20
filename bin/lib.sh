@@ -144,7 +144,7 @@ pdo_finalize() {
   PDO_PROJECT="$PROJECT"
   export PDO_STATE_DIR PDO_INBOX PDO_PROJECT
   local k
-  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES; do
+  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES AGENT_QC_REVIEW_HOOK; do
     [[ -n "${!k:-}" ]] && printf -v "$k" '%s' "$(_pdo_abs "${!k}")"
   done
   BRIEF_TEMPLATE="${BRIEF_TEMPLATE:-$(pdo_find_prompt dispatch-brief.md)}"
@@ -164,6 +164,7 @@ pdo_finalize() {
   AGENT_QC_WORKTREE="${AGENT_QC_WORKTREE:-qc-agent}"  # its own worktree under each repo root
   AGENT_QC_MAX_ROUNDS="${AGENT_QC_MAX_ROUNDS:-2}" # failed rounds before 'QC escalated'
   AGENT_QC_NOTES="${AGENT_QC_NOTES:-}"            # optional: the project's agent-QC know-how (a markdown file)
+  AGENT_QC_REVIEW_HOOK="${AGENT_QC_REVIEW_HOOK:-}" # optional: run by `agent-qc verdict … pass-ux` with <repo> <pr#> (e.g. request a hosted preview)
   WATCH_EVENT_HOOK="${WATCH_EVENT_HOOK:-}"   # optional: bin/watch runs it each snapshot for project-specific events
   WATCH_EVENT_HOOK_TIMEOUT="${WATCH_EVENT_HOOK_TIMEOUT:-120}"  # seconds before the watcher gives up on it
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
@@ -238,6 +239,7 @@ pdo_config_json() {
     --arg merge_ready "$LABEL_MERGE_READY" --arg ux_skipped "$LABEL_UX_SKIPPED" --arg needs_ux "$LABEL_NEEDS_UX" --arg qc_escalated "$LABEL_QC_ESCALATED" \
     --arg aqc_ports "$AGENT_QC_PORTS" --arg aqc_repos "$AGENT_QC_REPOS" --arg aqc_wt "$AGENT_QC_WORKTREE" \
     --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --arg aqc_skill "$AGENT_QC_SKILL" \
+    --arg aqc_review_hook "$AGENT_QC_REVIEW_HOOK" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
     --arg max_active "${MAX_ACTIVE:-}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
     --arg manager "${MANAGER:-}" --arg manager_slug "${MANAGER_SLUG:-}" --arg claim_assigns "${CLAIM_ASSIGNS:-0}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
@@ -254,6 +256,7 @@ pdo_config_json() {
       agent_qc_ports: ($aqc_ports | split(" ") | map(select(length > 0) | tonumber)),
       agent_qc_repos: ($aqc_repos | split(" ") | map(select(length > 0))), agent_qc_worktree: $aqc_wt,
       agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes, agent_qc_skill: $aqc_skill,
+      agent_qc_review_hook: $aqc_review_hook,
       system_manager_workspace: $sm, control_dir: $control,
       cwt_status: $cwt, p_labels: ($plabels | split(" ") | map(select(length > 0))),
       label_qc_ready: $qc_ready, label_qc_done: $qc_done, label_merge_ready: $merge_ready,

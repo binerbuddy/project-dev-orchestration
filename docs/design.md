@@ -202,8 +202,9 @@ watcher).
     flips the labels: `QC complete - ready to review` (UX review) or `Ready for Merge` +
     `UX testing skipped`. A PR or linked issue labelled `needs UX review` (`LABEL_NEEDS_UX`; intake sets
     it, `CARRY_LABELS` copies it onto PRs) always gets UX review; when unsure, review.
-  - Project know-how (login, seed users, review-path extras such as a hosted preview request) lives in
-    the file `AGENT_QC_NOTES` names.
+  - Project know-how (login, seed users, browser notes) lives in the file `AGENT_QC_NOTES` names. A
+    review-path extra (e.g. requesting a hosted preview) is `AGENT_QC_REVIEW_HOOK <repo> <pr#>`, run by
+    `bin/agent-qc verdict … pass-ux` itself, so the agent never posts trigger comments.
 - **Awaiting the human** (the PR cap, parking, the waiting lists): `ready for QC`, `QC complete - ready to
   review`, `Ready for Merge` and `QC escalated`. The snapshot's `human_queue` lists open PRs by stage
   (`agent_qc`, `ux_review`, `ready_for_merge`, `qc_escalated`); where agent QC runs, `ready for QC` PRs
@@ -306,6 +307,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `LABEL_NEEDS_UX` / `LABEL_QC_ESCALATED` | `needs UX review` / `QC escalated` | force a UX review; agent QC failed `AGENT_QC_MAX_ROUNDS` times |
 | `AGENT_QC_PORTS` | (none: agent QC off) | the QC Agent's reserved ports; hibernation never stops them |
 | `AGENT_QC_REPOS` / `AGENT_QC_WORKTREE` | `QC_REPO` / `qc-agent` | repos agent QC takes; its worktree under each repo root |
+| `AGENT_QC_REVIEW_HOOK` | (none) | run with `<repo> <pr#>` after a UX-review pass |
 | `AGENT_QC_MAX_ROUNDS` / `AGENT_QC_NOTES` / `AGENT_QC_SKILL` | `2` / (none) / `<prefix>project-agent-qc` | failed rounds before escalation; the project's agent-QC know-how file; the skill |
 | `SYSTEM_MANAGER_WORKSPACE` | `System Manager` | named in the queue's `orchestrator-system` reason |
 | `CONTROL_DIR` | the env's config dir | cwd of the standing orchestrator, QC and intake agents |

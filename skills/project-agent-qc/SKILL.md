@@ -19,7 +19,7 @@ scratchpad.
 **Project.** `project=<p>` in the arguments; pass `--project <p>` to every script. Read once per
 session, and again after a context compaction:
 - `pdo project-env --project <p> AGENT_QC_NOTES`: the project's agent-QC know-how (how to log in,
-  seed users, API recipes, browser notes, review-path extras). Read the file it names.
+  seed users, API recipes, browser notes). Read the file it names.
 - each repo's `.agents/project-profile.md` (`## Dev servers`, `## QC data`): from the QC worktree
   once it exists, else `git -C <repo root> show origin/<default>:.agents/project-profile.md`.
 - `skills/project-how-it-works/references/qc-protocol.md` (checklist, fixtures, labels).
@@ -151,14 +151,15 @@ Classify the PR by the **visible-change rule**:
    ```
 2. `pdo agent-qc verdict <repo> <PR#> pass-ux` (→ `QC complete - ready to review`: the human's UX
    review) or `pass-skip` (→ `Ready for Merge` + `UX testing skipped`).
-3. **Review path:** do the project's review-path extras from AGENT_QC_NOTES (e.g. request a hosted
-   preview for a remote reviewer).
+3. **Review path:** `pass-ux` also runs the project's `AGENT_QC_REVIEW_HOOK` (e.g. it requests a hosted
+   preview for a remote reviewer) and prints its result. If it failed, say so in your session; don't
+   retry it by other means.
 4. Don't prompt the command agent: the watcher's `qc_complete` fires on the new label and the
    orchestrator tells it to wrap up, once.
 
 ## 6. Tear down
 
-`pdo qc stop --agent --repo <repo> --project <p>` plus the hook's data-drop option the notes name
+Run it as its own command (not chained with `gh` calls): `pdo qc stop --agent --repo <repo> --project <p>` plus the hook's data-drop option the notes name
 (e.g. `--drop-db`), and close every browser you started (kill by PID, never `pkill -f`). Then
 `pdo agent-qc release` (unless step 5a left `delivery=pending`). One line in your session:
 `<repo>#<PR> <verdict> (<classification or round>) <comment url>`.

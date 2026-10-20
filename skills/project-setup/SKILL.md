@@ -286,7 +286,8 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # declare -A FIXTURE_EXT_BY_REPO=([<other repo>]=".<ext>")   # repos with another format
 # QC_PORTS="<ports>"            # the human's reserved QC ports, from §Dev servers
 # AGENT_QC_PORTS="<ports>"      # agent QC (QC Agent workspace) ports, distinct from QC_PORTS and agents' ranges; off when unset
-# AGENT_QC_NOTES="docs/agent-qc-<name>.md"   # the project's agent-QC know-how (login, seed users, review-path extras)
+# AGENT_QC_NOTES="docs/agent-qc-<name>.md"   # the project's agent-QC know-how (login, seed users, browser notes)
+# AGENT_QC_REVIEW_HOOK="hooks/<name>"         # run with <repo> <pr#> after a UX-review pass (e.g. request a preview)
 # WATCH_EVENT_HOOK="hooks/<name>"  # only for project events of its own (e.g. §Project extras comment commands)
 # MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
 # PORTFOLIO_PRIORITY=3          # portfolio manager (pdo fleet): 1 = highest
