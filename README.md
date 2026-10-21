@@ -130,7 +130,7 @@ declare -A REPO_ROOT=(        # repo -> local clone root (a bare root holds work
   [widget-docs]="$HOME/src/widget-docs"
 )
 PRIMARY_REPO="widget"         # bare "#12" means widget#12
-GH_USER="acme-bot"            # optional: pin every agent's gh to this login
+GH_USER="acme-bot"            # optional: pin gh and git (every agent and pdo script) to this login
 QC_HOOK="hooks/acme-qc"       # optional: starts/stops your QC servers (relative = this config dir)
 QC_PORTS="3000 4200"          # optional: ports hibernation must never stop
 WATCH_EVENT_HOOK="hooks/acme-events"  # optional: project-specific watcher events (e.g. PR-comment commands)
@@ -148,7 +148,7 @@ each its own fixture format (`declare -A FIXTURE_EXT_BY_REPO=([other-repo]=".dum
 `gh` has one active account for the whole machine, and git over HTTPS (credential helper
 `!gh auth git-credential`) follows it. Someone with a work org and personal repos, and agents in
 both, breaks the other context every time anything runs `gh auth switch`. The engine's per-project
-`GH_USER` pin covers only the agents it launches. `bin/install --gh-identities` covers everything
+`GH_USER` pin covers only the agents it launches and its own scripts. `bin/install --gh-identities` covers everything
 else, without switching:
 
 1. **A map**, `~/.config/project-dev-orchestration/gh-identities`: one line per GitHub owner (org or

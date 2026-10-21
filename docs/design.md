@@ -44,6 +44,10 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
 - Every launch is prefixed by `identity_wrapper`: `bin/with-gh-user --user $GH_USER` when the project sets
   `GH_USER` (gh's active account is machine-wide and other sessions switch it), plus whatever words the
   project's `IDENTITY_HOOK` prints for that checkout (e.g. a bot identity for one repo).
+- The engine's own scripts pin themselves the same way: `pdo_finalize` (bash) and `pdo_config.load` (python) set
+  `GH_TOKEN` and the git helper for `GH_USER` (`pdo_gh_pin`, `bin/gh-pin.sh`), so `pdo spawn` can read a private
+  repo the machine's active account can't see. A token a person set (`GH_TOKEN` or `GITHUB_TOKEN`) wins; one an
+  engine pin set for another login (`PDO_GH_PIN`, e.g. another project's script calling this one) is replaced.
 - `with-gh-user` pins both gh (`GH_TOKEN`) and git over HTTPS: it appends two `GIT_CONFIG_KEY_<i>`/`VALUE_<i>`
   entries after the existing `GIT_CONFIG_COUNT` (reset the github.com credential helpers, then
   `!gh auth git-credential`, which answers with `GH_TOKEN`), so `git push` and `fetch` use the same login and no
@@ -285,7 +289,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `DEFAULT_MODEL` | `opus` | model alias for launched agents |
 | `BRIEF_TEMPLATE` | see Spawning | dispatch brief template |
 | `PRIMARY_REPO` | (none) | bare `#n` means this repo; default `--repo` for qc, shots, pr-agent, fixtures |
-| `GH_USER` | (none) | pin agents' gh to this login; unset = no pin |
+| `GH_USER` | (none) | pin gh and git to this login: launched agents (`with-gh-user`) and every engine script (`pdo_finalize`, `pdo_config.load`), unless `GH_TOKEN`/`GITHUB_TOKEN` is already set; unset = no pin |
 | `IDENTITY_HOOK` | (none) | `hook <dir>` prints extra wrapper words for an agent in that checkout |
 | `TEAM_UP_HOOK` | (none) | extra `team-up` steps; gets team-up's unknown options |
 | `SYSREPORT_HOOK` | (none) | extra `sysreport` lines |

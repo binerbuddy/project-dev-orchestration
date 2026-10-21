@@ -31,7 +31,9 @@ mkdir -p "$T/fakebin"
 cat >"$T/fakebin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$SMOKE_LOG"
+[[ -n "${SMOKE_TOKEN_LOG:-}" ]] && echo "${GH_TOKEN:-none} $*" >>"$SMOKE_TOKEN_LOG"
 case "$*" in
+  "auth token -u nobody") exit 1 ;;
   "api user --jq .login") echo me ;;
   # claim / release (managed-by labels, claim comment)
   "api repos/acme/widget/labels/managed-by%3A"*) [[ -f "$SMOKE_DIR/label-exists" ]] || { echo "HTTP 404" >&2; exit 1; } ;;
@@ -241,6 +243,18 @@ eq "with-gh-user leaves an outer wrapper's github.com helper in charge" \
 eq "with-gh-user keeps the outer count when it adds nothing" \
   "$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=x "$BIN/with-gh-user" --user octo printenv GIT_CONFIG_COUNT)" 1
 
+# --- every script pins GH_USER (pdo_finalize / pdo_config.load) ---
+pin() { (cd "$T" && env "$@" bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; pdo_finalize; echo \"\${GH_TOKEN:-unset} \${PDO_GH_PIN:-unset}\"" 2>&1); }
+eq "pin: GH_USER pins GH_TOKEN" "$(pin GH_USER=octo)" "token-for-octo octo"
+eq "pin: no GH_USER, no pin" "$(pin)" "unset unset"
+eq "pin: a token a person set wins" "$(pin GH_USER=octo GH_TOKEN=mine)" "mine unset"
+eq "pin: GITHUB_TOKEN counts as set" "$(pin GH_USER=octo GITHUB_TOKEN=mine)" "unset unset"
+eq "pin: another login's engine pin is replaced" "$(pin GH_USER=octo GH_TOKEN=token-for-gbot PDO_GH_PIN=gbot)" "token-for-octo octo"
+has "pin: a login gh lacks warns and runs unpinned" "$(pin GH_USER=nobody)" "warning: no gh token for GH_USER=nobody"
+eq "pin: git over HTTPS too" "$(cd "$T" && GH_USER=octo bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; pdo_finalize; printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null | sed -n 's/^password=//p'")" token-for-octo
+eq "pin: python load() pins too" "$(cd "$T" && GH_USER=octo python3 -c "import os, sys; sys.path.insert(0, '$BIN'); import pdo_config; pdo_config.load('acme'); print(os.environ['GH_TOKEN'], os.environ['PDO_GH_PIN'], os.environ['GIT_CONFIG_COUNT'])")" "token-for-octo octo 2"
+eq "pin: python keeps a person's token" "$(cd "$T" && GH_USER=octo GH_TOKEN=mine python3 -c "import os, sys; sys.path.insert(0, '$BIN'); import pdo_config; pdo_config.load('acme'); print(os.environ['GH_TOKEN'])")" mine
+
 # --- intake inbox ---
 out="$("$BIN/intake-submit" "Acme-12 smoke" "a report")"
 f="${out#queued for intake: }"
@@ -272,6 +286,10 @@ eq "spawn dry-run branch" "$(jq -r .branch <<<"$out" 2>/dev/null)" "fix/12-widge
 eq "spawn dry-run worktree" "$(jq -r .worktree <<<"$out" 2>/dev/null)" "$T/repos/widget.git/12-widget-crash-save"
 has "spawn dry-run prompt names the skill" "$(jq -r .prompt <<<"$out" 2>/dev/null)" "/project-dev-orchestration:project-small-feature-or-bug-fix Work acme/widget#12"
 check "spawn dry-run logged no failure" test ! -e "$T/state/spawn-failures.jsonl"
+GH_USER=octo SMOKE_TOKEN_LOG="$T/tokens.log" "$BIN/spawn" widget 12 --dry-run >/dev/null 2>&1
+eq "spawn reads the issue as GH_USER (no with-gh-user wrapping)" "$(grep -c '^token-for-octo api repos/acme/widget/issues/12$' "$T/tokens.log")" 1
+SMOKE_TOKEN_LOG="$T/tokens-q.log" GH_USER=octo "$BIN/queue" --json >/dev/null 2>&1
+eq "queue (python) reads the board as GH_USER" "$(grep -c '^token-for-octo project item-list' "$T/tokens-q.log")" 1
 "$BIN/spawn" nosuchrepo 12 >/dev/null 2>&1
 check "spawn failure is logged" grep -q '"repo":"nosuchrepo"' "$T/state/spawn-failures.jsonl"
 

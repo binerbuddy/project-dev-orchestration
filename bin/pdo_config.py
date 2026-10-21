@@ -5,6 +5,8 @@ bash and python always agree (config dirs, project detection, state dir, inbox, 
 """
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -31,7 +33,39 @@ def load(project=None, prog=None):
     # child scripts and hooks see the same state dir and inbox as this process
     os.environ["PDO_STATE_DIR"] = cfg["state_dir"]
     os.environ["PDO_INBOX"] = cfg["inbox"]
+    pin_gh(cfg.get("gh_user"), prog)
     return cfg
+
+
+def pin_gh(user, prog=None):
+    """Run this process's gh (and git over HTTPS) as the project's GH_USER, as pdo_pin_project_gh in
+    lib.sh does for the bash scripts: a token a person set wins; another project's engine pin doesn't."""
+    if not user:
+        return
+    env = os.environ
+    if (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")) and (not env.get("PDO_GH_PIN") or env["PDO_GH_PIN"] == user):
+        return
+    warn = f"{prog or 'pdo'}: warning: no gh token for GH_USER={user}; using gh's active account"
+    try:
+        r = subprocess.run(["gh", "auth", "token", "-u", user], capture_output=True, text=True)
+    except OSError:
+        print(warn, file=sys.stderr)
+        return
+    tok = r.stdout.strip()
+    n = env.get("GIT_CONFIG_COUNT", "0")
+    if r.returncode != 0 or not tok or not n.isdigit():
+        print(warn, file=sys.stderr)
+        return
+    env["GH_TOKEN"], env["PDO_GH_PIN"] = tok, user
+    n = int(n)
+    keys = [env.get(f"GIT_CONFIG_KEY_{i}", "") for i in range(n)]
+    if any(k == "credential.helper" or (k.startswith("credential.https://github.com") and k.endswith(".helper")) for k in keys):
+        return  # an outer wrapper's helper chain stays in charge (it reads GH_TOKEN)
+    gh = shutil.which("gh") or "gh"
+    env[f"GIT_CONFIG_KEY_{n}"], env[f"GIT_CONFIG_VALUE_{n}"] = "credential.https://github.com.helper", ""
+    env[f"GIT_CONFIG_KEY_{n + 1}"] = "credential.https://github.com.helper"
+    env[f"GIT_CONFIG_VALUE_{n + 1}"] = f"!{shlex.quote(gh)} auth git-credential"
+    env["GIT_CONFIG_COUNT"] = str(n + 2)
 
 
 def ref(cfg, repo, number):
