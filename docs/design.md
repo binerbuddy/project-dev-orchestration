@@ -90,6 +90,11 @@ without `--allow-phase`: the epic's build agent works every phase. Independent f
 2. Within a level: `Security`-labelled, then Bugs, then issues whose parent epic is In Progress, then
    oldest first (a "created YYYY-MM-DD by" footer in the body wins over `created_at`, for migrated issues).
 
+- **Board-less mode** (no `PROJECT_NUMBER`): the queue is the open issues labelled `QUEUE_LABEL` (default
+  `queue:work`, matched without case), ranked as above with no CWT and no board-status exclusions (the
+  `managed-by:` claim label marks work in progress). The usual exclusions and priority inheritance apply, and a
+  blocker of queued work joins the queue even without the label. `claim` still applies the label and the claim
+  comment and skips only the board move.
 - **Auto-spawn:** CWT and P1–P3. P4 and unprioritised wait for `drain`.
 - **Spawn floor:** `bin/floor P2` (persisted per project) stops anything below it from auto-spawning,
   CWT included.
@@ -279,7 +284,8 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | Key | Default | Meaning |
 |---|---|---|
 | `ORG` | (required) | GitHub owner of the repos and the board |
-| `PROJECT_NUMBER` | (none) | org project board number; the queue and claim need it |
+| `PROJECT_NUMBER` | (none) | org project board number; without one the queue is board-less (`QUEUE_LABEL`) and claim skips the board move |
+| `QUEUE_LABEL` | `queue:work` | board-less projects only: the issue label that puts an issue in the queue; empty = no queue |
 | `REPO_ROOT` | (required) | `declare -A`: repo name → local clone root |
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
 | `REPO_MANAGER` | `()` | `declare -A`: self-managed repo → its manager's workspace/session name (`fleet`) |
@@ -299,9 +305,9 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `TEAM_UP_HOOK` | (none) | extra `team-up` steps; gets team-up's unknown options |
 | `SYSREPORT_HOOK` | (none) | extra `sysreport` lines |
 | `QC_HOOK` | (none) | the QC servers (contract below) |
-| `BRANCH_PREFIX` | `bug=fix default=feat` | `spawn`'s small-route branch prefix, `<key>=<prefix>` pairs matched without case against the issue type, then its labels in order (user-owned repos have no types), else `default`; e.g. `bug=fix task=chore docs=docs default=feat` |
+| `BRANCH_PREFIX` | `bug=fix default=feat` | `spawn`'s small-route branch prefix, `<key>=<prefix>` pairs matched without case against the issue type, or for an issue without a type (user-owned repos) its labels in order, else `default`; e.g. `bug=fix task=chore docs=docs default=feat` |
 | `QC_REPO` | `PRIMARY_REPO` | repo `bin/qc` serves |
-| `WORKTREE_PARENT` | bare root, or `<clone>-worktrees` | `declare -A`: repo → the dir that holds its agent, QC and agent-QC worktrees (`spawn`, `qc`, `resume-agent`); the default keeps worktrees out of a plain clone's checkout |
+| `WORKTREE_PARENT` | bare root, or `<clone>-worktrees` | `declare -A`: repo → the dir that holds its agent, QC and agent-QC worktrees (`spawn`, `qc`, `resume-agent`); the default keeps worktrees out of a plain clone's checkout. Upgrading from 0.7: a plain clone's existing `qc` worktree stays registered inside the clone (remove it with `git worktree remove`), or set the entry to the clone to keep the old place |
 | `QC_WORKTREE` | `qc` | QC worktree dir name under the worktree parent |
 | `QC_PORTS` | (none) | ports hibernation never stops |
 | `QC_PORTS_SHARED` | `0` | `1`: `QC_PORTS` are the human's dev ports on purpose, so `qc` may stop a listener it didn't start (otherwise it refuses without `--force`) |

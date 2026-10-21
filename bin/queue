@@ -19,6 +19,10 @@ Fleet advice (soft): with FLEET_ADVICE=honour in the project env and a fresh (< 
 $PDO_STATE_DIR/fleet-advice.json from `fleet --write-advice`, "hold" makes auto_spawn false
 (fleet_hold) for everything except the urgent bypass, and suggested_max_active caps max_active
 below MAX_ACTIVE. With the default FLEET_ADVICE=ignore the advice is only shown in the summary.
+Board-less mode (no PROJECT_NUMBER): the queue is the open issues labelled QUEUE_LABEL (default
+"queue:work"), ranked the same way without the board's columns: no CWT, no board-status exclusions
+(the managed-by claim label marks work in progress). A blocker of a queued issue joins the queue
+through priority inheritance even without the label.
 Further tie-breaks: parent epic In Progress, oldest first
 (original creation date when the issue was migrated from another tracker).
 
@@ -78,14 +82,17 @@ def sh(*args):
 
 
 def load_env(project):
-    """ORG, PROJECT_NUMBER and the repos this orchestrator manages (REPO_ROOT minus
-    SELF_MANAGED_REPOS, which another manager owns end to end)."""
+    """ORG, PROJECT_NUMBER (None in board-less mode) and the repos this orchestrator manages
+    (REPO_ROOT minus SELF_MANAGED_REPOS, which another manager owns end to end)."""
     global PRIORITIES, CWT
     CFG.update(pdo_config.load(project, "queue"))
     PRIORITIES = {l: i + 1 for i, l in enumerate(CFG["p_labels"])}
     CWT = CFG["cwt_status"]
-    if not re.fullmatch(r"\d+", CFG["project_number"] or ""):
-        sys.exit(f"queue: project '{CFG['project']}' has no PROJECT_NUMBER (the queue ranks a project board)")
+    num = CFG["project_number"] or ""
+    if num and not re.fullmatch(r"\d+", num):
+        sys.exit(f"queue: project '{CFG['project']}' has a bad PROJECT_NUMBER: {num}")
+    if not num and not CFG.get("queue_label"):
+        sys.exit(f"queue: project '{CFG['project']}' has no PROJECT_NUMBER (board) and no QUEUE_LABEL (board-less queue)")
     managed = set(CFG["self_managed_repos"])
     return CFG["org"], CFG["project_number"], [r for r in CFG["repo_root"] if r not in managed]
 
@@ -157,6 +164,12 @@ def inherit_priority(org, rows):
     def wants_to_run(r):
         return all(x.startswith("blocked-by:") for x in r["excluded"])
 
+    def lift(r):  # board-less mode: a blocker of queued work is queued work
+        if "not-queued" in r["excluded"]:
+            r["excluded"].remove("not-queued")
+            return True
+        return False
+
     changed = True
     while changed:  # fixpoint over the (small) blocking graph
         changed = False
@@ -166,6 +179,8 @@ def inherit_priority(org, rows):
                 continue
             for t in targets:
                 b = by_key.get(t)
+                if b and wants_to_run(b) and lift(r):
+                    changed = True
                 if b and wants_to_run(b) and (b["p_level"] < r["p_level"] or (b["cwt"] and not r["cwt"])):
                     r["p_level"] = min(r["p_level"], b["p_level"])
                     r["cwt"] = r["cwt"] or b["cwt"]
@@ -224,7 +239,8 @@ def main():
     org, num, repos = load_env(a.project)
     if a.repo:
         repos = [a.repo]
-    board = board_items(org, num)
+    queue_label = None if num else CFG["queue_label"]  # board-less mode: the label is the queue
+    board = board_items(org, num) if num else {}
     workspaces = herdr_workspaces()
     failures = recent_failures()
 
@@ -282,6 +298,8 @@ def main():
             if l.lower().startswith("managed-by:"):
                 # a managed-by label is a claim: ours = already in progress here; another manager's = theirs
                 reasons.append("claimed" if my_label and l.lower() == my_label.lower() else l)
+        if queue_label and queue_label.lower() not in lower:
+            reasons.append("not-queued")  # dropped below unless inheritance lifts it as a blocker
         if blocked:
             refs = blockers.get((repo, n))
             reasons.append("blocked-by:" + (",".join(refs) if refs else str(blocked)))
@@ -307,7 +325,9 @@ def main():
         (excluded if reasons else ranked).append(row)
 
     inherit_priority(org, ranked + excluded)
-    ranked = [r for r in ranked if not r["excluded"]]
+    rows = [r for r in ranked + excluded if "not-queued" not in r["excluded"]]
+    ranked = [r for r in rows if not r["excluded"]]
+    excluded = [r for r in rows if r["excluded"]]
 
     floor = read_floor(CFG["project"], a.floor)
     advice = pdo_config.fleet_advice(CFG)
@@ -330,7 +350,7 @@ def main():
     excluded.sort(key=key)
 
     if a.json:
-        out = {"ranked": ranked[: a.limit], "floor": p_name(floor) if floor < NO_PRIORITY else None,
+        out = {"ranked": ranked[: a.limit], **({"mode": "label", "queue_label": queue_label} if queue_label else {}), "floor": p_name(floor) if floor < NO_PRIORITY else None,
                "eligible": len(ranked), "excluded_count": len(excluded), "max_active": max_active,
                "fleet": advice}
         if a.all:
@@ -355,7 +375,8 @@ def main():
         fa = (f"; fleet: {advice.get('advice')}, max {advice.get('suggested_max_active')}"
               f" ({advice.get('reason', '')}; {advice['age_min']} min old, "
               f"{'honoured, max_active ' + str(max_active) if advice['honoured'] else 'advisory: FLEET_ADVICE=ignore'})")
-    print(f"     ({len(ranked)} eligible, {len(excluded)} excluded; P1-P3 and CWT auto-spawn, P4/P- wait for drain{fl}{fa})")
+    src = f"; board-less: issues labelled {queue_label}" if queue_label else ""
+    print(f"     ({len(ranked)} eligible, {len(excluded)} excluded; P1-P3 and CWT auto-spawn, P4/P- wait for drain{fl}{fa}{src})")
     if a.all:
         print("\nExcluded:")
         for r in excluded:

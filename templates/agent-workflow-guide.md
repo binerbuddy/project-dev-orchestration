@@ -48,10 +48,11 @@ general guide, for any repo that uses the system, is at https://binerbuddy.githu
   | `route:build` | a feature whose design doc is ready | `/project-feature-build` |
 
 - **Getting it worked:** <one of: "The manager moves the issue to **<queue column>** on the board; the orchestrator
-  starts an agent within minutes." / "The manager assigns it to you; then ask your agent to work it with the route's
+  starts an agent within minutes." / "The manager labels the issue `<queue label>`; the orchestrator starts an agent
+  within minutes." (no board, with an orchestrator) / "The manager assigns it to you; then ask your agent to work it with the route's
   command."> An issue assigned to someone is theirs: leave it alone. An issue labelled `managed-by:<manager>` is
   being worked by that manager's agents (the claim comment says who): ask them before touching it. One that GitHub
-  shows as "blocked by" another issue waits for it. <!-- env CWT_STATUS / PROJECT_NUMBER -->
+  shows as "blocked by" another issue waits for it. <!-- env CWT_STATUS / PROJECT_NUMBER / QUEUE_LABEL -->
 - **Working an issue yourself:** in your clone, run the route's command with the issue, e.g.
   `/project-small-feature-or-bug-fix #<n>`. Your agent works in its own branch and worktree, asks you its questions,
   and stops at a PR labelled `<QC-ready label>`. <!-- env LABEL_QC_READY -->
@@ -122,7 +123,7 @@ Your agent writes the entry; check it reads well to a user.
 ## Don't
 
 - Don't merge, or apply `<merge-ready label>` without doing QC.
-- Don't put issues on the board's queue column or set priorities unless you're the manager.
+- Don't put issues on the board's queue column (or label them `<queue label>`) or set priorities unless you're the manager.
 - Don't type into another agent's session; talk to agents through PR comments or the manager.
 - Don't commit `.agents/local/`.
 

@@ -180,6 +180,7 @@ pdo_finalize() {
   AGENT_QC_SKILL="${AGENT_QC_SKILL:-${PDO_SKILL_PREFIX}project-agent-qc}"
   # board Status and label vocabulary (today's names are the defaults)
   CWT_STATUS="${CWT_STATUS:-Claude Work This}"
+  QUEUE_LABEL="${QUEUE_LABEL-queue:work}"   # board-less projects (no PROJECT_NUMBER): the issue label that is the queue
   P_LABELS="${P_LABELS:-P1-urgent P2-high P3-medium P4-low}"   # best first
   LABEL_QC_READY="${LABEL_QC_READY:-ready for QC}"
   LABEL_QC_DONE="${LABEL_QC_DONE:-QC complete - ready to review}"   # agent QC passed, awaiting human UX review
@@ -274,7 +275,7 @@ pdo_config_json() {
     --arg qc_worktree "$QC_WORKTREE" --arg branch_prefix "$BRANCH_PREFIX" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_ports_shared "$QC_PORTS_SHARED" \
     --arg sm "$SYSTEM_MANAGER_WORKSPACE" --arg control "$CONTROL_DIR" \
     --arg carry "$CARRY_LABELS" --arg shots "$SCREENSHOT_DIR" \
-    --arg cwt "$CWT_STATUS" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
+    --arg cwt "$CWT_STATUS" --arg queue_label "$QUEUE_LABEL" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
     --arg merge_ready "$LABEL_MERGE_READY" --arg ux_skipped "$LABEL_UX_SKIPPED" --arg needs_ux "$LABEL_NEEDS_UX" --arg qc_escalated "$LABEL_QC_ESCALATED" \
     --arg aqc_ports "$AGENT_QC_PORTS" --arg aqc_repos "$AGENT_QC_REPOS" --arg aqc_wt "$AGENT_QC_WORKTREE" \
     --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --arg aqc_skill "$AGENT_QC_SKILL" \
@@ -298,7 +299,7 @@ pdo_config_json() {
       agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes, agent_qc_skill: $aqc_skill,
       agent_qc_review_hook: $aqc_review_hook,
       system_manager_workspace: $sm, control_dir: $control,
-      cwt_status: $cwt, p_labels: ($plabels | split(" ") | map(select(length > 0))),
+      cwt_status: $cwt, queue_label: $queue_label, p_labels: ($plabels | split(" ") | map(select(length > 0))),
       label_qc_ready: $qc_ready, label_qc_done: $qc_done, label_merge_ready: $merge_ready,
       label_ux_skipped: $ux_skipped, label_needs_ux: $needs_ux, label_qc_escalated: $qc_escalated, skill_prefix: $prefix,
       orchestrate_skill: $orch, qc_skill: $qc_skill, intake_skill: $intake,
