@@ -298,6 +298,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `TEAM_UP_HOOK` | (none) | extra `team-up` steps; gets team-up's unknown options |
 | `SYSREPORT_HOOK` | (none) | extra `sysreport` lines |
 | `QC_HOOK` | (none) | the QC servers (contract below) |
+| `BRANCH_PREFIX` | `bug=fix default=feat` | `spawn`'s small-route branch prefix, `<key>=<prefix>` pairs matched without case against the issue type, then its labels in order (user-owned repos have no types), else `default`; e.g. `bug=fix task=chore docs=docs default=feat` |
 | `QC_REPO` | `PRIMARY_REPO` | repo `bin/qc` serves |
 | `QC_WORKTREE` | `qc` | QC worktree dir name under the repo root |
 | `QC_PORTS` | (none) | ports hibernation never stops |

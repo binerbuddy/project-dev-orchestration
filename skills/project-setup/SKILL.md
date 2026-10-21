@@ -293,6 +293,8 @@ declare -A ROUTE_SKILL=(
 DEFAULT_MODEL="opus"            # the engine default; ask if the human wants another
 GH_USER="<login>"               # the gh login this project's agents use (gh and git push)
 # PROJECT_NUMBER=<n>            # only with a board (below)
+# BRANCH_PREFIX="bug=fix default=feat"   # small-route branch prefix by issue type, then label; a user-owned repo
+#                                         # (no issue types) maps its type labels here, e.g. "bug=fix task=chore default=feat"
 # FIXTURE_EXT=".<ext>"          # from step 5: the primary repo's fixture format
 # declare -A FIXTURE_EXT_BY_REPO=([<other repo>]=".<ext>")   # repos with another format
 # QC_PORTS="<ports>"            # the ports QC serves on, from round 3 (own ports, not the human's dev servers')

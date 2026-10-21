@@ -109,9 +109,24 @@ NAME="$REPO-$NUM $BRIEF"
 AGENT="$(tr 'A-Z' 'a-z' <<<"$REPO" | tr -cd 'a-z0-9-' | cut -c1-24)-$NUM"
 SLUG="$NUM-$(tr 'A-Z ' 'a-z-' <<<"$BRIEF" | tr -cd 'a-z0-9-')"
 
+# small-route branch prefix: BRANCH_PREFIX ("bug=fix task=chore default=feat"), matched without case
+# against the issue type; an issue without a type (user-owned repos have none) by its labels in order;
+# else default
+declare -A PREFIX_OF=()
+for kv in $BRANCH_PREFIX; do k="${kv%%=*}"; PREFIX_OF["${k,,}"]="${kv#*=}"; done
+PREFIX=""
+if [[ "$TYPE" != none ]]; then
+  PREFIX="${PREFIX_OF["${TYPE,,}"]:-}"
+else
+  while IFS= read -r l; do
+    [[ -n "$l" && -n "${PREFIX_OF["${l,,}"]:-}" ]] && { PREFIX="${PREFIX_OF["${l,,}"]}"; break; }
+  done < <(jq -r '.labels[].name' <<<"$ISSUE_JSON")
+fi
+PREFIX="${PREFIX:-${PREFIX_OF[default]:-feat}}"
+
 case "$ROUTE" in
   small)
-    if [[ "$TYPE" == Bug ]]; then BRANCH="fix/$SLUG"; else BRANCH="feat/$SLUG"; fi
+    BRANCH="$PREFIX/$SLUG"
     BASE="${BASE:-origin/main}" ;;
   design)
     BRANCH="docs/$SLUG-design"; BASE="${BASE:-origin/main}" ;;
