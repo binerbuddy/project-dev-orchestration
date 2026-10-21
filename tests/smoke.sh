@@ -90,6 +90,8 @@ case "$*" in
     if [[ "$*" == *"r=tool"* ]]; then cat "$SMOKE_DIR/fleet-tool.json"
     else echo '{"data":{"repository":{"pullRequests":{"totalCount":0,"nodes":[]},"gates":{"nodes":[]}}}}'; fi ;;
   "api repos/acme/"*"/issues?state=open"*) ;;
+  "api repos/delta/tool/issues?state=open"*) cat "$SMOKE_DIR/delta-issues.jsonl" ;;
+  "api repos/delta/tool/issues/24/dependencies/blocking"*) echo "tool 25" ;;
   "api graphql"*"open: pullRequests"*)
     if [[ -n "${SMOKE_PRS:-}" ]]; then cat "$SMOKE_PRS"; else echo '{"data":{"repository":{"open":{"nodes":[]},"done":{"nodes":[]}}}}'; fi ;;
   "api graphql"*) echo '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}' ;;
@@ -254,6 +256,7 @@ eq "pin: another login's engine pin is replaced" "$(pin GH_USER=octo GH_TOKEN=to
 has "pin: a login gh lacks warns and runs unpinned" "$(pin GH_USER=nobody)" "warning: no gh token for GH_USER=nobody"
 eq "pin: git over HTTPS too" "$(cd "$T" && GH_USER=octo bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; pdo_finalize; printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null | sed -n 's/^password=//p'")" token-for-octo
 eq "pin: python load() pins too" "$(cd "$T" && GH_USER=octo python3 -c "import os, sys; sys.path.insert(0, '$BIN'); import pdo_config; pdo_config.load('acme'); print(os.environ['GH_TOKEN'], os.environ['PDO_GH_PIN'], os.environ['GIT_CONFIG_COUNT'])")" "token-for-octo octo 2"
+eq "pin: python keeps a person's token with an empty PDO_GH_PIN" "$(cd "$T" && GH_USER=octo GH_TOKEN=mine PDO_GH_PIN= python3 -c "import os, sys; sys.path.insert(0, '$BIN'); import pdo_config; pdo_config.load('acme'); print(os.environ['GH_TOKEN'])")" mine
 eq "pin: python keeps a person's token" "$(cd "$T" && GH_USER=octo GH_TOKEN=mine python3 -c "import os, sys; sys.path.insert(0, '$BIN'); import pdo_config; pdo_config.load('acme'); print(os.environ['GH_TOKEN'])")" mine
 
 # --- /project-setup never writes a versioned plugin-cache engine path into AGENTS.md ---
@@ -301,6 +304,7 @@ eq "BRANCH_PREFIX maps a label" "$(BRANCH_PREFIX="bug=fix Task=chore default=fea
 eq "BRANCH_PREFIX default entry" "$(BRANCH_PREFIX="default=work" "$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "work/12-widget-crash-save"
 jq '.type = {name: "Feature"} | .labels = [{name: "bug"}]' "$T/issue12-nt.json" >"$T/issue12.json"
 eq "the type is matched before labels" "$(BRANCH_PREFIX="feature=feat bug=fix" "$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "feat/12-widget-crash-save"
+eq "a typed issue's labels are not read (a bug label on a Feature stays feat/)" "$("$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "feat/12-widget-crash-save"
 cp "$T/issue12-typed.json" "$T/issue12.json"
 eq "branch_prefix in the JSON config" "$("$BIN/pdo-config" --project acme --json | jq -c .branch_prefix)" '{"bug":"fix","default":"feat"}'
 GH_USER=octo SMOKE_TOKEN_LOG="$T/tokens.log" "$BIN/spawn" widget 12 --dry-run >/dev/null 2>&1
@@ -361,7 +365,37 @@ check "release --unassign removes the login" grep -q 'remove-assignee me' "$SMOK
 
 # --- python scripts against the fakes ---
 out="$("$BIN/queue" --json 2>&1)"; eq "queue (empty board)" "$(jq -c .ranked <<<"$out" 2>/dev/null)" "[]"
-out="$("$BIN/queue" --project beta 2>&1)"; has "queue needs a PROJECT_NUMBER" "$out" "no PROJECT_NUMBER"
+out="$(QUEUE_LABEL= "$BIN/queue" --project beta 2>&1)"; has "queue needs a board or a QUEUE_LABEL" "$out" "no PROJECT_NUMBER (board) and no QUEUE_LABEL"
+eq "QUEUE_LABEL default" "$("$BIN/project-env" --project beta QUEUE_LABEL)" "queue:work"
+
+# --- board-less projects: the label queue, and claims without a board ---
+mkdir -p "$T/cfg-q/projects"
+printf 'ORG="delta"\ndeclare -A REPO_ROOT=([tool]="%s")\n' "$T/repos/docs" >"$T/cfg-q/projects/delta.env"
+printf 'ORG="acme"\ndeclare -A REPO_ROOT=([widget]="%s")\n' "$T/repos/widget.git" >"$T/cfg-q/projects/epsilon.env"
+dq() { jq -nc --argjson n "$1" --arg t "$2" --argjson l "$3" --argjson d "${4:-{\}}" '{number: $n, title: $t, labels: ($l | map({name: .})), assignees: [],
+  type: null, html_url: "h\($n)", url: "u\($n)", created_at: "2026-01-0\($n % 9 + 1)T00:00:00Z", body: "", issue_dependencies_summary: $d}'; }
+{ dq 1 "queued P2" '["P2-high","queue:work"]'; dq 2 "unqueued P1" '["P1-urgent"]'
+  dq 3 "queued, claimed" '["P1-urgent","Queue:Work","managed-by:other"]'
+  dq 24 "unqueued P4 blocker" '["P4-low"]' '{"blocked_by":0,"blocking":1}'
+  dq 25 "queued P2, blocked" '["P2-high","queue:work"]' '{"blocked_by":1,"blocking":0}'
+  dq 26 "queued P3" '["P3-medium","queue:work"]'
+} >"$T/delta-issues.jsonl"
+: >"$SMOKE_LOG"
+qd="$(PDO_CONFIG_DIRS="$T/cfg-q" "$BIN/queue" --project delta --all --json 2>&1)"
+eq "board-less queue: label mode" "$(jq -c '[.mode, .queue_label]' <<<"$qd")" '["label","queue:work"]'
+eq "board-less queue: queued work ranked by P-label; a blocker of queued work joins, lifted" "$(jq -c '[.ranked[] | "\(.number):\(.p)"]' <<<"$qd")" '["1:P2","24:P2","26:P3"]'
+eq "board-less queue: usual exclusions (label match ignores case)" "$(jq -c '[.excluded[] | "\(.number):\(.excluded | join(","))"]' <<<"$qd")" '["3:managed-by:other","25:blocked-by:1"]'
+eq "board-less queue: unqueued work is not listed" "$(jq -c '[.ranked[], .excluded[] | select(.number == 2)] | length' <<<"$qd")" 0
+eq "board-less queue: no board read" "$(grep -c 'project item-list' "$SMOKE_LOG")" 0
+has "board-less queue: summary names the label" "$(PDO_CONFIG_DIRS="$T/cfg-q" "$BIN/queue" --project delta 2>&1)" "board-less: issues labelled queue:work"
+eq "QUEUE_LABEL override" "$(PDO_CONFIG_DIRS="$T/cfg-q" QUEUE_LABEL=P3-medium "$BIN/queue" --project delta --json 2>/dev/null | jq -c '[.ranked[].number]')" '[26]'
+: >"$SMOKE_LOG"; rm -f "$T/state/agents/widget-12.json" "$T/label-exists"
+out="$(PDO_CONFIG_DIRS="$T/cfg-q" "$BIN/claim" widget 12 --project epsilon 2>&1)"; rc=$?
+eq "board-less claim: exit" "$rc" 0
+has "board-less claim: label, comment, no board" "$out" "(managed-by:epsilon, comment 9001), no board"
+check "board-less claim: added the label" grep -q 'api repos/acme/widget/issues/12/labels -f labels\[\]=managed-by:epsilon' "$SMOKE_LOG"
+check "board-less claim: posted the claim comment" grep -q 'comments -f body=Claimed by widget-12 (manager: epsilon)' "$SMOKE_LOG"
+eq "board-less claim: no board call" "$(grep -c 'graphql' "$SMOKE_LOG")" 0
 out="$("$BIN/pr-priority" --dry-run 2>&1)"; has "pr-priority (no PRs)" "$out" "already carry"
 check "pr-priority queried only managed + self-managed repos via graphql" grep -q "r=widget" "$SMOKE_LOG"
 
@@ -401,9 +435,14 @@ has "qc says how to proceed" "$out" "--force"
 eq "QC_PORTS_SHARED=1: qc may stop it" "$(QC_PORTS_SHARED=1 "$BIN/qc" start --ref main >/dev/null 2>&1; echo $?)" 0
 eq "--force: qc may stop it" "$("$BIN/qc" start --ref main --force >/dev/null 2>&1; echo $?)" 0
 check "--force is not passed to the hook" bash -c '! grep -q "hook start.*--force" "$0"' "$SMOKE_LOG"
-eq "qc recorded the listener it started" "$(cat "$T/state/qc/listeners")" "$LPID"
+eq "qc recorded the listener it started, and the port it held" "$(paste -sd' ' "$T/state/qc/listeners")" "$LPID port:3999"
 eq "a listener qc started is its own" "$("$BIN/qc" start --ref main >/dev/null 2>&1; echo $?)" 0
 kill $LPID; wait $LPID 2>/dev/null
+(cd "$T/elsewhere" && bash -c 'python3 -m http.server 3999 --bind 127.0.0.1 >/dev/null 2>&1; :' 2>/dev/null) & PPID_REC=$!
+for _ in $(seq 1 50); do ss -ltnH "sport = :3999" | grep -q . && break; sleep 0.1; done
+echo "$PPID_REC" >"$T/state/qc/listeners"
+eq "a child of a listener qc started is qc's" "$("$BIN/qc" stop >/dev/null 2>&1; echo $?)" 0
+{ kill $(ss -ltnpH "sport = :3999" | grep -o 'pid=[0-9]*' | cut -d= -f2); wait "$PPID_REC"; } 2>/dev/null
 listen "$T/repos/widget.git/qc" 3999
 rm -f "$T/state/qc/listeners"
 eq "a listener running in the QC worktree is qc's" "$("$BIN/qc" stop >/dev/null 2>&1; echo $?)" 0
@@ -493,7 +532,7 @@ has "fleet: gamma manager not running" "$(jq -r '.projects[1].manager.reach' <<<
 eq "fleet: REPO_MANAGER for a self-managed repo" "$(jq -c '.projects[1].self_managed' <<<"$out" 2>/dev/null)" '[{"repo":"lib","manager":"Lib Lead"}]'
 eq "fleet: active / hibernated agents" "$(jq -c '.projects[0].agents | [(.active | map(.agent)), (.hibernated | map(.agent + ":" + (.open_pr | tostring)))]' <<<"$out" 2>/dev/null)" '[["tool#4"],["tool#3:true"]]'
 eq "fleet: queue depth" "$(jq -c '.projects[0].queue | [.eligible, .urgent]' <<<"$out" 2>/dev/null)" '[2,1]'
-has "fleet: no board is reported, not fatal" "$(jq -r '.projects[1].queue.error' <<<"$out" 2>/dev/null)" "no board"
+has "fleet: a project with no queue is reported, not fatal" "$(jq -r '.projects[1].queue.error' <<<"$out" 2>/dev/null)" "every repo is self-managed"
 eq "fleet: PRs vs cap" "$(jq -c '.projects[0].prs | [.open, .awaiting_human, .cap]' <<<"$out" 2>/dev/null)" '[2,2,10]'
 eq "fleet: waiting on you ranked by impact" "$(jq -c '[.waiting_on_you[].why]' <<<"$out" 2>/dev/null)" '["merge (QC passed)","question","UX gate","QC","intake inbox"]'
 eq "fleet: rate limits per GH_USER identity" "$(jq -c '[.system.gh[] | "\(.user)=\(.graphql.remaining)"]' <<<"$out" 2>/dev/null)" '["(active gh account)=4000","gbot=4000"]'

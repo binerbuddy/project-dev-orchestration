@@ -95,7 +95,7 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling or the PR cap) and
      fits one context window. Design = needs a design doc. Build = an Epic with a READY design doc.
   4. `pdo spawn <repo> <n> --project <p> --brief "<brief>"`: worktree, herdr workspace, agent
      with Remote Control, claim (the `managed-by:<MANAGER_SLUG>` label plus one claim comment naming
-     the agent and you, and board In Progress; the assignee stays a human lock unless the project
+     the agent and you, and board In Progress when there is a board; the assignee stays a human lock unless the project
      sets `CLAIM_ASSIGNS=1`).
   5. If spawn fails, **move on** to the next candidate in the same tick. Spawn logs the failure and the
      queue skips that issue for 24h. Try at most 5 candidates per tick; report each failure in one line.

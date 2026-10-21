@@ -195,7 +195,8 @@ guidance paragraph with facts.
 Fill this plugin's `templates/AGENTS-workflow-section.md` (`../../templates/AGENTS-workflow-section.md`): drop its
 leading comment, replace every `<placeholder>` (`<org>/<repo>`, `<project#>`, `<base>`) and use the project's label
 names where its env renames them. `<guide path>` is where step 7 writes the human guide. With no board, replace the
-"on org Project `<project#>`" clause with "with no project board (a maintainer dispatches agents by hand)".
+"on org Project `<project#>`" clause with "with no project board (the `<queue label>` label puts an issue in the
+orchestrator's queue)", or, in repo-only, "with no project board (a maintainer dispatches agents by hand)".
 `<engine checkout>` must be a path that survives engine upgrades, or nothing. In repo+team, decide in this order:
 1. **`pdo` is on PATH** (`command -v pdo`): use the template's pdo-on-PATH variant of the engine paragraph, which names no path.
 2. **Else `pdo project-env PDO_HOME` is a stable checkout:** a git work tree (`git -C <path> rev-parse
@@ -295,7 +296,7 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # PROJECT_NUMBER=<n>            # only with a board (below)
 # declare -A WORKTREE_PARENT=([<repo>]="<dir>")  # where agent/QC worktrees go; default: the bare root, or
 #                                                # "<clone>-worktrees" next to a plain clone (only set to override)
-# BRANCH_PREFIX="bug=fix default=feat"   # small-route branch prefix by issue type, then label; a user-owned repo
+# BRANCH_PREFIX="bug=fix default=feat"   # small-route branch prefix by issue type (by label when untyped); a user-owned repo
 #                                         # (no issue types) maps its type labels here, e.g. "bug=fix task=chore default=feat"
 # FIXTURE_EXT=".<ext>"          # from step 5: the primary repo's fixture format
 # declare -A FIXTURE_EXT_BY_REPO=([<other repo>]=".<ext>")   # repos with another format
@@ -336,15 +337,16 @@ recommend skipping it.
 - **Create one:** only on the human's explicit yes. `gh project create --owner <org> --title "<title>"`, then
   `gh project link <n> --owner <org> --repo <org>/<repo>`, then have the human add the Status options above in the UI,
   and record it as for an existing board.
-- **Skip:** no board means no queue. Leave `PROJECT_NUMBER` out; agents are dispatched by hand with
-  `pdo spawn <repo> <n> --no-claim`, and §Identity says "Board: none".
+- **Skip:** no board. Leave `PROJECT_NUMBER` out; §Identity says "Board: none". The queue is then board-less: the open
+  issues labelled `QUEUE_LABEL` (default `queue:work`; create that label in step 4's loop), ranked by P-label, and
+  `pdo spawn` still claims (the `managed-by:` label and claim comment; only the board move is skipped).
 
 **Verify.**
 - `pdo project-env --project <name>`: every key resolves as intended (`REPO_ROOT`, `PRIMARY_REPO`, `GH_USER`, the
   `ROUTE_SKILL` entries, `FIXTURE_EXT_BY_REPO`); and `pdo project-env` with no `--project`, run from the repo,
   resolves to `<name>`. With a board, `pdo project-env --board` lists its columns.
 - `pdo queue --project <name>`: a dry read (it ranks; it doesn't claim or move anything). With a board it lists the
-  eligible issues; without one it stops with "has no PROJECT_NUMBER", which is expected.
+  eligible issues; without one it lists the issues labelled `QUEUE_LABEL` ("board-less" in its summary line).
 
 ## 7. The human guide
 

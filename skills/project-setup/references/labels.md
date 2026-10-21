@@ -34,6 +34,9 @@ difference; never rename it.
 | `Security` | | `ee0701` | Authn/authz, injection, secrets, exposure, unsafe input | queue (ranks first in its P-level), intake |
 | `small-win` | | `7ee787` | Cheap and worthwhile | intake, status |
 | `orchestrator-system` | | `5a5a5a` | Work on the orchestration system itself (System Manager) | queue (excluded) |
+| `queue:work` | `QUEUE_LABEL` | `0e8a16` | In the orchestrator's queue (projects without a board) | queue (board-less mode) |
+
+`queue:work` matters only to a repo+team project without a board (no `PROJECT_NUMBER`); create it there only.
 
 The last four QC labels matter only where agent QC runs (`AGENT_QC_PORTS`), but create them everywhere: a human can
 still pass a PR to `Ready for Merge` by hand, and `needs UX review` is set at intake.
@@ -47,7 +50,8 @@ the fourth.
 **Type labels.** Issue types (Epic / Feature / Bug / Task) exist only on organization repos. On a repo owned by a user
 account the API drops `type` silently, so the project uses type labels instead. Which names it uses is the human's
 choice (ask; many repos already have `bug` and `enhancement`). Create only the ones they name, and record them in the
-profile's §Identity.
+profile's §Identity. In repo+team, map them to branch prefixes in the env's `BRANCH_PREFIX` (e.g.
+`bug=fix task=chore default=feat`), which `pdo spawn` matches against the labels of an issue that has no type.
 
 ## Check, then create the missing ones
 

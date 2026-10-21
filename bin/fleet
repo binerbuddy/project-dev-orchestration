@@ -441,8 +441,8 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
 
     # queue depth (needs a board and a managed repo)
     queue = {"eligible": None, "auto_spawn": None, "error": None}
-    if not cfg.get("project_number"):
-        queue["error"] = "no board (PROJECT_NUMBER unset)"
+    if not cfg.get("project_number") and not cfg.get("queue_label"):
+        queue["error"] = "no board (PROJECT_NUMBER unset) and no QUEUE_LABEL"
     elif not managed:
         queue["error"] = "every repo is self-managed"
     elif not run_queue:
