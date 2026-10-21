@@ -51,7 +51,8 @@ without extra tooling. Label names are the defaults; the project env may rename 
 
 | Step | Who | How |
 |---|---|---|
-| Ready | the agent | labels the PR `ready for QC` after review and triage, posts the checklist, stops. The PR now waits for QC. |
+| Draft | the agent | opens the PR as a **draft** and keeps it one through review and triage (draft CI skips the heavy jobs). |
+| Ready | the agent | runs `gh pr ready` (one full CI run), labels the PR `ready for QC` after review and triage, posts the checklist, stops. The PR now waits for QC. Agent QC only takes non-draft PRs; `pdo hibernate` flips a still-draft one. |
 | Agent QC | the QC Agent (where `AGENT_QC_PORTS` is set) | tests the PR on its own servers and data (`/project-agent-qc`). **Fail:** posts "Agent QC findings (round N)", removes `ready for QC` and resumes the agent; after 2 failed rounds adds `QC escalated` and stops (a human decides). **Pass:** posts a short classification by the visible-change rule, then either `QC complete - ready to review` (UX review needed) or `Ready for Merge` + `UX testing skipped`. A PR or linked issue labelled `needs UX review` always gets UX review. |
 | Feedback | the human | in the agent's session (local QC), or a GitHub PR review with **Request changes** (state `CHANGES_REQUESTED`). The orchestrator's watcher raises each new review from a trusted author (repo OWNER, MEMBER or COLLABORATOR) as `qc_feedback`, and the agent is resumed with it; `ready for QC` and `QC complete - ready to review` come off, and the agent re-applies `ready for QC` after fixing (so agent QC runs again). |
 | Pass | the human | adds `Ready for Merge` and removes `ready for QC` / `QC complete - ready to review`. Only a human applies it, except agent QC's no-UX pass. |
