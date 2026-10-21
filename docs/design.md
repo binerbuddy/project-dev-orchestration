@@ -29,7 +29,8 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
 
 ## Spawning
 
-- `bin/spawn <repo> <n>` re-reads the issue live, picks the route, creates a worktree and branch, writes
+- `bin/spawn <repo> <n>` re-reads the issue live, picks the route, creates a worktree and branch (the worktree in
+  `WORKTREE_PARENT[<repo>]`: the bare root, or `<clone>-worktrees/` next to a plain clone), writes
   the dispatch brief, opens a herdr workspace and launches the agent there with Remote Control on and the
   route's lifecycle skill as its first prompt. Then it claims the issue (`bin/claim`: the `managed-by:`
   label, a claim comment and the board status; see [Coordination between managers](#coordination-between-managers))
@@ -177,7 +178,7 @@ watcher).
 ## QC
 
 - **Local QC.** `bin/qc start <pr#>` (or `--ref <branch>`) checks out the PR in one shared, reused
-  worktree (`<repo root>/$QC_WORKTREE`, detached at the head), so dependency installs and builds stay
+  worktree (`<worktree parent>/$QC_WORKTREE`, detached at the head), so dependency installs and builds stay
   incremental and agents' worktrees are never touched. The project's `QC_HOOK` owns the servers.
 - **Port ownership.** Before the hook's `stop` (on `start` and `stop`), `bin/qc` checks the instance's ports. A
   listener it didn't start (not recorded in `$PDO_QC_STATE/listeners` at its last start, not a descendant of one,
@@ -199,7 +200,7 @@ watcher).
   `ready for QC` PR in `AGENT_QC_REPOS` before a human sees it, one at a time, highest P-label first
   (`bin/agent-qc next`), with an in-progress marker under `$PDO_STATE_DIR/agent-qc`. It doesn't use a
   command-agent slot.
-  - `bin/qc --agent` is a second QC instance: worktree `<repo root>/$AGENT_QC_WORKTREE` (default
+  - `bin/qc --agent` is a second QC instance: worktree `<worktree parent>/$AGENT_QC_WORKTREE` (default
     `qc-agent`), state `$PDO_STATE_DIR/agent-qc`, ports `AGENT_QC_PORTS`; the hook sees
     `PDO_QC_INSTANCE=agent` and must use its own data store, never the human's.
   - It tests the checklist, the touched areas and their neighbours (browser, direct API calls,
@@ -300,7 +301,8 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QC_HOOK` | (none) | the QC servers (contract below) |
 | `BRANCH_PREFIX` | `bug=fix default=feat` | `spawn`'s small-route branch prefix, `<key>=<prefix>` pairs matched without case against the issue type, then its labels in order (user-owned repos have no types), else `default`; e.g. `bug=fix task=chore docs=docs default=feat` |
 | `QC_REPO` | `PRIMARY_REPO` | repo `bin/qc` serves |
-| `QC_WORKTREE` | `qc` | QC worktree dir name under the repo root |
+| `WORKTREE_PARENT` | bare root, or `<clone>-worktrees` | `declare -A`: repo → the dir that holds its agent, QC and agent-QC worktrees (`spawn`, `qc`, `resume-agent`); the default keeps worktrees out of a plain clone's checkout |
+| `QC_WORKTREE` | `qc` | QC worktree dir name under the worktree parent |
 | `QC_PORTS` | (none) | ports hibernation never stops |
 | `QC_PORTS_SHARED` | `0` | `1`: `QC_PORTS` are the human's dev ports on purpose, so `qc` may stop a listener it didn't start (otherwise it refuses without `--force`) |
 | `FIXTURE_EXT` | (none) | the project's fixture extension (a mismatch warns) |
@@ -316,7 +318,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `LABEL_MERGE_READY` / `LABEL_UX_SKIPPED` | `Ready for Merge` / `UX testing skipped` | all QC passed; agent QC judged no visible change |
 | `LABEL_NEEDS_UX` / `LABEL_QC_ESCALATED` | `needs UX review` / `QC escalated` | force a UX review; agent QC failed `AGENT_QC_MAX_ROUNDS` times |
 | `AGENT_QC_PORTS` | (none: agent QC off) | the QC Agent's reserved ports; hibernation never stops them |
-| `AGENT_QC_REPOS` / `AGENT_QC_WORKTREE` | `QC_REPO` / `qc-agent` | repos agent QC takes; its worktree under each repo root |
+| `AGENT_QC_REPOS` / `AGENT_QC_WORKTREE` | `QC_REPO` / `qc-agent` | repos agent QC takes; its worktree under each worktree parent |
 | `AGENT_QC_REVIEW_HOOK` | (none) | run with `<repo> <pr#>` after a UX-review pass |
 | `AGENT_QC_MAX_ROUNDS` / `AGENT_QC_NOTES` / `AGENT_QC_SKILL` | `2` / (none) / `<prefix>project-agent-qc` | failed rounds before escalation; the project's agent-QC know-how file; the skill |
 | `SYSTEM_MANAGER_WORKSPACE` | `System Manager` | named in the queue's `orchestrator-system` reason |

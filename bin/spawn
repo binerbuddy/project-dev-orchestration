@@ -4,7 +4,8 @@
 # Usage: spawn <repo> <issue#> [--route small|design|build] [--brief "2-3 words"]
 #              [--base <ref>] [--model <alias>] [--project P] [--no-claim] [--allow-phase] [--dry-run]
 #
-# Creates a dedicated git worktree (so each agent has its own cwd and OMC state),
+# Creates a dedicated git worktree under WORKTREE_PARENT[<repo>] (the bare root, or "<clone>-worktrees"
+# next to a plain clone), so each agent has its own cwd and OMC state; then
 # writes a dispatch brief, opens a herdr workspace named "<Repo>-<n> <brief>", and
 # starts the agent (AGENT_CLI, default claude) there with Remote Control on and the route's lifecycle skill as the
 # first prompt. On success, claims the issue (bin/claim: managed-by label, claim comment, board In Progress).
@@ -138,9 +139,9 @@ case "$ROUTE" in
       BASE="origin/$DESIGN_BRANCH"
     fi ;;
 esac
-WORKTREE="$ROOT/$SLUG"
+WORKTREE="${WORKTREE_PARENT[$REPO]}/$SLUG"
 # the design and build runs of one epic coexist briefly (design parks, build starts)
-[[ "$ROUTE" == design ]] && WORKTREE="$ROOT/$SLUG-design"
+[[ "$ROUTE" == design ]] && WORKTREE="${WORKTREE_PARENT[$REPO]}/$SLUG-design"
 
 # --- duplicate guards ---
 if herdr workspace list 2>/dev/null | jq -e --arg p "$REPO-$NUM " \
@@ -173,6 +174,7 @@ rollback() {
 trap 'rc=$?; [[ $rc -ne 0 ]] && rollback; exit $rc' EXIT
 # explicit refspec: bare clones may lack the remote-tracking fetch rule, leaving no origin/<b>
 git -C "$ROOT" fetch -q origin "+refs/heads/${BASE#origin/}:refs/remotes/origin/${BASE#origin/}"
+mkdir -p "$(dirname "$WORKTREE")"
 git -C "$ROOT" worktree add -q "$WORKTREE" -b "$BRANCH" "$BASE"
 git -C "$WORKTREE" branch -q --unset-upstream 2>/dev/null || true
 

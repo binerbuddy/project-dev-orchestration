@@ -176,7 +176,7 @@ def main():
     worktree = meta.get("worktree") or meta.get("cwd") or ""
     if worktree in roots.values():  # an adopted agent sitting in the repo root: never sweep the whole root
         worktree = ""
-    qc_wt = os.path.join(roots.get(a.repo, "/nonexistent"), cfg["qc_worktree"])
+    qc_wt = os.path.join(cfg["worktree_parent"].get(a.repo, "/nonexistent"), cfg["qc_worktree"])
 
     # herdr reuses workspace ids: an id only counts while its label is still this agent's name
     ws_labels = {w["workspace_id"]: w.get("label") for w in json.loads(run("herdr", "workspace", "list") or '{"result":{"workspaces":[]}}')["result"]["workspaces"]}
