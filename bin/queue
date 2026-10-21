@@ -208,6 +208,8 @@ def blocker_refs(org, repo, numbers):
             data = json.loads(r.stdout)["data"]["repository"]
         except (ValueError, KeyError, TypeError):
             return None
+        if not data:  # a repo this login can't see: GraphQL returns null with an error
+            return None
         for n in nums[i:i + 50]:
             nodes = ((data.get(f"i{n}") or {}).get("blockedBy") or {}).get("nodes") or []
             refs = []
