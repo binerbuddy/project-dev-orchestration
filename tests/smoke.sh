@@ -255,6 +255,10 @@ eq "pin: git over HTTPS too" "$(cd "$T" && GH_USER=octo bash -c "source '$BIN/li
 eq "pin: python load() pins too" "$(cd "$T" && GH_USER=octo python3 -c "import os, sys; sys.path.insert(0, '$BIN'); import pdo_config; pdo_config.load('acme'); print(os.environ['GH_TOKEN'], os.environ['PDO_GH_PIN'], os.environ['GIT_CONFIG_COUNT'])")" "token-for-octo octo 2"
 eq "pin: python keeps a person's token" "$(cd "$T" && GH_USER=octo GH_TOKEN=mine python3 -c "import os, sys; sys.path.insert(0, '$BIN'); import pdo_config; pdo_config.load('acme'); print(os.environ['GH_TOKEN'])")" mine
 
+# --- /project-setup never writes a versioned plugin-cache engine path into AGENTS.md ---
+check "AGENTS template: a variant that names no engine path" grep -q '^<!-- pdo-on-PATH variant (names no path): -->$' "$ENGINE/templates/AGENTS-workflow-section.md"
+check "setup skill: pdo on PATH = no path; never the plugin cache" grep -q 'no `/plugins/cache/` segment and no version directory' "$ENGINE/skills/project-setup/SKILL.md"
+
 # --- intake inbox ---
 out="$("$BIN/intake-submit" "Acme-12 smoke" "a report")"
 f="${out#queued for intake: }"

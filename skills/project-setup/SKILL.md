@@ -196,10 +196,17 @@ Fill this plugin's `templates/AGENTS-workflow-section.md` (`../../templates/AGEN
 leading comment, replace every `<placeholder>` (`<org>/<repo>`, `<project#>`, `<base>`) and use the project's label
 names where its env renames them. `<guide path>` is where step 7 writes the human guide. With no board, replace the
 "on org Project `<project#>`" clause with "with no project board (a maintainer dispatches agents by hand)".
-`<engine checkout>`: in repo+team, the engine path `pdo project-env PDO_HOME` prints, written with `~/` when it is
-under the home directory (person-started sessions without `pdo` on PATH find the engine through it; a dispatch
-brief's absolute path still wins); in repo-only, replace it with "your project-dev-orchestration
-checkout". For a headless repo, use the template's headless wording in the QC Checklist rule.
+`<engine checkout>` must be a path that survives engine upgrades, or nothing. In repo+team, decide in this order:
+1. **`pdo` is on PATH** (`command -v pdo`): use the template's pdo-on-PATH variant of the engine paragraph, which names no path.
+2. **Else `pdo project-env PDO_HOME` is a stable checkout:** a git work tree (`git -C <path> rev-parse
+   --is-inside-work-tree`) whose path has no `/plugins/cache/` segment and no version directory (e.g. `…/0.8.0`).
+   Write it with `~/` when it is under the home directory (person-started sessions without `pdo` on PATH find the
+   engine through it; a dispatch brief's absolute path still wins).
+3. **Else** (the engine only exists in a tool's versioned plugin cache, which the next upgrade replaces): never write
+   that path. Use "your project-dev-orchestration checkout", and suggest the human clone the engine and run
+   `bin/install --bin` from it.
+In repo-only, replace it with "your project-dev-orchestration checkout".
+A re-run reports an `AGENTS.md` that names a plugin-cache path as drifted and proposes the fix. For a headless repo, use the template's headless wording in the QC Checklist rule.
 
 - **No `AGENTS.md`:** create it with a one-line title and the section.
 - **`AGENTS.md` without the section:** append it at the end, unchanged otherwise.
