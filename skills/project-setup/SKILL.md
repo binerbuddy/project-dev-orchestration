@@ -94,8 +94,12 @@ only what isn't settled; a round with nothing left is skipped.
    the board as an optional question: "Is there a project board for this repo? (recommended: skip; record it later)".
 3. **What can't be detected and would leave QC unusable:** the QC data and fixture format (step 5; recommend
    what the stack suggests, e.g. an input file with its expected output for a headless repo), the ports reserved for
-   the human's QC servers and the agents' port scheme (recommend the detected dev-server ports as the human's, and
-   the same ports +100 for agents), and the "Human run" line (recommend the detected start command).
+   the human's QC servers and the agents' port scheme, and the "Human run" line (recommend the detected start
+   command). For the QC ports, ask explicitly: "Does QC get its own ports, or share the ports you run your own dev
+   servers on? **Own (recommended):** e.g. <dev ports +2>; QC never touches your dev servers. **Shared:** QC uses
+   <dev ports>, and starting QC stops whatever you have running there." Recommend own ports, distinct from the
+   detected dev-server ports, and the same ports +100 for agents. Shared sets `QC_PORTS_SHARED=1` (step 6); with own
+   ports, `pdo qc` refuses to stop a listener it didn't start.
 
 **Optional, at the end.** Everything else the profile can leave as `TODO(setup)` without blocking: extra review
 roles, related repos, §Conventions and §Do not, §Project extras, `Human guide notes`, worktree naming when there's
@@ -284,7 +288,8 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # PROJECT_NUMBER=<n>            # only with a board (below)
 # FIXTURE_EXT=".<ext>"          # from step 5: the primary repo's fixture format
 # declare -A FIXTURE_EXT_BY_REPO=([<other repo>]=".<ext>")   # repos with another format
-# QC_PORTS="<ports>"            # the human's reserved QC ports, from §Dev servers
+# QC_PORTS="<ports>"            # the ports QC serves on, from round 3 (own ports, not the human's dev servers')
+# QC_PORTS_SHARED=1             # only when the human chose to share their dev ports with QC (qc may stop their servers)
 # AGENT_QC_PORTS="<ports>"      # agent QC (QC Agent workspace) ports, distinct from QC_PORTS and agents' ranges; off when unset
 # AGENT_QC_NOTES="docs/agent-qc-<name>.md"   # the project's agent-QC know-how (login, seed users, browser notes)
 # AGENT_QC_REVIEW_HOOK="hooks/<name>"         # run with <repo> <pr#> after a UX-review pass (e.g. request a preview)

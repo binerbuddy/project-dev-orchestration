@@ -179,6 +179,10 @@ watcher).
 - **Local QC.** `bin/qc start <pr#>` (or `--ref <branch>`) checks out the PR in one shared, reused
   worktree (`<repo root>/$QC_WORKTREE`, detached at the head), so dependency installs and builds stay
   incremental and agents' worktrees are never touched. The project's `QC_HOOK` owns the servers.
+- **Port ownership.** Before the hook's `stop` (on `start` and `stop`), `bin/qc` checks the instance's ports. A
+  listener it didn't start (not recorded in `$PDO_QC_STATE/listeners` at its last start, not a descendant of one,
+  not running in the QC worktree) is probably the human's own dev server: `qc` exits 1 and names it, unless
+  `--force` or `QC_PORTS_SHARED=1` (QC uses the human's dev ports on purpose and may stop whatever is there).
 - **Feedback** is posted on the PR as "QC feedback (round N)" and delivered to the agent with
   `bin/resume-agent`; `ready for QC` comes off, and the agent re-applies it after fixing.
 - **Pass** flips the label to `Ready for Merge` (`LABEL_MERGE_READY`); the agent wraps up and says
@@ -297,6 +301,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QC_REPO` | `PRIMARY_REPO` | repo `bin/qc` serves |
 | `QC_WORKTREE` | `qc` | QC worktree dir name under the repo root |
 | `QC_PORTS` | (none) | ports hibernation never stops |
+| `QC_PORTS_SHARED` | `0` | `1`: `QC_PORTS` are the human's dev ports on purpose, so `qc` may stop a listener it didn't start (otherwise it refuses without `--force`) |
 | `FIXTURE_EXT` | (none) | the project's fixture extension (a mismatch warns) |
 | `FIXTURE_EXT_BY_REPO` | `()` | `declare -A`: repo → its fixture extension, for repos whose format differs; `qc-fixture-push --repo` uses it before `FIXTURE_EXT` |
 | `WATCH_EVENT_HOOK` | (none) | executable the watcher runs each snapshot for project-specific events (contract below) |

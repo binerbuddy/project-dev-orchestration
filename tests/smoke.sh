@@ -365,6 +365,26 @@ check "qc --agent hook told instance and ports" grep -q "hook start pr= ref=main
 check "qc --agent state kept apart" test -f "$T/state/agent-qc/current.json"
 check "human qc state untouched by --agent" test ! -e "$T/state/qc/current.json"
 AGENT_QC_PORTS="3998 4998" "$BIN/qc" stop --agent >/dev/null
+# a listener qc didn't start on a QC port (the human's dev server) is never stopped without --force
+listen() { (cd "$1" && exec python3 -m http.server "$2" --bind 127.0.0.1 >/dev/null 2>&1) & LPID=$!
+  for _ in $(seq 1 50); do ss -ltnH "sport = :$2" | grep -q . && return 0; sleep 0.1; done; }
+listen "$T/elsewhere" 3999
+out="$("$BIN/qc" start --ref main 2>&1)"; rc=$?
+eq "qc start refuses a foreign listener" "$rc" 1
+has "qc names the foreign listener" "$out" ":3999 pid $LPID"
+has "qc says how to proceed" "$out" "--force"
+"$BIN/qc" stop >/dev/null 2>&1; eq "qc stop refuses it too" "$?" 1
+eq "QC_PORTS_SHARED=1: qc may stop it" "$(QC_PORTS_SHARED=1 "$BIN/qc" start --ref main >/dev/null 2>&1; echo $?)" 0
+eq "--force: qc may stop it" "$("$BIN/qc" start --ref main --force >/dev/null 2>&1; echo $?)" 0
+check "--force is not passed to the hook" bash -c '! grep -q "hook start.*--force" "$0"' "$SMOKE_LOG"
+eq "qc recorded the listener it started" "$(cat "$T/state/qc/listeners")" "$LPID"
+eq "a listener qc started is its own" "$("$BIN/qc" start --ref main >/dev/null 2>&1; echo $?)" 0
+kill $LPID; wait $LPID 2>/dev/null
+listen "$T/repos/widget.git/qc" 3999
+rm -f "$T/state/qc/listeners"
+eq "a listener running in the QC worktree is qc's" "$("$BIN/qc" stop >/dev/null 2>&1; echo $?)" 0
+kill $LPID; wait $LPID 2>/dev/null
+eq "QC_PORTS_SHARED default" "$("$BIN/project-env" --project acme QC_PORTS_SHARED)" 0
 
 # --- qc-fixture-push against the local origin ---
 echo data >"$T/sample.acme"

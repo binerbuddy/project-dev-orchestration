@@ -64,7 +64,7 @@ cloned from the QC seed for this PR. The first start can take minutes. If it fai
 finding only when the PR causes it (a build or migration error on this head): read the log tail it
 prints, check the base branch builds (`origin/<base>` is what the human QC uses daily) and treat a
 PR-caused failure as a round-N failure. An environment failure (seed missing, port stuck, Docker
-down) is not the PR's fault: release the marker, report it in your session, and stop the tick.
+down, or `qc` refusing to stop a listener it didn't start on your ports; never `--force` that) is not the PR's fault: release the marker, report it in your session, and stop the tick.
 
 Fixtures: when the checklist's "Test data" item names one, fetch it from the fixtures branch
 (`gh api "repos/<org>/<repo>/contents/<path>?ref=<fixture_branch>" -H "Accept: application/vnd.github.raw" > <scratch>/<name>`)

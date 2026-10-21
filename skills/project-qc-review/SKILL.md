@@ -36,7 +36,9 @@ Label names below are the defaults; `pdo project-env` prints the project's (`LAB
 1. `pdo pr-agent <PR#>`: the PR, the issues it closes, the owning agent, and whether it's alive.
 2. `pdo qc start <PR#>`. The first start can take minutes (dependency install plus build). Between
    them, the engine and the project's `QC_HOOK`:
-   - frees the reserved QC ports by killing whatever holds them;
+   - frees the reserved QC ports by stopping the servers it started there. It refuses (exit 1, naming the
+     process) to stop a listener it didn't start, such as the human's own dev server, unless the project sets
+     `QC_PORTS_SHARED=1`. Then ask the human whether to stop it, and only on their yes rerun with `--force`;
    - checks out the PR head in the shared QC worktree (never an agent's worktree);
    - points the app at the QC data store, never the shared dev one, resetting it from the QC seed when
      the served PR changes or on `--fresh-db`; re-serving the same PR keeps it, so data imported
