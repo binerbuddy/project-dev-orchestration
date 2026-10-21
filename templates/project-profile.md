@@ -83,14 +83,15 @@ headless QC). Name the headless browser driver used for automated QC and smoke r
 
 How to run the app locally for agent QC: the start commands, the env vars and secrets they need, the dev login or
 auth bypass, and the database rules (shared or per-agent, what must never be stopped or dropped, how migrations are
-handled). Give the ports reserved for the human (agents never bind or kill them) and the port scheme agents use
+handled). Give the ports reserved for the human (agents never bind or kill them), the QC ports and whether they are
+the human's own dev-server ports (shared: starting QC stops their servers) or separate ones, the port scheme agents use
 instead, plus any CORS or API-URL wiring that changing ports requires. Add one "Human run" line: the plain commands
 a person runs to start the app (or run the engine) for QC; the human guide's "Run it locally" is rendered from it.
 
 <!-- Example (Acme):
 - API: `npm run dev:api` (needs `ACME_DB_URL`; dev auth: `ACME_AUTH=none`, then log in as `demo`).
 - Web: `npm run dev:web -- --port <port>`; point it at your API with `ACME_API_URL`.
-- Reserved for the human: 3000 and 8080. Agents: web on `4300 + (issue# % 100)`, API on `5300 + (issue# % 100)`.
+- Reserved for the human: 3000 and 8080 (their dev servers). QC: 3002 and 8082 (own ports). Agents: web on `4300 + (issue# % 100)`, API on `5300 + (issue# % 100)`.
 - DB: shared local Postgres container `acme-db`. Never stop it. Snapshot before running migrations; restore after.
 - Human run: `npm run dev:api` and `npm run dev:web` in two terminals, then open the web port and log in as `demo`.
 -->

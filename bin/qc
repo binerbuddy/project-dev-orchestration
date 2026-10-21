@@ -5,12 +5,17 @@
 #        qc start --ref <branch> [hook options...]      serve a branch (e.g. main) the same way
 #        qc stop [hook options...]                       stop the servers
 #        qc status                                       what is being served, and whether it is up
-#        [--project P] [--agent]
+#        [--project P] [--agent] [--force]
 #
 # --agent  the agent-QC instance (the standing "QC Agent" workspace, skill project-agent-qc): its own
 #          worktree (<repo root>/$AGENT_QC_WORKTREE, default "qc-agent"), state ($PDO_STATE_DIR/agent-qc)
 #          and ports (AGENT_QC_PORTS), so it never disturbs what the human is QCing. The hook is told
 #          with PDO_QC_INSTANCE=agent and picks its ports and data store from that.
+#
+# Ports: before the hook's stop (start and stop), qc checks who listens on the instance's ports. A
+# listener qc didn't start (not recorded at its last start, not a child of one, not running in the QC
+# worktree) is likely the human's own dev server: qc refuses, naming it, unless --force or the
+# project sets QC_PORTS_SHARED=1 (QC deliberately shares the human's dev ports and may stop them).
 #
 # The engine owns the worktree; the project's QC_HOOK owns the servers. One QC worktree
 # (<repo root>/$QC_WORKTREE, default "qc") is reused for every PR, detached at the PR head, so
@@ -41,7 +46,7 @@ PDO_SCRIPT=qc
 die() { echo "qc: $*" >&2; exit 1; }
 
 CMD="${1:-}"; shift || true
-PROJECT="" PR="" REF="" REPO="" INSTANCE=human HOOK_ARGS=()
+PROJECT="" PR="" REF="" REPO="" INSTANCE=human FORCE=0 HOOK_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --project) PROJECT="$2"; shift 2 ;;
@@ -49,7 +54,8 @@ while [[ $# -gt 0 ]]; do
     --ref) REF="$2"; shift 2 ;;
     [0-9]*|\#[0-9]*) PR="${1#\#}"; shift ;;
     --agent) INSTANCE=agent; shift ;;
-    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+    --force) FORCE=1; shift ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     --*=*) HOOK_ARGS+=("$1"); shift ;;
     --*) # a hook option, with its value when the next word isn't another option
       HOOK_ARGS+=("$1"); shift
@@ -57,7 +63,7 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown argument: $1" ;;
   esac
 done
-case "$CMD" in -h|--help|"") sed -n '2,35p' "$0"; [[ -n "$CMD" ]] && exit 0; exit 1 ;; esac
+case "$CMD" in -h|--help|"") sed -n '2,40p' "$0"; [[ -n "$CMD" ]] && exit 0; exit 1 ;; esac
 pdo_resolve_project "$PROJECT"
 # shellcheck source=/dev/null
 HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
@@ -77,6 +83,46 @@ mkdir -p "$STATE"
 export PDO_QC_STATE="$STATE" PDO_QC_REPO="$REPO" PDO_QC_ROOT="$ROOT" PDO_QC_WORKTREE="$WT" \
   PDO_QC_INSTANCE="$INSTANCE" PDO_QC_PORTS="$PORTS"
 
+# --- port ownership: the listeners qc started are recorded in $STATE/listeners ---
+port_pids() { ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true; }
+started_by_qc() {  # started_by_qc <pid>: recorded at the last start, a descendant of one, or running in the QC worktree
+  local pid="$1" cwd
+  cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+  [[ -n "$WT" && -n "$cwd" && ( "$cwd" == "$WT" || "$cwd" == "$WT"/* ) ]] && return 0
+  [[ -s "$STATE/listeners" ]] || return 1
+  while [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]]; do
+    grep -qx "$pid" "$STATE/listeners" && return 0
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  done
+  return 1
+}
+check_ports() {  # refuse to let the hook stop a listener qc didn't start
+  [[ -n "${QC_HOOK:-}" && -n "$PORTS" && $FORCE -eq 0 && "${QC_PORTS_SHARED:-0}" != 1 ]] || return 0
+  local port pid foreign=()
+  for port in $PORTS; do
+    ss -ltnH "sport = :$port" 2>/dev/null | grep -q . || continue
+    local pids; pids="$(port_pids "$port")"
+    if [[ -z "$pids" ]]; then  # another user's process (e.g. a container's port proxy): qc's if it held the port at start
+      grep -qx "port:$port" "$STATE/listeners" 2>/dev/null || foreign+=(":$port (a process qc can't inspect)")
+      continue
+    fi
+    for pid in $pids; do
+      started_by_qc "$pid" || foreign+=(":$port pid $pid ($(ps -o args= -p "$pid" 2>/dev/null | cut -c1-60))")
+    done
+  done
+  [[ ${#foreign[@]} -eq 0 ]] && return 0
+  printf 'qc: not stopping listener(s) qc did not start (the human'"'"'s dev servers?):\n' >&2
+  printf '      %s\n' "${foreign[@]}" >&2
+  die "stop them yourself, or rerun with --force; give QC its own ports (QC_PORTS / AGENT_QC_PORTS), or set QC_PORTS_SHARED=1 when QC shares the human's dev ports on purpose"
+}
+record_ports() {  # the listeners on the instance's ports now are qc's (pids, and "port:<n>" for every port held)
+  local port
+  for port in $PORTS; do
+    port_pids "$port"
+    if ss -ltnH "sport = :$port" 2>/dev/null | grep -q .; then echo "port:$port"; fi
+  done >"$STATE/listeners"
+}
+
 hook() {  # hook <subcommand>: run QC_HOOK if the project has one
   [[ -n "${QC_HOOK:-}" ]] || return 0
   [[ -x "$QC_HOOK" ]] || die "QC_HOOK is not executable: $QC_HOOK"
@@ -92,7 +138,9 @@ case "$CMD" in
       SHA="$(jq -r .headRefOid <<<"$PRJ")" BASE="$(jq -r .baseRefName <<<"$PRJ")"
     fi
 
+    check_ports
     hook stop || die "QC_HOOK stop failed"
+    rm -f "$STATE/listeners"
     if [[ -n "$PR" ]]; then
       git -C "$ROOT" fetch -q origin "+refs/pull/$PR/head:refs/remotes/origin/pr/$PR" \
         "+refs/heads/$BASE:refs/remotes/origin/$BASE"
@@ -123,13 +171,15 @@ case "$CMD" in
 
     if [[ -n "${QC_HOOK:-}" ]]; then
       hook wait || die "the QC servers failed to start"
+      record_ports
     else
       echo "qc: ${PR:+PR #$PR}${REF:+branch $REF} (${SHA:0:8}) checked out at $WT (no QC_HOOK: start the servers by hand)"
     fi
     ;;
   stop)
+    check_ports
     hook stop
-    rm -f "$STATE/current.json"
+    rm -f "$STATE/current.json" "$STATE/listeners"
     echo "qc: servers stopped"
     ;;
   status)
