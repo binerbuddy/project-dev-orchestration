@@ -3,13 +3,8 @@
 # gh call) as one GitHub login, without touching gh's machine-wide active account. Other sessions
 # may switch that account, so without a pin an agent's calls can fail mid-run ("Could not resolve
 # repository", or "Repository not found" on a push).
-#   - gh: GH_TOKEN is set to the login's token (`gh auth token -u LOGIN`).
-#   - git over HTTPS: a credential helper for https://github.com is injected through
-#     GIT_CONFIG_COUNT/KEY_<i>/VALUE_<i> (no git config file changes): the github.com helpers are
-#     reset, then `gh auth git-credential` answers with GH_TOKEN. The entries are appended after
-#     any GIT_CONFIG_* entries already in the environment. When those already set a github.com
-#     credential helper (an outer IDENTITY_HOOK wrapper, a bot identity), it adds none and only
-#     sets GH_TOKEN, so the outer wrapper's helper chain stays in charge.
+# What it sets (GH_TOKEN, a github.com credential helper for git over HTTPS, PDO_GH_PIN): pdo_gh_pin in
+# bin/gh-pin.sh, which bin/lib.sh also uses to pin every engine script to the project's GH_USER.
 # Login: --user, else $GH_USER (a project env's GH_USER is passed as --user by launch_agent).
 # With neither, it pins nothing and just runs the command.
 # From a person's shell: `pdo with-gh-user --user <login> git push -u origin <branch>`.
@@ -21,23 +16,10 @@ if [[ "${1:-}" == "--user" || "${1:-}" == "-u" ]]; then
 fi
 [[ $# -gt 0 ]] || { echo "usage: with-gh-user [--user LOGIN] <command...>" >&2; exit 2; }
 if [[ -n "$login" ]]; then
-  GH_TOKEN="$(gh auth token -u "$login" 2>/dev/null)" && [[ -n "$GH_TOKEN" ]] \
-    || { echo "with-gh-user: no gh login for $login" >&2; exit 1; }
-  export GH_TOKEN
-  n="${GIT_CONFIG_COUNT:-0}"
-  [[ "$n" =~ ^[0-9]+$ ]] || { echo "with-gh-user: GIT_CONFIG_COUNT is not a number: $n" >&2; exit 1; }
-  has_helper=0
-  for ((i = 0; i < n; i++)); do
-    k="GIT_CONFIG_KEY_$i"
-    case "${!k:-}" in
-      credential.helper|credential.https://github.com.helper|credential.https://github.com/*.helper) has_helper=1 ;;
-    esac
-  done
-  if [[ $has_helper -eq 0 ]]; then
-    printf -v helper '!%q auth git-credential' "$(command -v gh)"
-    export "GIT_CONFIG_KEY_$n=credential.https://github.com.helper" "GIT_CONFIG_VALUE_$n="
-    export "GIT_CONFIG_KEY_$((n + 1))=credential.https://github.com.helper" "GIT_CONFIG_VALUE_$((n + 1))=$helper"
-    export GIT_CONFIG_COUNT=$((n + 2))
-  fi
+  # shellcheck source=gh-pin.sh
+  source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/gh-pin.sh"
+  rc=0; pdo_gh_pin "$login" || rc=$?
+  [[ $rc -eq 2 ]] && { echo "with-gh-user: GIT_CONFIG_COUNT is not a number: $GIT_CONFIG_COUNT" >&2; exit 1; }
+  [[ $rc -eq 0 ]] || { echo "with-gh-user: no gh login for $login" >&2; exit 1; }
 fi
 exec "$@"

@@ -23,6 +23,8 @@
 
 PDO_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 export PDO_HOME
+# shellcheck source=gh-pin.sh
+source "$PDO_HOME/bin/gh-pin.sh"
 
 pdo_die() { echo "${PDO_SCRIPT:-$(basename "$0")}: $*" >&2; exit 1; }
 
@@ -153,6 +155,7 @@ pdo_finalize() {
   DEFAULT_MODEL="${DEFAULT_MODEL:-opus}"
   PRIMARY_REPO="${PRIMARY_REPO:-}"
   GH_USER="${GH_USER:-}"
+  pdo_pin_project_gh
   FIXTURE_EXT="${FIXTURE_EXT:-}"
   FIXTURE_BRANCH="${FIXTURE_BRANCH:-qc-fixtures}"
   QC_WORKTREE="${QC_WORKTREE:-qc}"
@@ -197,6 +200,20 @@ pdo_finalize() {
   AGENT_USAGE_WEIGHT="${AGENT_USAGE_WEIGHT:-}"    # override the profile's usage weight
   FLEET_ADVICE="${FLEET_ADVICE:-ignore}"          # honour | ignore (fleet-advice.json in queue/watch)
   export ORG PRIMARY_REPO
+}
+
+# pdo_pin_project_gh: every engine script runs gh and git as the project's GH_USER, since other
+# sessions can flip gh's machine-wide active account (and that account may not see a private repo).
+# A token a person or wrapper set (GH_TOKEN or GITHUB_TOKEN without our PDO_GH_PIN marker) wins;
+# an engine pin for another login (another project's script calling this one) is replaced.
+pdo_pin_project_gh() {
+  [[ -n "$GH_USER" ]] || return 0
+  if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+    [[ -n "${PDO_GH_PIN:-}" && "$PDO_GH_PIN" != "$GH_USER" ]] || return 0
+  fi
+  pdo_gh_pin "$GH_USER" \
+    || echo "${PDO_SCRIPT:-$(basename "$0")}: warning: no gh token for GH_USER=$GH_USER; using gh's active account" >&2
+  return 0
 }
 
 # pdo_slug <text>: lower case, runs of anything but a-z0-9 become one "-", no leading/trailing "-"
