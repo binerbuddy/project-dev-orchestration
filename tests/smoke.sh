@@ -73,7 +73,8 @@ case "$*" in
   "api graphql"*"query board"*)
     echo '{"data":{"organization":{"projectV2":{"id":"PVT_b7","number":7,"title":"Acme Board","field":{"id":"PVTSSF_s","options":[{"id":"o1","name":"Backlog"},{"id":"o2","name":"Claude Work This"}]}}}}}' ;;
   "api repos/acme/widget/issues/12") cat "$SMOKE_DIR/issue12.json" ;;
-  "api repos/acme/widget/issues/12/comments"*) ;;
+  "api repos/acme/widget/issues/12/comments"*|"api repos/acme/docs/issues/12/comments"*) ;;
+  "api repos/acme/docs/issues/12") cat "$SMOKE_DIR/issue12.json" ;;
   "pr view 5 -R acme/widget"*) cat "$SMOKE_DIR/pr5.json" ;;
   "project item-list 9 --owner alpha"*) echo '{"items":[{"content":{"number":2},"repository":"alpha/tool","status":"Claude Work This"}]}' ;;
   "project item-list"*) echo '{"items":[]}' ;;
@@ -309,6 +310,13 @@ eq "queue (python) reads the board as GH_USER" "$(grep -c '^token-for-octo proje
 "$BIN/spawn" nosuchrepo 12 >/dev/null 2>&1
 check "spawn failure is logged" grep -q '"repo":"nosuchrepo"' "$T/state/spawn-failures.jsonl"
 
+# --- WORKTREE_PARENT: the bare root, or "<clone>-worktrees" next to a plain clone ---
+eq "worktree parent: bare root / next to a plain clone" "$("$BIN/pdo-config" --project acme --json | jq -c ".worktree_parent | [.widget, .docs]")" "[\"$T/repos/widget.git\",\"$T/repos/docs-worktrees\"]"
+eq "project-env WORKTREE_PARENT entry" "$("$BIN/project-env" --project acme 'WORKTREE_PARENT[docs]')" "$T/repos/docs-worktrees"
+eq "spawn in a plain clone: the worktree lands outside the checkout" "$("$BIN/spawn" docs 12 --dry-run 2>/dev/null | jq -r .worktree)" "$T/repos/docs-worktrees/12-widget-crash-save"
+eq "WORKTREE_PARENT override (~/ expanded)" "$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; declare -A WORKTREE_PARENT=([docs]='~/wt'); pdo_finalize; echo \"\${WORKTREE_PARENT[docs]} \${WORKTREE_PARENT[widget]}\"")" "$HOME/wt $T/repos/widget.git"
+has "WORKTREE_PARENT as a scalar is refused" "$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; WORKTREE_PARENT=/x; pdo_finalize" 2>&1)" "WORKTREE_PARENT must be a map"
+
 # --- claim: managed-by label, claim comment, CLAIM_ASSIGNS, release ---
 eq "MANAGER_SLUG defaults to a slug of MANAGER" "$("$BIN/project-env" --project acme MANAGER_SLUG)" orchestrator-acme
 eq "CLAIM_ASSIGNS defaults to 0" "$("$BIN/project-env" --project acme CLAIM_ASSIGNS)" 0
@@ -400,6 +408,11 @@ listen "$T/repos/widget.git/qc" 3999
 rm -f "$T/state/qc/listeners"
 eq "a listener running in the QC worktree is qc's" "$("$BIN/qc" stop >/dev/null 2>&1; echo $?)" 0
 kill $LPID; wait $LPID 2>/dev/null
+out="$("$BIN/qc" start --ref main --repo docs 2>&1)"; rc=$?
+eq "qc for a plain clone: exit" "$rc" 0
+check "qc for a plain clone: worktree next to the clone" test -f "$T/repos/docs-worktrees/qc/README.md"
+check "qc for a plain clone: nothing inside the checkout" test ! -e "$T/repos/docs/qc"
+"$BIN/qc" stop >/dev/null 2>&1
 eq "QC_PORTS_SHARED default" "$("$BIN/project-env" --project acme QC_PORTS_SHARED)" 0
 
 # --- qc-fixture-push against the local origin ---

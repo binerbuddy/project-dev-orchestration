@@ -28,6 +28,8 @@ review-triage gates are waived (as in `/project-small-feature-or-bug-fix`).
 
 1. **Locate the repo.** The worktree root is `git rev-parse --show-toplevel`. For bare-root layouts the bare root is
    `git rev-parse --git-common-dir` (in a normal clone that prints `.git`; the bare root is then the worktree root).
+   New worktrees go in the **worktree parent** (`<worktree parent>` below): `pdo project-env 'WORKTREE_PARENT[<repo>]'`
+   when the engine is set up, else the bare root, or `<clone>-worktrees/` next to a plain clone (never inside it).
    `<org>/<repo>` comes from `git remote get-url origin`. §Layout gives the base branch (`<base>` below) and the
    worktree naming convention; §Identity gives related repos, the board (`<project#>`) and its ids.
 2. **Read the profile**: `.agents/project-profile.md` at the worktree top level, or failing that
@@ -60,12 +62,12 @@ available.
 ## 1. Worktree, branch, tracking state
 
 - Branch `feat/<epic#>-<slug>` (epic number from §Tracking); keep the `feat/` prefix. Worktree directory named per
-  §Layout (default `<bare-root>/<slug>`).
+  §Layout (default `<worktree parent>/<slug>`).
 - From the bare root:
   ```
   git fetch origin <base> docs/<slug>-design
-  git worktree add --no-track -b feat/<epic#>-<slug> <bare-root>/<dir> origin/docs/<slug>-design
-  cd <bare-root>/<dir> && git rebase origin/<base>
+  git worktree add --no-track -b feat/<epic#>-<slug> <worktree parent>/<dir> origin/docs/<slug>-design
+  cd <worktree parent>/<dir> && git rebase origin/<base>
   ```
   `--no-track` keeps the branch from tracking the docs branch, so a bare `git push` never lands there. Make the
   first push (phase 1's checkpoint) `git push -u origin feat/<epic#>-<slug>`, which gives it its own upstream.

@@ -8,7 +8,7 @@
 #        [--project P] [--agent] [--force]
 #
 # --agent  the agent-QC instance (the standing "QC Agent" workspace, skill project-agent-qc): its own
-#          worktree (<repo root>/$AGENT_QC_WORKTREE, default "qc-agent"), state ($PDO_STATE_DIR/agent-qc)
+#          worktree (<worktree parent>/$AGENT_QC_WORKTREE, default "qc-agent"), state ($PDO_STATE_DIR/agent-qc)
 #          and ports (AGENT_QC_PORTS), so it never disturbs what the human is QCing. The hook is told
 #          with PDO_QC_INSTANCE=agent and picks its ports and data store from that.
 #
@@ -18,7 +18,8 @@
 # project sets QC_PORTS_SHARED=1 (QC deliberately shares the human's dev ports and may stop them).
 #
 # The engine owns the worktree; the project's QC_HOOK owns the servers. One QC worktree
-# (<repo root>/$QC_WORKTREE, default "qc") is reused for every PR, detached at the PR head, so
+# (<worktree parent>/$QC_WORKTREE, default "qc"; the parent is WORKTREE_PARENT[<repo>]: the bare root,
+# or "<clone>-worktrees" next to a plain clone) is reused for every PR, detached at the PR head, so
 # dependency installs and builds stay incremental and command agents' worktrees are never touched.
 # --repo defaults to QC_REPO, else PRIMARY_REPO. Options this script doesn't know (e.g. --fresh-db)
 # are passed to the hook.
@@ -74,7 +75,7 @@ if [[ "$INSTANCE" == agent ]]; then
   WT_NAME="$AGENT_QC_WORKTREE" STATE="$PDO_STATE_DIR/agent-qc" PORTS="$AGENT_QC_PORTS"
 fi
 if [[ -n "$REPO" ]]; then ROOT="${REPO_ROOT[$REPO]:-}"; fi
-if [[ -n "$ROOT" ]]; then WT="$ROOT/$WT_NAME"
+if [[ -n "$ROOT" ]]; then WT="${WORKTREE_PARENT[$REPO]}/$WT_NAME"
 elif [[ "$CMD" == start ]]; then
   [[ -n "$REPO" ]] || die "pass --repo (the project sets neither QC_REPO nor PRIMARY_REPO)"
   die "no local root configured for repo '$REPO'"
@@ -150,6 +151,7 @@ case "$CMD" in
       PRJ="$(jq -n --arg ref "$REF" '{url: "", title: ("branch " + $ref), headRefName: $ref}')"
     fi
     if [[ ! -d "$WT" ]]; then
+      mkdir -p "$(dirname "$WT")"
       git -C "$ROOT" worktree add -q --detach "$WT" "$SHA"
       PREV=""
     else

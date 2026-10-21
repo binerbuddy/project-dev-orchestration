@@ -58,7 +58,7 @@ latest review/triage comments, any earlier "Agent QC findings" and human "QC fee
 ## 3. Serve
 
 `pdo qc start <PR#> --agent --repo <repo> --project <p>`. It checks the PR head out in the agent-QC
-worktree (`<repo root>/qc-agent`, never the human's `qc` worktree or an agent's), frees and uses
+worktree (`<worktree parent>/qc-agent`, the parent being `WORKTREE_PARENT[<repo>]`, never the human's `qc` worktree or an agent's), frees and uses
 `AGENT_QC_PORTS`, and has the project's QC hook start the app against the agent-QC data store, freshly
 cloned from the QC seed for this PR. The first start can take minutes. If it fails, that is a
 finding only when the PR causes it (a build or migration error on this head): read the log tail it

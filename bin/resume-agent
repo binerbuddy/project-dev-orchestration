@@ -69,7 +69,8 @@ BRANCH="$(m branch)"
 NAME="$(m name)"; NAME="${NAME:-$REPO-$NUM resumed}"
 if [[ ! -d "$CWD" ]]; then
   [[ -n "$BRANCH" ]] || die "worktree $CWD is gone and no branch is recorded"
-  CWD="${CWD:-$ROOT/$NUM-resumed}"
+  CWD="${CWD:-${WORKTREE_PARENT[$REPO]}/$NUM-resumed}"
+  mkdir -p "$(dirname "$CWD")"
   git -C "$ROOT" fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null || true
   if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git -C "$ROOT" worktree add -q "$CWD" "$BRANCH"

@@ -91,7 +91,9 @@ compaction.
 ## 5. Implement in a temp worktree
 
 1. Create a worktree ON THE PR BRANCH (needed to push later), from the bare root:
-   `git fetch origin <headRefName> && git worktree add <root>/pr-triage-<PR> <headRefName>`.
+   `git fetch origin <headRefName> && git worktree add <worktree parent>/pr-triage-<PR> <headRefName>` (the
+   worktree parent: `pdo project-env 'WORKTREE_PARENT[<repo>]'`, else the bare root, or `<clone>-worktrees/` next to
+   a plain clone).
    If the local branch is checked out elsewhere, use `-B <headRefName> origin/<headRefName>`
    semantics or fail loudly. Never detach.
 2. Implement the approved fixes, grouping related findings per implementer and running independent

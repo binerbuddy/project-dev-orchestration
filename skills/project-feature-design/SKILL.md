@@ -25,6 +25,8 @@ that change the design.
 
 1. **Locate the repo.** The worktree root is `git rev-parse --show-toplevel`. For bare-root layouts the bare root is
    `git rev-parse --git-common-dir` (in a normal clone that prints `.git`; the bare root is then the worktree root).
+   New worktrees go in the **worktree parent** (`<worktree parent>` below): `pdo project-env 'WORKTREE_PARENT[<repo>]'`
+   when the engine is set up, else the bare root, or `<clone>-worktrees/` next to a plain clone (never inside it).
    `<org>/<repo>` comes from `git remote get-url origin`. §Layout gives the base branch (`<base>` below) and the
    worktree naming convention; §Identity gives related repos, the board (`<project#>`) and its ids.
 2. **Read the profile**: `.agents/project-profile.md` at the worktree top level, or failing that
@@ -65,7 +67,7 @@ kebab-case (`user-preferences`) and the directory named per §Layout (default `<
 
 ```
 git fetch origin <base>
-git worktree add --no-track -b docs/<slug>-design <bare-root>/<design-dir> origin/<base>
+git worktree add --no-track -b docs/<slug>-design <worktree parent>/<design-dir> origin/<base>
 ```
 
 `--no-track` keeps the branch from tracking `origin/<base>` (a bare `git push` or `git pull` would target the base

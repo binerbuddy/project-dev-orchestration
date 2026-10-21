@@ -293,6 +293,8 @@ declare -A ROUTE_SKILL=(
 DEFAULT_MODEL="opus"            # the engine default; ask if the human wants another
 GH_USER="<login>"               # the gh login this project's agents use (gh and git push)
 # PROJECT_NUMBER=<n>            # only with a board (below)
+# declare -A WORKTREE_PARENT=([<repo>]="<dir>")  # where agent/QC worktrees go; default: the bare root, or
+#                                                # "<clone>-worktrees" next to a plain clone (only set to override)
 # BRANCH_PREFIX="bug=fix default=feat"   # small-route branch prefix by issue type, then label; a user-owned repo
 #                                         # (no issue types) maps its type labels here, e.g. "bug=fix task=chore default=feat"
 # FIXTURE_EXT=".<ext>"          # from step 5: the primary repo's fixture format
@@ -397,7 +399,7 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
      `git worktree add --no-track -b chore/agent-workflow-setup <bare-root>/agent-workflow-setup origin/<base>`;
    - plain clone: `git switch --no-track -c chore/agent-workflow-setup origin/<base>` when the working tree is
      clean; when it isn't, use a separate worktree (`git worktree add --no-track -b chore/agent-workflow-setup
-     ../<repo>-agent-workflow-setup origin/<base>`) and leave the human's checkout alone;
+     ../<repo>-worktrees/agent-workflow-setup origin/<base>`, the engine's default worktree parent for a plain clone) and leave the human's checkout alone;
    - the branch or its PR already exists (a re-run): reuse it and add a commit; never open a second PR.
 2. **Changeset / CI rules.** Apply the convention step 1 found to this PR, so it doesn't fail the repo's checks:
    - every changed path is exempt (docs-only, if the exempt list covers `AGENTS.md`, `CLAUDE.md`, `.agents/`, the

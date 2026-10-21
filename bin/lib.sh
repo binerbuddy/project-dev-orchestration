@@ -159,6 +159,7 @@ pdo_finalize() {
   FIXTURE_EXT="${FIXTURE_EXT:-}"
   FIXTURE_BRANCH="${FIXTURE_BRANCH:-qc-fixtures}"
   QC_WORKTREE="${QC_WORKTREE:-qc}"
+  pdo_fill_worktree_parents
   BRANCH_PREFIX="${BRANCH_PREFIX:-bug=fix default=feat}"   # spawn's small-route branch prefix: issue type, then labels
   QC_REPO="${QC_REPO:-$PRIMARY_REPO}"
   QC_PORTS="${QC_PORTS:-}"
@@ -204,6 +205,24 @@ pdo_finalize() {
   export ORG PRIMARY_REPO
 }
 
+# pdo_fill_worktree_parents: WORKTREE_PARENT[<repo>], the dir that holds a repo's worktrees (agents',
+# qc, qc-agent), for every REPO_ROOT entry. Set in the env, else the bare root itself, else
+# "<clone>-worktrees" next to a plain clone, so worktrees never land inside a person's checkout.
+pdo_fill_worktree_parents() {
+  if ! declare -p WORKTREE_PARENT >/dev/null 2>&1; then declare -gA WORKTREE_PARENT=()
+  elif [[ "$(declare -p WORKTREE_PARENT)" != "declare -A"* ]]; then
+    pdo_die "WORKTREE_PARENT must be a map: declare -A WORKTREE_PARENT=([<repo>]=\"<dir>\")"
+  fi
+  declare -p REPO_ROOT >/dev/null 2>&1 || return 0
+  local r root
+  for r in "${!REPO_ROOT[@]}"; do
+    root="${REPO_ROOT[$r]}"
+    if [[ -n "${WORKTREE_PARENT[$r]:-}" ]]; then WORKTREE_PARENT[$r]="$(_pdo_abs "${WORKTREE_PARENT[$r]}")"
+    elif [[ "$(git -C "$root" rev-parse --is-bare-repository 2>/dev/null)" == true ]]; then WORKTREE_PARENT[$r]="$root"
+    else WORKTREE_PARENT[$r]="${root%/}-worktrees"; fi
+  done
+}
+
 # pdo_pin_project_gh: every engine script runs gh and git as the project's GH_USER, since other
 # sessions can flip gh's machine-wide active account (and that account may not see a private repo).
 # A token a person or wrapper set (GH_TOKEN or GITHUB_TOKEN without our PDO_GH_PIN marker) wins;
@@ -228,10 +247,11 @@ pdo_slug() {
 
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
-  local k roots="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}"
+  local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}"
   if declare -p REPO_ROOT >/dev/null 2>&1; then
     for k in "${!REPO_ROOT[@]}"; do roots="$(jq -c --arg k "$k" --arg v "${REPO_ROOT[$k]}" '. + {($k): $v}' <<<"$roots")"; done
   fi
+  for k in "${!WORKTREE_PARENT[@]}"; do wt_parents="$(jq -c --arg k "$k" --arg v "${WORKTREE_PARENT[$k]}" '. + {($k): $v}' <<<"$wt_parents")"; done
   if declare -p ROUTE_SKILL >/dev/null 2>&1; then
     for k in "${!ROUTE_SKILL[@]}"; do routes="$(jq -c --arg k "$k" --arg v "${ROUTE_SKILL[$k]}" '. + {($k): $v}' <<<"$routes")"; done
   fi
@@ -246,7 +266,7 @@ pdo_config_json() {
   fi
   jq -n --arg project "$PROJECT" --arg env_file "$PDO_ENV_FILE" --arg env_dir "$PDO_ENV_DIR" \
     --arg home "$PDO_HOME" --arg state "$PDO_STATE_DIR" --arg inbox "$PDO_INBOX" \
-    --arg org "${ORG:-}" --arg num "${PROJECT_NUMBER:-}" --argjson roots "$roots" --argjson routes "$routes" \
+    --arg org "${ORG:-}" --arg num "${PROJECT_NUMBER:-}" --argjson roots "$roots" --argjson wt_parents "$wt_parents" --argjson routes "$routes" \
     --argjson managed "$managed" --arg model "$DEFAULT_MODEL" --arg brief "$BRIEF_TEMPLATE" \
     --arg gh_user "$GH_USER" --arg primary "$PRIMARY_REPO" --arg identity "${IDENTITY_HOOK:-}" \
     --arg team_up "${TEAM_UP_HOOK:-}" --arg sysreport "${SYSREPORT_HOOK:-}" --arg qc "${QC_HOOK:-}" --arg watch_hook "${WATCH_EVENT_HOOK:-}" --arg watch_hook_timeout "${WATCH_EVENT_HOOK_TIMEOUT:-120}" \
@@ -265,7 +285,7 @@ pdo_config_json() {
     --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
     --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
     '{project: $project, env_file: $env_file, env_dir: $env_dir, engine_home: $home, state_dir: $state,
-      inbox: $inbox, org: $org, project_number: $num, repo_root: $roots, route_skill: $routes,
+      inbox: $inbox, org: $org, project_number: $num, repo_root: $roots, worktree_parent: $wt_parents, route_skill: $routes,
       self_managed_repos: $managed, default_model: $model, brief_template: $brief, gh_user: $gh_user,
       primary_repo: $primary, identity_hook: $identity, team_up_hook: $team_up, sysreport_hook: $sysreport,
       qc_hook: $qc, fixture_ext: $fixture_ext, fixture_ext_by_repo: $fx_by_repo, fixture_branch: $fixture_branch, agent_cli: $agent_cli,

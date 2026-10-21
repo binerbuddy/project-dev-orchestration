@@ -24,6 +24,8 @@ description and skip straight to follow-up questions.
 
 1. **Locate the repo.** The worktree root is `git rev-parse --show-toplevel`. For bare-root layouts the bare root is
    `git rev-parse --git-common-dir` (in a normal clone that prints `.git`; the bare root is then the worktree root).
+   New worktrees go in the **worktree parent** (`<worktree parent>` below): `pdo project-env 'WORKTREE_PARENT[<repo>]'`
+   when the engine is set up, else the bare root, or `<clone>-worktrees/` next to a plain clone (never inside it).
    `<org>/<repo>` comes from `git remote get-url origin`. §Layout gives the base branch (`<base>` below) and the
    worktree naming convention.
 2. **Read the profile**: `.agents/project-profile.md` at the worktree top level, or failing that
@@ -88,7 +90,7 @@ test work); the changelog update per §Changelog is part of the plan; respect §
 1. From the bare root, create a branch `<prefix>/<slug>` (`fix/` for a bug, `feat/` otherwise, unless §Layout names
    other prefixes; with the engine, `pdo project-env BRANCH_PREFIX` maps issue types, then labels, to prefixes) from an up-to-date `origin/<base>` and a worktree
    for it (directory named per §Layout):
-   `git fetch origin <base> && git worktree add --no-track -b <branch> <bare-root>/<slug> origin/<base>`
+   `git fetch origin <base> && git worktree add --no-track -b <branch> <worktree parent>/<slug> origin/<base>`
    (`--no-track`: a branch that tracks `origin/<base>` makes a bare `git push` or `git pull` target the base branch;
    the first push sets the branch's own upstream, step 8)
 2. Implement per the plan, using implementation sub-agents where parallelism helps (OMC, if available:
