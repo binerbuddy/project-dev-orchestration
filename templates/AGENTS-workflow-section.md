@@ -1,8 +1,10 @@
 <!--
 Paste this section into the product repo's AGENTS.md (CLAUDE.md then becomes `@AGENTS.md` plus any Claude-only notes).
 Replace every <placeholder> (`<guide path>` is where /project-setup wrote the human guide, default
-`docs/agent-workflow.md`; `<engine checkout>` is the engine path on the manager's machine, e.g.
-`~/src/project-dev-orchestration`, or "your project-dev-orchestration checkout" where there is no engine). For a
+`docs/agent-workflow.md`; `<engine checkout>` is a stable engine checkout on the manager's machine, e.g.
+`~/src/project-dev-orchestration`, never a versioned plugin-cache path, or "your project-dev-orchestration checkout"
+where there is none). When `pdo` is on PATH on the manager's machine, keep the pdo-on-PATH variant of the engine
+paragraph, which names no path, and delete the other; otherwise the reverse. For a
 repo with no UI, use the headless variant of the QC Checklist rule and delete the other. Keep it short: the details
 live in the profile and the skills.
 -->
@@ -27,8 +29,14 @@ about this repo, or a question about these instructions), check `.agents/local/g
 Work is tracked as GitHub issues in `<org>/<repo>` on org Project `<project#>`, and built by agents running the
 project-dev-orchestration skills. Project facts (build commands, ports, QC data, conventions) are in
 `.agents/project-profile.md`; read it before you start. To learn the whole pipeline, load the `project-how-it-works`
-skill. Engine commands are written `pdo <name>`. If `pdo` isn't on PATH, use `<engine checkout>/bin/<name>` (a
-dispatch brief's absolute path wins), or put `pdo` on PATH once with `<engine checkout>/bin/install --bin`.
+skill.
+
+Engine commands are written `pdo <name>`. If `pdo` isn't on PATH, use `<engine checkout>/bin/<name>` (a dispatch
+brief's absolute path wins), or put `pdo` on PATH once with `<engine checkout>/bin/install --bin`.
+
+<!-- pdo-on-PATH variant (names no path): -->
+Engine commands are written `pdo <name>` (a dispatch brief's absolute path wins). Without `pdo` on PATH, put it there
+once with `bin/install --bin` from a project-dev-orchestration checkout.
 
 **Labels and routes**
 - `P1-urgent` … `P4-low`: priority, on issues and PRs. A PR takes the highest P-label of the issues it closes
