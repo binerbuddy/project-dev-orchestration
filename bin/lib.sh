@@ -159,6 +159,7 @@ pdo_finalize() {
   FIXTURE_EXT="${FIXTURE_EXT:-}"
   FIXTURE_BRANCH="${FIXTURE_BRANCH:-qc-fixtures}"
   QC_WORKTREE="${QC_WORKTREE:-qc}"
+  BRANCH_PREFIX="${BRANCH_PREFIX:-bug=fix default=feat}"   # spawn's small-route branch prefix: issue type, then labels
   QC_REPO="${QC_REPO:-$PRIMARY_REPO}"
   QC_PORTS="${QC_PORTS:-}"
   QC_PORTS_SHARED="${QC_PORTS_SHARED:-0}"   # 1 = QC_PORTS are the human's dev ports on purpose: qc may stop any listener there
@@ -250,7 +251,7 @@ pdo_config_json() {
     --arg gh_user "$GH_USER" --arg primary "$PRIMARY_REPO" --arg identity "${IDENTITY_HOOK:-}" \
     --arg team_up "${TEAM_UP_HOOK:-}" --arg sysreport "${SYSREPORT_HOOK:-}" --arg qc "${QC_HOOK:-}" --arg watch_hook "${WATCH_EVENT_HOOK:-}" --arg watch_hook_timeout "${WATCH_EVENT_HOOK_TIMEOUT:-120}" \
     --arg fixture_ext "$FIXTURE_EXT" --argjson fx_by_repo "$fx_by_repo" --arg fixture_branch "$FIXTURE_BRANCH" --arg agent_cli "$AGENT_CLI" \
-    --arg qc_worktree "$QC_WORKTREE" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_ports_shared "$QC_PORTS_SHARED" \
+    --arg qc_worktree "$QC_WORKTREE" --arg branch_prefix "$BRANCH_PREFIX" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_ports_shared "$QC_PORTS_SHARED" \
     --arg sm "$SYSTEM_MANAGER_WORKSPACE" --arg control "$CONTROL_DIR" \
     --arg carry "$CARRY_LABELS" --arg shots "$SCREENSHOT_DIR" \
     --arg cwt "$CWT_STATUS" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
@@ -269,6 +270,7 @@ pdo_config_json() {
       primary_repo: $primary, identity_hook: $identity, team_up_hook: $team_up, sysreport_hook: $sysreport,
       qc_hook: $qc, fixture_ext: $fixture_ext, fixture_ext_by_repo: $fx_by_repo, fixture_branch: $fixture_branch, agent_cli: $agent_cli,
       qc_worktree: $qc_worktree, qc_repo: $qc_repo,
+      branch_prefix: ($branch_prefix | split(" ") | map(select(test("=")) | split("=") | {key: (.[0] | ascii_downcase), value: (.[1:] | join("="))}) | from_entries),
       watch_event_hook: $watch_hook, watch_event_hook_timeout: ($watch_hook_timeout | tonumber? // 120),
       qc_ports: ($qc_ports | split(" ") | map(select(length > 0) | tonumber)), qc_ports_shared: ($qc_ports_shared == "1"),
       agent_qc_ports: ($aqc_ports | split(" ") | map(select(length > 0) | tonumber)),

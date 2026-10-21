@@ -85,7 +85,8 @@ test work); the changelog update per §Changelog is part of the plan; respect §
 
 ## 5. Implement in a fresh worktree
 
-1. From the bare root, create a branch `feat/<slug>` or `fix/<slug>` from an up-to-date `origin/<base>` and a worktree
+1. From the bare root, create a branch `<prefix>/<slug>` (`fix/` for a bug, `feat/` otherwise, unless §Layout names
+   other prefixes; with the engine, `pdo project-env BRANCH_PREFIX` maps issue types, then labels, to prefixes) from an up-to-date `origin/<base>` and a worktree
    for it (directory named per §Layout):
    `git fetch origin <base> && git worktree add --no-track -b <branch> <bare-root>/<slug> origin/<base>`
    (`--no-track`: a branch that tracks `origin/<base>` makes a bare `git push` or `git pull` target the base branch;

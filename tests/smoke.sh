@@ -290,6 +290,18 @@ eq "spawn dry-run branch" "$(jq -r .branch <<<"$out" 2>/dev/null)" "fix/12-widge
 eq "spawn dry-run worktree" "$(jq -r .worktree <<<"$out" 2>/dev/null)" "$T/repos/widget.git/12-widget-crash-save"
 has "spawn dry-run prompt names the skill" "$(jq -r .prompt <<<"$out" 2>/dev/null)" "/project-dev-orchestration:project-small-feature-or-bug-fix Work acme/widget#12"
 check "spawn dry-run logged no failure" test ! -e "$T/state/spawn-failures.jsonl"
+# BRANCH_PREFIX: issue type, then labels, else default
+jq '.type = null | .labels = [{name: "P2-high"}, {name: "Bug"}]' "$T/issue12.json" >"$T/issue12-nt.json"
+cp "$T/issue12.json" "$T/issue12-typed.json"; cp "$T/issue12-nt.json" "$T/issue12.json"
+eq "no type: the bug label gives fix/" "$("$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "fix/12-widget-crash-save"
+jq '.labels = [{name: "task"}]' "$T/issue12-nt.json" >"$T/issue12.json"
+eq "no type, no mapped label: default feat/" "$("$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "feat/12-widget-crash-save"
+eq "BRANCH_PREFIX maps a label" "$(BRANCH_PREFIX="bug=fix Task=chore default=feat" "$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "chore/12-widget-crash-save"
+eq "BRANCH_PREFIX default entry" "$(BRANCH_PREFIX="default=work" "$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "work/12-widget-crash-save"
+jq '.type = {name: "Feature"} | .labels = [{name: "bug"}]' "$T/issue12-nt.json" >"$T/issue12.json"
+eq "the type is matched before labels" "$(BRANCH_PREFIX="feature=feat bug=fix" "$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "feat/12-widget-crash-save"
+cp "$T/issue12-typed.json" "$T/issue12.json"
+eq "branch_prefix in the JSON config" "$("$BIN/pdo-config" --project acme --json | jq -c .branch_prefix)" '{"bug":"fix","default":"feat"}'
 GH_USER=octo SMOKE_TOKEN_LOG="$T/tokens.log" "$BIN/spawn" widget 12 --dry-run >/dev/null 2>&1
 eq "spawn reads the issue as GH_USER (no with-gh-user wrapping)" "$(grep -c '^token-for-octo api repos/acme/widget/issues/12$' "$T/tokens.log")" 1
 SMOKE_TOKEN_LOG="$T/tokens-q.log" GH_USER=octo "$BIN/queue" --json >/dev/null 2>&1
