@@ -676,6 +676,24 @@ out="$(W)"
 eq "watch: the UX pass (QC complete -> Ready for Merge) fires no qc_complete" "$(jq -c '[.events[] | select(.type == "qc_complete")] | length' <<<"$out" 2>/dev/null)" 0
 eq "watch: Ready for Merge counts toward the PR cap" "$(jq -c .pr_cap.open_awaiting_human <<<"$out" 2>/dev/null)" 1
 eq "watch: human_queue lists Ready for Merge" "$(jq -c '[.human_queue.ready_for_merge[].pr]' <<<"$out" 2>/dev/null)" '["widget#5"]'
+eq "watch: the PR cap counts per repo" "$(jq -c '[.pr_cap.by_repo, .pr_cap.capped, .pr_cap.reached]' <<<"$out" 2>/dev/null)" '[{"widget":1},[],false]'
+echo 1 >"$WS/acme-pr-cap"; out="$(W)"
+eq "watch: a repo at its cap: pr_cap_reached names it" "$(jq -c '[.events[] | select(.type == "pr_cap_reached") | "\(.repo):\(.open_awaiting_human)/\(.cap)"]' <<<"$out" 2>/dev/null)" '["widget:1/1"]'
+eq "watch: every repo capped: no free slots" "$(jq -c '[.pr_cap.reached, .free_slots]' <<<"$out" 2>/dev/null)" '[true,0]'
+out="$(W)"; eq "watch: pr_cap_reached fires once per repo" "$(jq -c '[.events[] | select(.type == "pr_cap_reached")] | length' <<<"$out" 2>/dev/null)" 0
+rm -f "$WS/acme-pr-cap"; out="$(W)"
+eq "watch: a repo dropping under its cap frees slots" "$(jq -c '[.events[] | select(.type == "slot_freed")] | length' <<<"$out" 2>/dev/null)" 1
+eq "watch: queue rows of a capped repo are held, and recover" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, json, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+q = [{"repo": "widget", "auto_spawn": True}, {"repo": "gizmo", "auto_spawn": True}, {"repo": "widget", "auto_spawn": False}]
+held = w.mark_pr_capped(q, {"capped": ["widget"]})
+back = w.mark_pr_capped(held, {"capped": []})
+print(json.dumps([[r["auto_spawn"] for r in held], [bool(r.get("pr_capped")) for r in held], [r["auto_spawn"] for r in back],
+                  any("pr_capped" in r or "auto_spawn_uncapped" in r for r in back)], separators=(",", ":")))
+PY
+)" '[[false,true,false],[true,false,true],[true,true,false],false]'
 # feedback took the pass labels off; agent QC escalates; then a direct no-UX pass fires once
 mkprs '["QC escalated"]' '[]' >"$T/prs.json"
 out="$(W)"

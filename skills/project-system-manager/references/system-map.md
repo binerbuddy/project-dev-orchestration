@@ -43,5 +43,5 @@ allows, and records its own standing preferences in its own docs.
 - PR P-labels are never downgraded.
 - Conflict rebases run continuously as merges land (2 at a time), so each PR is ready when the human
   gets to it. Don't suggest holding them.
-- PR cap: with `open_awaiting_human` PRs ≥ the cap (default 10, `$PDO_STATE_DIR/<p>-pr-cap`), nothing
-  new spawns.
+- PR cap, per repo: a repo with `open_awaiting_human` PRs ≥ the cap (default 10, `$PDO_STATE_DIR/<p>-pr-cap`)
+  spawns nothing new; other repos carry on (`pr_cap.by_repo`, `pr_cap.capped`).

@@ -126,8 +126,9 @@ without `--allow-phase`: the epic's build agent works every phase. Independent f
   hot work), and pauses at `FIVE_HOUR_CEILING` % of the 5-hour window (default 90). Usage comes from a
   cache file (`USAGE_CACHE`; the oh-my-claudecode HUD's cache by default). Missing data never blocks
   silently: it is reported as unknown.
-- **PR cap:** when `<project>-pr-cap` (default 10) open PRs are waiting on the human, nothing new spawns,
-  so the team's pace follows the human's merge rate.
+- **PR cap (per repo):** when `<project>-pr-cap` (default 10) open PRs in one repo are waiting on the human,
+  that repo's issues stop spawning, so each repo's pace follows the human's merge rate there. Other repos
+  carry on; one repo's QC backlog doesn't hold up another (Matt, 2026-10-22).
 
 ## The watcher
 

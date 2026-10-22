@@ -73,8 +73,11 @@ and let the agent ask. Report each as `spawned <workspace> (over cap: active N/<
 reached, with the usage figures if over the ceiling. Neither P1 alone nor the queue status alone
 bypasses; that's the rule. Agents started this way count as active.
 
-Otherwise only when `free_slots > 0` (0 at the usage ceiling or the PR cap) and
+Otherwise only when `free_slots > 0` (0 at the usage ceiling, or when every repo is at its PR cap) and
 `usage_over_ceiling` is false. Take `queue` items in order:
+
+- **PR cap is per repo.** Skip any item whose repo is in `pr_cap.capped` (snapshot rows already carry
+  `pr_capped: true`; rows from a fresh `pdo queue` don't, so check the repo). The urgent bypass is unaffected.
 
 - **Speak only P-levels and CWT** ("Claude Work This", or the project's queue status). The queue
   ranks CWT first, then P1 → P4; within a level Security, then Bugs. Never say "tier". Each item's `p`

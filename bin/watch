@@ -543,16 +543,39 @@ REBASE_CONCURRENCY = 2
 
 
 def pr_cap(project, org, repos):
-    """Open PRs waiting on QC, UX review, an escalation or review/merge. At or over the cap, nothing new is
-    spawned (the urgent bypass excepted), so the team's pace follows the human's merge rate and
-    later PRs don't pile up conflicts against unmerged earlier ones. Cap: <project>-pr-cap file
-    (default 10)."""
+    """Open PRs waiting on QC, UX review, an escalation or review/merge, counted per repo. A repo at or
+    over the cap spawns nothing new (the urgent bypass excepted), so each repo's pace follows the
+    human's merge rate there and later PRs don't pile up conflicts against unmerged earlier ones;
+    one repo's backlog doesn't hold up another. Cap per repo: <project>-pr-cap file (default 10).
+    `reached` is true only when every repo is capped."""
     try:
         cap = int(open(os.path.join(STATE_DIR, f"{project}-pr-cap"), encoding="utf-8").read().strip())
     except (OSError, ValueError):
         cap = PR_CAP_DEFAULT
-    n = sum(1 for p in PR_INDEX.values() if p["state"] == "OPEN" and AWAITING_HUMAN & set(p["labels"]))
-    return {"open_awaiting_human": n, "cap": cap, "reached": n >= cap}
+    by_repo = {r: 0 for r in sorted(repos)}
+    for (repo, _b), p in PR_INDEX.items():
+        if p["state"] == "OPEN" and AWAITING_HUMAN & set(p["labels"]):
+            by_repo[repo] = by_repo.get(repo, 0) + 1
+    capped = sorted(r for r, n in by_repo.items() if n >= cap)
+    return {"open_awaiting_human": sum(by_repo.values()), "cap": cap, "per_repo": True, "by_repo": by_repo,
+            "capped": capped, "reached": bool(by_repo) and len(capped) == len(by_repo)}
+
+
+def mark_pr_capped(queue, cap):
+    """Queue rows in a repo at its PR cap get auto_spawn false and pr_capped true. The row's own
+    auto_spawn is kept in auto_spawn_uncapped, so a cached row recovers once the repo drops under."""
+    capped = set(cap.get("capped") or [])
+    out = []
+    for r in queue:
+        r = dict(r)
+        own = r.pop("auto_spawn_uncapped", r.get("auto_spawn"))
+        r.pop("pr_capped", None)
+        if r.get("repo") in capped:
+            r.update(auto_spawn=False, pr_capped=True, auto_spawn_uncapped=own)
+        else:
+            r["auto_spawn"] = own
+        out.append(r)
+    return out
 
 
 def human_queue():
@@ -625,11 +648,12 @@ def snapshot(project, prev):
     cap = pr_cap(project, org, repos)
     if not prs_ok and prev.get("pr_cap"):
         cap = prev["pr_cap"]  # the PR fetch failed: an undercount would wrongly lift the cap
+    q = mark_pr_capped(q, cap)
     return {
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "agents": ag, "active": active,
         "waiting_on_you": waiting_on_you(ag), "human_queue": human_queue(),
         "free_slots": 0 if (over or cap["reached"]) else max(0, MAX_ACTIVE - len(active)),
-        "pr_cap": cap, "github": {"graphql_left": gql_left, "rate_low": rate_low, "prs_ok": prs_ok},  # free_slots is 0 while reached; the urgent bypass still spawns
+        "pr_cap": cap, "github": {"graphql_left": gql_left, "rate_low": rate_low, "prs_ok": prs_ok},  # free_slots is 0 only when every repo is capped; queue rows of a capped repo carry pr_capped; the urgent bypass still spawns
         "conflicting": conflicting(ag), "rebase_concurrency": REBASE_CONCURRENCY,
         # P1-urgent + Claude Work This: spawned regardless of free_slots and the usage ceiling
         "urgent": [r for r in q if r.get("urgent_bypass")],
@@ -669,8 +693,14 @@ def events(prev, cur):
             ev.append({"type": "new_claude_work_this", "ref": r["ref"], "title": r["title"]})
     for c in cur.get("review_feedback", []):
         ev.append({"type": "qc_feedback", **c})
-    if cur["pr_cap"]["reached"] and not (prev.get("pr_cap") or {}).get("reached"):
-        ev.append({"type": "pr_cap_reached", **cur["pr_cap"]})
+    pcap, ccap = prev.get("pr_cap") or {}, cur["pr_cap"]
+    # a snapshot from before per-repo caps has no "capped": treat it as nothing capped yet
+    was_capped = set(pcap.get("capped") or [])
+    for r in ccap.get("capped") or []:
+        if r not in was_capped:
+            ev.append({"type": "pr_cap_reached", "repo": r, "open_awaiting_human": ccap["by_repo"].get(r),
+                       "cap": ccap["cap"]})
+    lifted = sorted(was_capped - set(ccap.get("capped") or []))
     old_conf = {c["agent"] for c in prev.get("conflicting", [])}
     for c in cur.get("conflicting", []):
         if c["agent"] not in old_conf:
@@ -683,6 +713,8 @@ def events(prev, cur):
         ev.append({"type": "usage_ceiling", "usage": cur["usage"]})
     if prev.get("free_slots", 0) == 0 and cur["free_slots"] > 0 and not any(e["type"] == "slot_freed" for e in ev):
         ev.append({"type": "slot_freed", "agent": None})
+    elif lifted and cur["free_slots"] > 0 and not any(e["type"] == "slot_freed" for e in ev):
+        ev.append({"type": "slot_freed", "agent": None, "pr_cap_lifted": lifted})
     return ev
 
 

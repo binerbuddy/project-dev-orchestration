@@ -328,6 +328,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     # PR index by (repo, branch), and what waits on the human
     pr_by_branch, qc_ready, qc_done, gates, open_total, awaiting = {}, [], [], [], 0, 0
     merge_ready, escalated = [], []
+    awaiting_by_repo = {r: 0 for r in sorted(managed)}  # the PR cap applies per repo
     for repo in sorted(repos):
         f = gh_facts.get((cfg["org"], repo))
         if not f:
@@ -346,6 +347,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
                 qc_ready.append(dict(item, agent_qc=repo in agent_qc))
             if repo in managed and {labels_ready, labels_done, labels_merge, labels_esc} & set(pr["labels"]):
                 awaiting += 1
+                awaiting_by_repo[repo] += 1
         gates += [dict(g, repo=repo) for g in f["gates"]]
     try:
         cap = int(open(os.path.join(state, f"{p}-pr-cap"), encoding="utf-8").read().strip())
@@ -476,7 +478,10 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         "claims": {"label": cfg.get("claim_label"), "claimed": claimed, "stale": stale,
                    "stale_known": herdr_ok},
         "queue": queue,
-        "prs": {"open": open_total, "awaiting_human": awaiting, "cap": cap, "reached": awaiting >= cap},
+        "prs": {"open": open_total, "awaiting_human": awaiting, "cap": cap, "by_repo": awaiting_by_repo,
+                "capped": sorted(r for r, n in awaiting_by_repo.items() if n >= cap),
+                # held only when every repo is at its cap; a capped repo alone just skips its own issues
+                "reached": bool(awaiting_by_repo) and all(n >= cap for n in awaiting_by_repo.values())},
         "watch_snapshot_age_min": snap_age,
         "spawn_floor": (open(os.path.join(state, f"{p}-floor"), encoding="utf-8").read().strip()
                         if os.path.exists(os.path.join(state, f"{p}-floor")) else None),
@@ -559,7 +564,7 @@ def advise(views, system):
             elif want == 0 and not reason:
                 reason.append("no startable work in its queue" if startable(v) == 0 else "at its own MAX_ACTIVE")
         if v["prs"]["reached"]:
-            reason.append(f"PR cap reached ({v['prs']['awaiting_human']}/{v['prs']['cap']}): the engine holds new work")
+            reason.append(f"every repo at its PR cap ({v['prs']['cap']} each, {v['prs']['awaiting_human']} awaiting): the engine holds new work")
         if not reason:
             reason.append("within every constraint")
         out[v["project"]] = {"advice": adv, "reason": "; ".join(reason), "suggested_max_active": max(0, sugg),
@@ -893,8 +898,9 @@ def text_report(r, only):
             print("  standing: " + ", ".join(f"{x['workspace']} [{x['status']}]" for x in ag["standing"]))
         q = v["queue"]
         qd = f"{q['eligible']} eligible ({q['auto_spawn']} auto-spawn)" if q["eligible"] is not None else f"unknown ({q['error']})"
-        print(f"  queue: {qd}; PRs: {v['prs']['awaiting_human']} awaiting human / cap {v['prs']['cap']}"
-              f"{' (REACHED)' if v['prs']['reached'] else ''}, {v['prs']['open']} open"
+        capped = v["prs"].get("capped") or []
+        print(f"  queue: {qd}; PRs: {v['prs']['awaiting_human']} awaiting human / cap {v['prs']['cap']} per repo"
+              f"{' (REACHED)' if v['prs']['reached'] else (' (capped: ' + ', '.join(capped) + ')' if capped else '')}, {v['prs']['open']} open"
               + (f"; floor {v['spawn_floor']}" if v["spawn_floor"] else ""))
         ad = r["advice"][v["project"]]
         print(f"  advice: {ad['advice']} (suggested max active {ad['suggested_max_active']}): {ad['reason']}"
