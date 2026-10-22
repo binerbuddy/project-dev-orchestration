@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# recycle-agent-qc — clear the QC Agent's context between PRs: wait until its turn ends, then send
-# `/clear` (agent QC step 7, after a verdict). The /loop's scheduled wakeup survives /clear and
-# re-sends the loop command into the fresh session, so nothing else is sent (tested 2026-10-22).
+# recycle-agent-qc — restart the QC Agent between PRs, for a clean context and the engine version
+# installed now (a running session keeps the plugin version it started with; `/clear` doesn't restart it).
+# Agent QC step 7 runs it after a verdict: it waits until the turn ends, sends `/exit` (choosing
+# "Exit and stop tasks", which ends the /loop's pending wakeup), then `start-agent-qc` relaunches
+# `/loop <skill>` in the same workspace. Tested 2026-10-22.
 #
 # Usage: recycle-agent-qc [--project P] [--foreground]
 # By default it detaches (setsid) and returns at once, since the caller is the QC Agent's own turn.
-# It skips the /clear (and logs why) when a PR is still in progress (the marker), the pane shows a
+# It skips the restart (and logs why) when a PR is still in progress (the marker), the pane shows a
 # question, or the turn hasn't ended within 30 min. AGENT_QC_RECYCLE=0 turns it off.
 # Log: $PDO_STATE_DIR/agent-qc/recycle.log
 set -euo pipefail
@@ -20,7 +22,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --project) PROJECT="$2"; shift 2 ;;
     --foreground) FG=1; shift ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -32,7 +34,7 @@ STATE="$PDO_STATE_DIR/agent-qc"; mkdir -p "$STATE"
 LOG="$STATE/recycle.log"
 if [[ $FG -eq 0 ]]; then
   setsid -f "$0" "${ARGS[@]}" --foreground </dev/null >>"$LOG" 2>&1
-  echo "recycle-agent-qc: will /clear the QC Agent once this turn ends (log: $LOG)"
+  echo "recycle-agent-qc: will restart the QC Agent once this turn ends (log: $LOG)"
   exit 0
 fi
 
@@ -53,5 +55,15 @@ case "$status" in idle|done) ;; *) log "skip: agent is $status"; exit 0 ;; esac
 if herdr pane read "$PANE" | tail -40 | grep -qE "Enter to select|Do you want to proceed"; then
   log "skip: a question is on screen"; exit 0
 fi
-herdr agent prompt "$PANE" "/clear" >/dev/null
-log "cleared the QC Agent's context (pane $PANE)"
+herdr agent prompt "$PANE" "/exit" >/dev/null
+sleep "${RECYCLE_SETTLE_SEC:-3}"
+# with a /loop wakeup pending, /exit asks first; option 1 is selected
+if herdr pane read "$PANE" | tail -15 | grep -q "Exit and stop tasks"; then herdr pane send-keys "$PANE" enter >/dev/null; fi
+gone=0
+for _ in $(seq 1 30); do
+  herdr agent list | jq -e --arg p "$PANE" '.result.agents[] | select(.pane_id == $p)' >/dev/null || { gone=1; break; }
+  sleep 1
+done
+[[ $gone -eq 1 ]] || { log "failed: the QC Agent didn't exit; see workspace \"$NAME\""; exit 1; }
+log "exited the QC Agent (pane $PANE); relaunching"
+"$HERE/bin/start-agent-qc" --project "$PROJECT" 2>&1 | while read -r l; do log "$l"; done

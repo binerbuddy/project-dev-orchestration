@@ -109,6 +109,13 @@ echo "herdr $*" >>"$SMOKE_LOG"
 case "$1 ${2:-}" in
   "workspace list") if [[ -n "${SMOKE_HERDR_WS:-}" ]]; then cat "$SMOKE_HERDR_WS"; else echo '{"result":{"workspaces":[]}}'; fi ;;
   "agent list") if [[ -n "${SMOKE_HERDR_AGENTS:-}" ]]; then cat "$SMOKE_HERDR_AGENTS"; else echo '{"result":{"agents":[]}}'; fi ;;
+  # SMOKE_HERDR_EXIT: /exit makes the agent disappear and `pane run` (a relaunch) brings it back
+  "agent prompt") if [[ -n "${SMOKE_HERDR_EXIT:-}" && "${4:-}" == /exit ]]; then
+                    mv "$SMOKE_HERDR_AGENTS" "$SMOKE_HERDR_AGENTS.saved"; echo '{"result":{"agents":[]}}' >"$SMOKE_HERDR_AGENTS"; fi
+                  echo '{"result":{}}' ;;
+  "pane run") if [[ -n "${SMOKE_HERDR_EXIT:-}" && -f "$SMOKE_HERDR_AGENTS.saved" ]]; then mv "$SMOKE_HERDR_AGENTS.saved" "$SMOKE_HERDR_AGENTS"; fi
+              echo '{"result":{}}' ;;
+  "pane list") echo "{\"result\":{\"panes\":[{\"pane_id\":\"${SMOKE_HERDR_PANE:-}\"}]}}" ;;
   *) echo '{"result":{}}' ;;
 esac
 EOF
@@ -217,26 +224,31 @@ eq "agent-qc notes: a repo's own notes" "$(AGENT_QC_PORTS=3998 AGENT_QC_NOTES=no
 eq "agent-qc notes: others fall back to AGENT_QC_NOTES" "$(AGENT_QC_PORTS=3998 AGENT_QC_NOTES=notes/all.md "$BIN/agent-qc" notes widget --project acme)" "$T/cfg-a/notes/all.md"
 AGENT_QC_PORTS=3998 "$BIN/agent-qc" notes widget --project acme >/dev/null 2>&1; eq "agent-qc notes: none exits 1" "$?" 1
 check "agent-qc notes: unknown repo fails" bash -c '! AGENT_QC_PORTS=3998 "$0/agent-qc" notes nope --project acme' "$BIN"
-# recycle-agent-qc: /clear the QC Agent between PRs, only when its turn is over and no PR is in progress
+# recycle-agent-qc: restart the QC Agent between PRs, only when its turn is over and no PR is in progress
 RQ="$T/recycle"; mkdir -p "$RQ/state/agent-qc"
 echo '{"result":{"workspaces":[{"label":"QC Agent (acme)","workspace_id":"wQ"}]}}' >"$RQ/ws.json"
 echo '{"result":{"agents":[{"workspace_id":"wQ","agent":"claude","pane_id":"wQ:p1","agent_status":"idle"}]}}' >"$RQ/agents.json"
 R=(env PDO_STATE_DIR="$RQ/state" SMOKE_HERDR_WS="$RQ/ws.json" SMOKE_HERDR_AGENTS="$RQ/agents.json" RECYCLE_SETTLE_SEC=0 AGENT_QC_PORTS=3998)
 eq "recycle-agent-qc: AGENT_QC_RECYCLE=0 turns it off" "$("${R[@]}" AGENT_QC_RECYCLE=0 "$BIN/recycle-agent-qc" --project acme)" "recycle is off (AGENT_QC_RECYCLE=0)"
 : >"$SMOKE_LOG"; out="$("${R[@]}" "$BIN/recycle-agent-qc" --project acme --foreground)"
-check "recycle-agent-qc: idle, nothing in progress -> /clear" grep -qx "herdr agent prompt wQ:p1 /clear" "$SMOKE_LOG"
+check "recycle-agent-qc: idle, nothing in progress -> /exit" grep -qx "herdr agent prompt wQ:p1 /exit" "$SMOKE_LOG"
+eq "recycle-agent-qc: ... but an agent that won't exit isn't relaunched" "$(grep -c "pane run" "$SMOKE_LOG")" 0
+check "recycle-agent-qc: ... and says so" grep -q "failed: the QC Agent didn't exit" <<<"$out"
+: >"$SMOKE_LOG"; out="$("${R[@]}" SMOKE_HERDR_EXIT=1 SMOKE_HERDR_PANE=wQ:p1 DEFAULT_MODEL=opus "$BIN/recycle-agent-qc" --project acme --foreground)"
+check "recycle-agent-qc: exits, then relaunches the loop in the same pane" grep -q "herdr pane run wQ:p1 .*--remote-control QC.*acme.*/loop.*project-agent-qc.*project=acme" "$SMOKE_LOG"
+check "recycle-agent-qc: ... and logs it" grep -q "QC Agent running in workspace" <<<"$out"
 echo '{"repo":"widget","pr":7}' >"$RQ/state/agent-qc/in-progress.json"
 : >"$SMOKE_LOG"; out="$("${R[@]}" "$BIN/recycle-agent-qc" --project acme --foreground)"
-check "recycle-agent-qc: a PR in progress -> no /clear" bash -c '! grep -q "agent prompt" "$0"' "$SMOKE_LOG"
+check "recycle-agent-qc: a PR in progress -> no restart" bash -c '! grep -q "agent prompt" "$0"' "$SMOKE_LOG"
 check "recycle-agent-qc: ... and says why" grep -q "skip: a PR is still in progress" <<<"$out"
 rm "$RQ/state/agent-qc/in-progress.json"
 sed -i 's/"idle"/"working"/' "$RQ/agents.json"
 : >"$SMOKE_LOG"; out="$("${R[@]}" "$BIN/recycle-agent-qc" --project acme --foreground)"
-check "recycle-agent-qc: still working -> no /clear" bash -c '! grep -q "agent prompt" "$0"' "$SMOKE_LOG"
+check "recycle-agent-qc: still working -> no restart" bash -c '! grep -q "agent prompt" "$0"' "$SMOKE_LOG"
 out="$("${R[@]}" SMOKE_HERDR_WS=/dev/null "$BIN/recycle-agent-qc" --project acme --foreground 2>&1)"
 check "recycle-agent-qc: no QC Agent workspace -> skip" grep -q "skip: no workspace" <<<"$out"
 out="$("${R[@]}" "$BIN/recycle-agent-qc" --project acme)"
-check "recycle-agent-qc: detaches by default" grep -q "will /clear the QC Agent once this turn ends" <<<"$out"
+check "recycle-agent-qc: detaches by default" grep -q "will restart the QC Agent once this turn ends" <<<"$out"
 eq "default state dir" "$(env -u PDO_STATE_DIR "$BIN/pdo-config" --state-dir)" "$T/home/.local/state/project-dev-orchestration"
 eq "python state_dir agrees" "$(env -u PDO_STATE_DIR python3 -c "import sys; sys.path.insert(0, '$BIN'); import pdo_config; print(pdo_config.state_dir())")" "$T/home/.local/state/project-dev-orchestration"
 eq "python load() agrees" "$(python3 -c "import sys; sys.path.insert(0, '$BIN'); import pdo_config; c = pdo_config.load('acme'); print(c['org'], pdo_config.ref(c, 'widget', 3), pdo_config.ref(c, 'docs', 4))")" "acme #3 docs#4"

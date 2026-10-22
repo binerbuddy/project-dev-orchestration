@@ -17,8 +17,7 @@ human's QC database, or a command agent's ports or worktree. Test scripts and ev
 scratchpad.
 
 **Project.** `project=<p>` in the arguments; pass `--project <p>` to every script. Read once per
-session, and again after a context compaction or `/clear` (step 7 clears your context after every
-verdict):
+session, and again after a context compaction (step 7 restarts your session after every verdict):
 - `pdo agent-qc notes <repo> --project <p>` for each repo you QC (the facts' `notes` field too): that
   repo's agent-QC know-how (how to log in, seed users, API recipes, browser notes, and maybe its own
   pass rule). Read the file it names. Different repos can have different notes: re-read when the
@@ -193,12 +192,12 @@ Under Claude Code `/loop` dynamic mode, call ScheduleWakeup:
 - nothing waiting, or a delivery is pending: 1800 s.
 
 If this tick posted a verdict (step 6 ran and released the marker), first run
-`pdo recycle-agent-qc --project <p>`. It returns at once, waits for your turn to end, then sends
-`/clear`; the scheduled wakeup survives it and restarts the loop in a fresh session. Don't run it on
-an idle tick or while a delivery is pending. Your notes, the profile and the QC protocol are re-read
-on the next tick (see **Project**); everything else a PR needs is in its marker, labels and comments.
+`pdo recycle-agent-qc --project <p>`. It returns at once; once your turn ends it exits this session
+and relaunches the loop in a fresh one (a clean context and the engine version installed now). Don't
+run it on an idle tick or while a delivery is pending. Everything a PR needs is in its marker, labels
+and comments.
 
-Then end the turn. One PR per tick, and a cleared context after each, keeps every verdict clean.
+Then end the turn. One PR per tick, and a fresh session after each, keeps every verdict clean.
 
 ## Rules
 

@@ -206,10 +206,12 @@ watcher).
   `ready for QC` PR in `AGENT_QC_REPOS` before a human sees it, one at a time, highest P-label first
   (`bin/agent-qc next`), with an in-progress marker under `$PDO_STATE_DIR/agent-qc`. It doesn't use a
   command-agent slot.
-  - After each verdict the skill runs `bin/recycle-agent-qc` (detached), which waits for the turn to end
-    and sends `/clear` when no PR is in progress and no question is on screen. A `/loop` dynamic-mode
-    wakeup survives `/clear` and re-sends the loop command into the fresh session (tested 2026-10-22),
-    so nothing else is sent. A long-lived QC Agent had filled its context in ~2 days.
+  - After each verdict the skill runs `bin/recycle-agent-qc` (detached). Once the turn ends, with no PR
+    in progress and no question on screen, it sends `/exit` (choosing "Exit and stop tasks", which ends
+    the pending `/loop` wakeup) and `start-agent-qc` relaunches the loop in the same workspace. A
+    restart, not `/clear`: a running session keeps the plugin version it started with, and `/clear`
+    doesn't restart the process (the /exit + relaunch was tested 2026-10-22; a /loop wakeup survives
+    `/clear`, so `/clear` alone would also have worked for the context). A long-lived QC Agent had filled its context in ~2 days.
     `AGENT_QC_RECYCLE=0` turns it off.
   - `bin/qc --agent` is a second QC instance: worktree `<worktree parent>/$AGENT_QC_WORKTREE` (default
     `qc-agent`), state `$PDO_STATE_DIR/agent-qc`, ports `AGENT_QC_PORTS`; the hook sees
