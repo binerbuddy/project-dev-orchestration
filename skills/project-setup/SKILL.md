@@ -259,6 +259,8 @@ it. Without write access, run check-only, list the commands for a maintainer, an
 Tell the human, in two or three lines:
 - QC fixtures (test data a QC checklist links to) live on a never-merged `qc-fixtures` branch (`FIXTURE_BRANCH`).
   You don't create it now: `pdo qc-fixture-push <PR#> <file>` creates it the first time an agent publishes a fixture.
+  The same push uploads each fixture to a `qc-fixtures-assets` prerelease (`FIXTURE_RELEASE`, `""` = off), so the
+  checklist links a file download instead of GitHub's Raw view.
 - It is per repo, and its format is this repo's own (an app export, a database dump, a JSON seed file; for a
   headless repo, typically an input file with its expected output).
 

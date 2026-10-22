@@ -32,12 +32,14 @@ If checking the change needs specific data the QC seed lacks, don't make the hum
 1. Build a fixture in your own QC environment that already shows every case on the checklist.
 2. Export it in the project's fixture format (profile `## QC data`, file extension `FIXTURE_EXT`).
 3. Publish it with `pdo qc-fixture-push <PR#> <file>`. It stores the file at `<PR#>/<name>` on the
-   never-merged **`qc-fixtures`** branch and prints its link. **Never commit fixtures to the PR
+   never-merged **`qc-fixtures`** branch, uploads the same file as the asset `<PR#>-<name>` of the
+   `qc-fixtures-assets` prerelease (`FIXTURE_RELEASE`), and prints a `download:` link to it. **Never commit fixtures to the PR
    branch**: they would merge into the default branch with the PR. Keep each file small (under
    ~5 MB) and strip anything not needed.
    Without an engine install: push the file to `qc-fixtures` yourself (an orphan branch, path
    `<PR#>/<name>`), never to the PR branch.
-4. Open the checklist (right under the heading) with a **"Test data"** item: the link, the import
+4. Open the checklist (right under the heading) with a **"Test data"** item: the `download:` link (it downloads the file; the `raw` link opens it
+   in the browser), the import
    steps, and which data the following items use.
 
 Skip all of this when the seed already covers the checklist.

@@ -42,6 +42,10 @@ case "$*" in
   "api -X DELETE repos/acme/widget/issues/"*"/labels/managed-by%3A"*) ;;
   "api repos/acme/widget/issues/"*"/comments -f body="*) echo 9001 ;;
   "issue edit"*) ;;
+  # qc-fixture-push: the fixture release and its assets
+  "release view "*" -R acme/"*) [[ -f "$SMOKE_DIR/fixture-release" ]] || exit 1 ;;
+  "release create "*" -R acme/"*) touch "$SMOKE_DIR/fixture-release" ;;
+  "release upload "*" -R acme/"*) [[ -z "${SMOKE_UPLOAD_FAIL:-}" ]] || exit 1 ;;
   "api repos/acme/widget/issues/13") cat "$SMOKE_DIR/issue13.json" ;;
   "api repos/acme/widget/issues/14") cat "$SMOKE_DIR/issue14.json" ;;
   "api graphql"*"projectItems"*)
@@ -459,10 +463,16 @@ echo data >"$T/sample.acme"
 out="$("$BIN/qc-fixture-push" 5 "$T/sample.acme" 2>&1)"
 has "fixture URL printed" "$out" "https://github.com/acme/widget/blob/qc-fixtures/5/sample.acme"
 check "fixture on the origin branch" git -C "$T/origin.git" cat-file -e qc-fixtures:5/sample.acme
+has "fixture download link is a release asset" "$out" "download: https://github.com/acme/widget/releases/download/qc-fixtures-assets/5-sample.acme"
+check "fixture release created as a prerelease" grep -q "release create qc-fixtures-assets -R acme/widget --target qc-fixtures --prerelease" "$SMOKE_LOG"
+check "fixture asset uploaded under <pr#>-<name>" grep -q "release upload qc-fixtures-assets .*/5-sample.acme -R acme/widget --clobber" "$SMOKE_LOG"
 has "fixture README uses FIXTURE_EXT" "$(git -C "$T/origin.git" show qc-fixtures:README.md)" "<name>.acme"
 echo other >"$T/other.bin"
 out="$("$BIN/qc-fixture-push" 5 "$T/other.bin" 2>&1)"; has "fixture extension warning" "$out" "does not end in .acme"
 eq "re-push unchanged" "$("$BIN/qc-fixture-push" 5 "$T/sample.acme" 2>/dev/null | head -1)" unchanged
+out="$(SMOKE_UPLOAD_FAIL=1 "$BIN/qc-fixture-push" 5 "$T/sample.acme" 2>&1)"
+has "a failed asset upload warns and falls back to raw" "$out" "link the raw URL instead"
+eq "no download link when the upload failed" "$(grep -c "^download:" <<<"$out")" 0
 echo dump >"$T/seed.dump"
 out="$("$BIN/qc-fixture-push" 6 "$T/seed.dump" --repo docs 2>&1)"
 has "fixture for a second repo uses its FIXTURE_EXT_BY_REPO" "$out" "https://github.com/acme/docs/blob/qc-fixtures/6/seed.dump"

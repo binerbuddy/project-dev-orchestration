@@ -41,8 +41,9 @@ lacks, don't make the human build it:
    a dispatch brief gives the absolute path). That stores it on the never-merged `qc-fixtures` branch and prints its link. **Never commit
    fixtures to the PR branch**: they would merge into the base branch with the PR. Keep each file under ~5 MB, and
    strip anything not needed.
-4. Open the checklist (right under the `## QC Checklist` heading) with a **"Test data"** item: the link the script
-   printed (`https://github.com/<org>/<repo>/blob/qc-fixtures/<PR#>/<name>`, raw download), the import steps from
+4. Open the checklist (right under the `## QC Checklist` heading) with a **"Test data"** item: the script's
+   `download:` link (`https://github.com/<org>/<repo>/releases/download/<FIXTURE_RELEASE>/<PR#>-<name>`; it downloads
+   the file, where the `blob`/`raw` links only show it in the browser. Use the `raw:` link only if no `download:` line was printed), the import steps from
    §QC data, and which project(s) the following items use.
 
 Skip all of this when the seed data already covers the checklist.

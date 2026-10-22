@@ -167,7 +167,7 @@ Once every phase is done and every gate approved:
    ticked) plus every user-visible behaviour not verifiable headlessly (layout, timing, realtime push, DB-dependent
    paths). Test data: a fixture in the §QC data format showing the cases, published with
    `pdo qc-fixture-push <PR#> <file>` to the never-merged `qc-fixtures` branch (never on the PR branch), with a "Test data"
-   item linking it and giving the import steps. End with the QC handoff block (plus any §Project extras QC commands). Record the comment id (from the URL
+   item linking its `download:` URL (a file download, not the Raw view) and giving the import steps. End with the QC handoff block (plus any §Project extras QC commands). Record the comment id (from the URL
    the command returned) in the ledger and the resumability note.
 4. **PR**: keep it a **draft** (draft CI skips the heavy jobs while review/triage pushes land), write the final body: what/why, phase table with commit ranges, QC evidence,
    divergences, follow-ups, then the close list: `Closes #<epic>` and one `Closes #<n>` line per phase issue and per

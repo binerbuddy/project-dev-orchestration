@@ -158,6 +158,7 @@ pdo_finalize() {
   pdo_pin_project_gh
   FIXTURE_EXT="${FIXTURE_EXT:-}"
   FIXTURE_BRANCH="${FIXTURE_BRANCH:-qc-fixtures}"
+  FIXTURE_RELEASE="${FIXTURE_RELEASE-qc-fixtures-assets}"  # set but empty: no release-asset download links
   QC_WORKTREE="${QC_WORKTREE:-qc}"
   pdo_fill_worktree_parents
   BRANCH_PREFIX="${BRANCH_PREFIX:-bug=fix default=feat}"   # spawn's small-route branch prefix: issue type, then labels

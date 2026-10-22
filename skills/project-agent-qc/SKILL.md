@@ -66,7 +66,8 @@ prints, check the base branch builds (`origin/<base>` is what the human QC uses 
 PR-caused failure as a round-N failure. An environment failure (seed missing, port stuck, Docker
 down, or `qc` refusing to stop a listener it didn't start on your ports; never `--force` that) is not the PR's fault: release the marker, report it in your session, and stop the tick.
 
-Fixtures: when the checklist's "Test data" item names one, fetch it from the fixtures branch
+Fixtures: when the checklist's "Test data" item names one, fetch it from the fixtures branch (a
+`releases/download/<release>/<PR#>-<name>` link is the same file as `<PR#>/<name>` there)
 (`gh api "repos/<org>/<repo>/contents/<path>?ref=<fixture_branch>" -H "Accept: application/vnd.github.raw" > <scratch>/<name>`)
 and import it the way the checklist says. Never print or post the file's download URL (it carries a
 token).

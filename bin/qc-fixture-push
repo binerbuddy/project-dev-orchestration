@@ -5,8 +5,9 @@
 #        (--repo defaults to the project's PRIMARY_REPO)
 #
 # Stores <file> at `<pr#>/<NAME>` (default: the file's basename) on the fixture branch
-# (FIXTURE_BRANCH, default `qc-fixtures`) and prints its
-# download URL for the QC checklist's "Test data" item. Fixtures never go on PR branches: they
+# (FIXTURE_BRANCH, default `qc-fixtures`) and prints its URLs. It also uploads the file as the asset
+# `<pr#>-<NAME>` of the FIXTURE_RELEASE prerelease (default `qc-fixtures-assets`) and prints that
+# `download:` URL, which downloads the file: the link for the QC checklist's "Test data" item. Fixtures never go on PR branches: they
 # would merge into main with the PR. Uses git plumbing against the clone root (no worktree, no
 # checkout), creates the orphan branch if it doesn't exist, and retries when another agent pushed
 # first. Re-pushing the same path replaces the file. The fixture format of --repo is
@@ -81,3 +82,23 @@ done
 org="$ORG"
 echo "https://github.com/$org/$REPO/blob/$BR/$PR/$NAME"
 echo "raw: https://github.com/$org/$REPO/raw/$BR/$PR/$NAME"
+
+# The QC checklist links a download, not GitHub's Raw view (which shows a text fixture in the
+# browser): the same file as an asset of the FIXTURE_RELEASE prerelease, named <pr#>-<NAME>.
+# Release assets are served as attachments. FIXTURE_RELEASE="" turns this off.
+REL="$FIXTURE_RELEASE"
+if [[ -n "$REL" ]]; then
+  R=(-R "$org/$REPO")
+  if ! gh release view "$REL" "${R[@]}" >/dev/null 2>&1; then
+    gh release create "$REL" "${R[@]}" --target "$BR" --prerelease --title "QC fixtures (test data, not a release)" \
+      --notes "Test data for QC, one asset per fixture: \`<PR#>-<name>\`. Published by \`qc-fixture-push\`; the same files are on the \`$BR\` branch. Never a product release." \
+      >/dev/null 2>&1 || true
+  fi
+  ADIR="$(mktemp -d)"; trap 'rm -f "$IDX"; rm -rf "$ADIR"' EXIT
+  cp -- "$FILE" "$ADIR/$PR-$NAME"
+  if gh release upload "$REL" "$ADIR/$PR-$NAME" "${R[@]}" --clobber >/dev/null 2>&1; then
+    echo "download: https://github.com/$org/$REPO/releases/download/$REL/$PR-$NAME"
+  else
+    echo "qc-fixture-push: warning: couldn't upload the release asset; link the raw URL instead" >&2
+  fi
+fi
