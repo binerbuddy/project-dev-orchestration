@@ -308,6 +308,7 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # AGENT_QC_NOTES="docs/agent-qc-<name>.md"   # the project's agent-QC know-how (login, seed users, browser notes)
 # declare -A AGENT_QC_NOTES_BY_REPO=([<repo>]="docs/agent-qc-<repo>.md")   # a repo with its own recipe or pass rule
 # AGENT_QC_REVIEW_HOOK="hooks/<name>"         # run with <repo> <pr#> after a UX-review pass (e.g. request a preview)
+# AGENT_QC_RECYCLE=0                         # keep the QC Agent's context between PRs (default: /clear after each verdict)
 # WATCH_EVENT_HOOK="hooks/<name>"  # only for project events of its own (e.g. §Project extras comment commands)
 # MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
 # PORTFOLIO_PRIORITY=3          # portfolio manager (pdo fleet): 1 = highest
