@@ -8,6 +8,8 @@ Usage: agent-qc next     [--project P] [--json]     the highest-priority PR wait
        agent-qc mark     key=value… [--project P]   add notes to the marker (e.g. delivery=pending comment=<url>)
        agent-qc release  [--project P]              clear the marker (after the PR's verdict is posted)
        agent-qc status   [--project P]              the marker and the last few outcomes
+       agent-qc notes    <repo> [--project P]       the repo's agent-QC notes file (AGENT_QC_NOTES_BY_REPO, else
+                                                    AGENT_QC_NOTES); empty + exit 1 when there is none
        agent-qc facts    <repo> <pr#> [--project P] JSON: head, files, linked issues, needs-UX signals,
                                                     QC checklist, fixtures, failed rounds so far
        agent-qc verdict  <repo> <pr#> fail|pass-ux|pass-skip [--project P] [--dry-run]
@@ -110,6 +112,10 @@ def waiting(cfg):
     return out
 
 
+def notes_file(cfg, repo):
+    return (cfg.get("agent_qc_notes_by_repo") or {}).get(repo) or cfg.get("agent_qc_notes") or ""
+
+
 def comments(cfg, repo, n):
     out = gh("api", f"repos/{cfg['org']}/{repo}/issues/{n}/comments", "--paginate",
              "--jq", ".[] | {id, body, created_at, html_url, user: .user.login}")
@@ -151,7 +157,7 @@ def facts(cfg, repo, n):
              check=False)
     fixtures = [json.loads(line) for line in out.splitlines() if line.strip()]
     return {
-        "repo": repo, "number": n, "title": pr["title"], "url": pr["url"], "state": pr["state"],
+        "repo": repo, "notes": notes_file(cfg, repo) or None, "number": n, "title": pr["title"], "url": pr["url"], "state": pr["state"],
         "draft": pr["isDraft"], "branch": pr["headRefName"], "head": pr["headRefOid"], "base": pr["baseRefName"],
         "labels": pr_labels, "files": [f["path"] for f in pr.get("files") or []],
         "additions": pr.get("additions"), "deletions": pr.get("deletions"),
@@ -188,7 +194,7 @@ def log_outcome(cfg, rec):
 
 def main():
     ap = argparse.ArgumentParser(description="agent QC: next PR, marker, facts, verdict labels")
-    ap.add_argument("cmd", choices=["next", "queue", "claim", "mark", "release", "status", "facts", "verdict"])
+    ap.add_argument("cmd", choices=["next", "queue", "claim", "mark", "release", "status", "notes", "facts", "verdict"])
     ap.add_argument("args", nargs="*")
     ap.add_argument("--project")
     ap.add_argument("--json", action="store_true")
@@ -199,13 +205,15 @@ def main():
         die("agent QC is off for this project (set AGENT_QC_PORTS in its env)")
     mpath = os.path.join(state(cfg), "in-progress.json")
 
+    def known(repo):
+        if repo not in cfg["repo_root"]:
+            die(f"unknown repo '{repo}' (REPO_ROOT has {', '.join(sorted(cfg['repo_root']))})")
+        return repo
+
     def target():
         if len(a.args) < 2 or not a.args[1].lstrip("#").isdigit():
             die(f"usage: agent-qc {a.cmd} <repo> <pr#>")
-        repo = a.args[0]
-        if repo not in cfg["repo_root"]:
-            die(f"unknown repo '{repo}' (REPO_ROOT has {', '.join(sorted(cfg['repo_root']))})")
-        return repo, int(a.args[1].lstrip("#"))
+        return known(a.args[0]), int(a.args[1].lstrip("#"))
 
     if a.cmd in ("next", "queue"):
         q = waiting(cfg)
@@ -270,6 +278,13 @@ def main():
         for line in lines:
             o = json.loads(line)
             print(f"  {o['at']}  {o['repo']}#{o['pr']}  {o['verdict']}{' (escalated)' if o.get('escalated') else ''}")
+    elif a.cmd == "notes":
+        if len(a.args) != 1:
+            die("usage: agent-qc notes <repo>")
+        f = notes_file(cfg, known(a.args[0]))
+        print(f)
+        if not f:
+            sys.exit(1)
     elif a.cmd == "facts":
         repo, n = target()
         print(json.dumps(facts(cfg, repo, n), indent=1))

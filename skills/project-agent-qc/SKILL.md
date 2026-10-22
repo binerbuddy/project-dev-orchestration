@@ -1,6 +1,6 @@
 ---
 name: project-agent-qc
-description: Agent QC for the standing "QC Agent (<project>)" workspace — take the highest-priority PR labelled 'ready for QC', serve it on the agent-QC ports against its own database clone, test the touched areas and their neighbours (browser, API, concurrency, the PR's QC checklist), then either post "Agent QC findings (round N)" and resume the PR's command agent, or classify the PR by the visible-change rule and flip it to UX review or Ready for Merge. One PR per tick; meant to run under /loop. Use only when acting as the QC Agent.
+description: Agent QC for the standing "QC Agent (<project>)" workspace — take the highest-priority PR labelled 'ready for QC', serve it on the agent-QC ports against its own database clone, test the touched areas and their neighbours (browser, API, concurrency, the PR's QC checklist; API-only for a headless repo), then either post "Agent QC findings (round N)" and resume the PR's command agent, or classify the PR by the visible-change rule (or the repo's own pass rule from its notes) and flip it to UX review or Ready for Merge. One PR per tick; meant to run under /loop. Use only when acting as the QC Agent.
 argument-hint: "[project=<name>] [<repo>#<PR> to QC one PR now]"
 ---
 
@@ -18,8 +18,10 @@ scratchpad.
 
 **Project.** `project=<p>` in the arguments; pass `--project <p>` to every script. Read once per
 session, and again after a context compaction:
-- `pdo project-env --project <p> AGENT_QC_NOTES`: the project's agent-QC know-how (how to log in,
-  seed users, API recipes, browser notes). Read the file it names.
+- `pdo agent-qc notes <repo> --project <p>` for each repo you QC (the facts' `notes` field too): that
+  repo's agent-QC know-how (how to log in, seed users, API recipes, browser notes, and maybe its own
+  pass rule). Read the file it names. Different repos can have different notes: re-read when the
+  PR's repo changes.
 - each repo's `.agents/project-profile.md` (`## Dev servers`, `## QC data`): from the QC worktree
   once it exists, else `git -C <repo root> show origin/<default>:.agents/project-profile.md`.
 - `skills/project-how-it-works/references/qc-protocol.md` (checklist, fixtures, labels).
@@ -59,7 +61,7 @@ latest review/triage comments, any earlier "Agent QC findings" and human "QC fee
 
 `pdo qc start <PR#> --agent --repo <repo> --project <p>`. It checks the PR head out in the agent-QC
 worktree (`<worktree parent>/qc-agent`, the parent being `WORKTREE_PARENT[<repo>]`, never the human's `qc` worktree or an agent's), frees and uses
-`AGENT_QC_PORTS`, and has the project's QC hook start the app against the agent-QC data store, freshly
+`AGENT_QC_PORTS`, and has the project's QC hook start the app against the agent-QC data store (if the repo has one), freshly
 cloned from the QC seed for this PR. The first start can take minutes. If it fails, that is a
 finding only when the PR causes it (a build or migration error on this head): read the log tail it
 prints, check the base branch builds (`origin/<base>` is what the human QC uses daily) and treat a
@@ -78,7 +80,14 @@ Plan first (a short list in your session): the checklist items, the areas the di
 their neighbours (callers, sibling screens, other roles, the same data seen from another page).
 Then, against your own servers only:
 
-1. **The PR's QC checklist**, every item, in the browser as a human would.
+**Headless repos.** When the repo has no UI (its profile's `## QC data` says headless, or its notes
+say so), skip item 2; the checklist items are worked through the commands they name (API calls,
+fixture replays, scripts), and item 4 means parallel API calls. The notes give the repo's recipe
+(e.g. specs, harnesses, replaying fixtures against the head and the base builds and diffing the
+outputs) and replace the browser parts below.
+
+1. **The PR's QC checklist**, every item, in the browser as a human would (headless: with the
+   command the item names).
 2. **Browser checks** (Playwright or the project's headless driver from the notes): visual (layout,
    overflow, empty/long/odd data, dialogs and menus, the console free of new errors) and
    functional (the flow end to end, cancel and error paths, reload, back). Screenshots stay in your
@@ -88,7 +97,9 @@ Then, against your own servers only:
    Try bad input (missing, wrong type, huge, another project's ids) and the wrong role.
 4. **Concurrency**: two sessions as different users (the notes name seed users) on the same data.
    Edit the same thing at once, delete while the other edits, run the action twice in parallel
-   (e.g. two `curl … &`), and check the final state and both users' views.
+   (e.g. two `curl … &`), and check the final state and both users' views. Headless or stateless
+   APIs: fire the touched requests in parallel (mixed inputs, including the PR's fixtures) and check
+   every response equals its sequential result.
 5. **Earlier findings**: every item from earlier agent-QC rounds and human QC feedback is fixed.
 
 A finding is a real defect this PR causes or fails to fix: steps, expected, actual, evidence (the
@@ -133,7 +144,13 @@ move on. Bound the effort: around an hour per PR; if you're still unsure after t
 
 ### b. Pass (no findings)
 
-Classify the PR by the **visible-change rule**:
+**A repo's own pass rule.** When the repo's notes define a pass rule (a section headed `## Pass rule`),
+it replaces the visible-change rule below for that repo: follow it to choose `pass-skip` or `pass-ux`,
+and write the comment's classification line in its terms (the reason it asks for, e.g. a citation or
+the open question for the human). `needs_ux_forced` still means `pass-ux`, and "when unsure, review"
+still holds.
+
+Otherwise classify the PR by the **visible-change rule**:
 - **Needs UX review:** a Feature, epic or design-doc PR; new components, dialogs, controls or menu
   items; changed layout, styling, copy or interaction flow; a bug fix whose result looks different
   from before.
@@ -150,6 +167,9 @@ Classify the PR by the **visible-change rule**:
    Tested <short sha>: <one line: what was covered (checklist, API, concurrency)>.
    **UX review: needed** | **UX review: skipped**. <one or two sentences: why, by the rule above>
    ```
+
+   Under a repo's own pass rule, the classification line names that rule's outcome instead
+   (e.g. **Review: needed**, then the question for the human).
 2. `pdo agent-qc verdict <repo> <PR#> pass-ux` (→ `QC complete - ready to review`: the human's UX
    review) or `pass-skip` (→ `Ready for Merge` + `UX testing skipped`).
 3. **Review path:** `pass-ux` also runs the project's `AGENT_QC_REVIEW_HOOK` (e.g. it requests a hosted

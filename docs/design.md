@@ -217,7 +217,10 @@ watcher).
     flips the labels: `QC complete - ready to review` (UX review) or `Ready for Merge` +
     `UX testing skipped`. A PR or linked issue labelled `needs UX review` (`LABEL_NEEDS_UX`; intake sets
     it, `CARRY_LABELS` copies it onto PRs) always gets UX review; when unsure, review.
-  - Project know-how (login, seed users, browser notes) lives in the file `AGENT_QC_NOTES` names. A
+  - Project know-how (login, seed users, browser notes) lives in the file `AGENT_QC_NOTES` names, or per
+    repo in `AGENT_QC_NOTES_BY_REPO[<repo>]` (`bin/agent-qc notes <repo>`). A repo's notes may define its
+    own `## Pass rule`, which replaces the visible-change rule for that repo. A headless repo (no UI) skips
+    the browser checks; its checklist runs through commands, and concurrency means parallel API calls. A
     review-path extra (e.g. requesting a hosted preview) is `AGENT_QC_REVIEW_HOOK <repo> <pr#>`, run by
     `bin/agent-qc verdict … pass-ux` itself, so the agent never posts trigger comments.
 - **Awaiting the human** (the PR cap, parking, the waiting lists): `ready for QC`, `QC complete - ready to
@@ -328,6 +331,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `AGENT_QC_REPOS` / `AGENT_QC_WORKTREE` | `QC_REPO` / `qc-agent` | repos agent QC takes; its worktree under each worktree parent |
 | `AGENT_QC_REVIEW_HOOK` | (none) | run with `<repo> <pr#>` after a UX-review pass |
 | `AGENT_QC_MAX_ROUNDS` / `AGENT_QC_NOTES` / `AGENT_QC_SKILL` | `2` / (none) / `<prefix>project-agent-qc` | failed rounds before escalation; the project's agent-QC know-how file; the skill |
+| `AGENT_QC_NOTES_BY_REPO` | `()` | `declare -A`: repo → its own agent-QC notes file (recipe, optional `## Pass rule`); repos without an entry use `AGENT_QC_NOTES` |
 | `SYSTEM_MANAGER_WORKSPACE` | `System Manager` | named in the queue's `orchestrator-system` reason |
 | `CONTROL_DIR` | the env's config dir | cwd of the standing orchestrator, QC and intake agents |
 | `ORCHESTRATE_SKILL` / `QC_SKILL` / `INTAKE_SKILL` | `${PDO_SKILL_PREFIX}project-orchestrate` / `…project-qc-review` / `…project-intake` | standing agents' skills |

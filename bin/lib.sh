@@ -171,6 +171,7 @@ pdo_finalize() {
   AGENT_QC_WORKTREE="${AGENT_QC_WORKTREE:-qc-agent}"  # its own worktree under each repo root
   AGENT_QC_MAX_ROUNDS="${AGENT_QC_MAX_ROUNDS:-2}" # failed rounds before 'QC escalated'
   AGENT_QC_NOTES="${AGENT_QC_NOTES:-}"            # optional: the project's agent-QC know-how (a markdown file)
+  pdo_fill_agent_qc_notes                         # AGENT_QC_NOTES_BY_REPO[<repo>]: a repo's own notes (absolute paths)
   AGENT_QC_REVIEW_HOOK="${AGENT_QC_REVIEW_HOOK:-}" # optional: run by `agent-qc verdict … pass-ux` with <repo> <pr#> (e.g. request a hosted preview)
   WATCH_EVENT_HOOK="${WATCH_EVENT_HOOK:-}"   # optional: bin/watch runs it each snapshot for project-specific events
   WATCH_EVENT_HOOK_TIMEOUT="${WATCH_EVENT_HOOK_TIMEOUT:-120}"  # seconds before the watcher gives up on it
@@ -205,6 +206,21 @@ pdo_finalize() {
   AGENT_USAGE_WEIGHT="${AGENT_USAGE_WEIGHT:-}"    # override the profile's usage weight
   FLEET_ADVICE="${FLEET_ADVICE:-ignore}"          # honour | ignore (fleet-advice.json in queue/watch)
   export ORG PRIMARY_REPO
+}
+
+# pdo_fill_agent_qc_notes: AGENT_QC_NOTES_BY_REPO[<repo>], a repo's own agent-QC notes (e.g. a headless
+# repo with its own recipe and pass rule). Paths resolve like AGENT_QC_NOTES; a repo without an entry
+# uses AGENT_QC_NOTES (pdo agent-qc notes <repo> prints the resolved file).
+pdo_fill_agent_qc_notes() {
+  if ! declare -p AGENT_QC_NOTES_BY_REPO >/dev/null 2>&1; then declare -gA AGENT_QC_NOTES_BY_REPO=()
+  elif [[ "$(declare -p AGENT_QC_NOTES_BY_REPO)" != "declare -A"* ]]; then
+    pdo_die "AGENT_QC_NOTES_BY_REPO must be a map: declare -A AGENT_QC_NOTES_BY_REPO=([<repo>]=\"<file>\")"
+  fi
+  local r
+  for r in "${!AGENT_QC_NOTES_BY_REPO[@]}"; do
+    [[ -n "${AGENT_QC_NOTES_BY_REPO[$r]}" ]] && AGENT_QC_NOTES_BY_REPO[$r]="$(_pdo_abs "${AGENT_QC_NOTES_BY_REPO[$r]}")"
+  done
+  return 0
 }
 
 # pdo_fill_worktree_parents: WORKTREE_PARENT[<repo>], the dir that holds a repo's worktrees (agents',
@@ -249,7 +265,7 @@ pdo_slug() {
 
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
-  local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}"
+  local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}" aqc_notes_by_repo="{}"
   if declare -p REPO_ROOT >/dev/null 2>&1; then
     for k in "${!REPO_ROOT[@]}"; do roots="$(jq -c --arg k "$k" --arg v "${REPO_ROOT[$k]}" '. + {($k): $v}' <<<"$roots")"; done
   fi
@@ -262,6 +278,9 @@ pdo_config_json() {
   fi
   if declare -p FIXTURE_EXT_BY_REPO >/dev/null 2>&1; then
     for k in "${!FIXTURE_EXT_BY_REPO[@]}"; do fx_by_repo="$(jq -c --arg k "$k" --arg v "${FIXTURE_EXT_BY_REPO[$k]}" '. + {($k): $v}' <<<"$fx_by_repo")"; done
+  fi
+  if declare -p AGENT_QC_NOTES_BY_REPO >/dev/null 2>&1; then
+    for k in "${!AGENT_QC_NOTES_BY_REPO[@]}"; do aqc_notes_by_repo="$(jq -c --arg k "$k" --arg v "${AGENT_QC_NOTES_BY_REPO[$k]}" '. + {($k): $v}' <<<"$aqc_notes_by_repo")"; done
   fi
   if declare -p SELF_MANAGED_REPOS >/dev/null 2>&1; then
     managed="$(printf '%s\n' ${SELF_MANAGED_REPOS[@]+"${SELF_MANAGED_REPOS[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')"
@@ -279,7 +298,7 @@ pdo_config_json() {
     --arg cwt "$CWT_STATUS" --arg queue_label "$QUEUE_LABEL" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
     --arg merge_ready "$LABEL_MERGE_READY" --arg ux_skipped "$LABEL_UX_SKIPPED" --arg needs_ux "$LABEL_NEEDS_UX" --arg qc_escalated "$LABEL_QC_ESCALATED" \
     --arg aqc_ports "$AGENT_QC_PORTS" --arg aqc_repos "$AGENT_QC_REPOS" --arg aqc_wt "$AGENT_QC_WORKTREE" \
-    --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --arg aqc_skill "$AGENT_QC_SKILL" \
+    --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --argjson aqc_notes_by_repo "$aqc_notes_by_repo" --arg aqc_skill "$AGENT_QC_SKILL" \
     --arg aqc_review_hook "$AGENT_QC_REVIEW_HOOK" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
     --arg max_active "${MAX_ACTIVE:-}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
@@ -297,7 +316,8 @@ pdo_config_json() {
       qc_ports: ($qc_ports | split(" ") | map(select(length > 0) | tonumber)), qc_ports_shared: ($qc_ports_shared == "1"),
       agent_qc_ports: ($aqc_ports | split(" ") | map(select(length > 0) | tonumber)),
       agent_qc_repos: ($aqc_repos | split(" ") | map(select(length > 0))), agent_qc_worktree: $aqc_wt,
-      agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes, agent_qc_skill: $aqc_skill,
+      agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes,
+      agent_qc_notes_by_repo: $aqc_notes_by_repo, agent_qc_skill: $aqc_skill,
       agent_qc_review_hook: $aqc_review_hook,
       system_manager_workspace: $sm, control_dir: $control,
       cwt_status: $cwt, queue_label: $queue_label, p_labels: ($plabels | split(" ") | map(select(length > 0))),

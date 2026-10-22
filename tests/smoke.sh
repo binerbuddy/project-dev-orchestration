@@ -148,6 +148,7 @@ IDENTITY_HOOK="hooks/identity"
 QC_HOOK="hooks/qc"
 FIXTURE_EXT=".acme"
 declare -A FIXTURE_EXT_BY_REPO=([docs]=".dump")
+declare -A AGENT_QC_NOTES_BY_REPO=([docs]="notes/agent-qc-docs.md")
 QC_PORTS="3999"
 EOF
 echo 'ORG="wrong"' >"$T/cfg-b/projects/acme.env"
@@ -211,6 +212,11 @@ eq "agent QC off by default" "$(jq -c '[.agent_qc_ports, .agent_qc_repos, .agent
 eq "CARRY_LABELS with commas keeps spaces" "$(CARRY_LABELS="client-requested, needs UX review" "$BIN/pdo-config" --project acme --json | jq -c .carry_labels)" '["client-requested","needs UX review"]'
 eq "CARRY_LABELS with spaces still splits" "$(CARRY_LABELS="a b" "$BIN/pdo-config" --project acme --json | jq -c .carry_labels)" '["a","b"]'
 check "agent-qc refuses while agent QC is off" bash -c '! "$0/agent-qc" queue' "$BIN"
+eq "AGENT_QC_NOTES_BY_REPO resolved against its config dir" "$(jq -r .agent_qc_notes_by_repo.docs <<<"$J")" "$T/cfg-a/notes/agent-qc-docs.md"
+eq "agent-qc notes: a repo's own notes" "$(AGENT_QC_PORTS=3998 AGENT_QC_NOTES=notes/all.md "$BIN/agent-qc" notes docs --project acme)" "$T/cfg-a/notes/agent-qc-docs.md"
+eq "agent-qc notes: others fall back to AGENT_QC_NOTES" "$(AGENT_QC_PORTS=3998 AGENT_QC_NOTES=notes/all.md "$BIN/agent-qc" notes widget --project acme)" "$T/cfg-a/notes/all.md"
+AGENT_QC_PORTS=3998 "$BIN/agent-qc" notes widget --project acme >/dev/null 2>&1; eq "agent-qc notes: none exits 1" "$?" 1
+check "agent-qc notes: unknown repo fails" bash -c '! AGENT_QC_PORTS=3998 "$0/agent-qc" notes nope --project acme' "$BIN"
 eq "default state dir" "$(env -u PDO_STATE_DIR "$BIN/pdo-config" --state-dir)" "$T/home/.local/state/project-dev-orchestration"
 eq "python state_dir agrees" "$(env -u PDO_STATE_DIR python3 -c "import sys; sys.path.insert(0, '$BIN'); import pdo_config; print(pdo_config.state_dir())")" "$T/home/.local/state/project-dev-orchestration"
 eq "python load() agrees" "$(python3 -c "import sys; sys.path.insert(0, '$BIN'); import pdo_config; c = pdo_config.load('acme'); print(c['org'], pdo_config.ref(c, 'widget', 3), pdo_config.ref(c, 'docs', 4))")" "acme #3 docs#4"
@@ -222,6 +228,7 @@ eq "project-env map entry" "$("$BIN/project-env" 'REPO_ROOT[docs]')" "$T/repos/d
 has "project-env all keys" "$("$BIN/project-env")" "REPO_ROOT[widget]=$T/repos/widget.git"
 "$BIN/project-env" NO_SUCH_KEY >/dev/null 2>&1; eq "project-env unknown key exits 1" "$?" 1
 eq "project-env FIXTURE_EXT_BY_REPO entry" "$("$BIN/project-env" 'FIXTURE_EXT_BY_REPO[docs]')" .dump
+eq "project-env AGENT_QC_NOTES_BY_REPO entry" "$("$BIN/project-env" 'AGENT_QC_NOTES_BY_REPO[docs]')" "$T/cfg-a/notes/agent-qc-docs.md"
 out="$("$BIN/project-env" --board 2>&1)"
 has "project-env --board prints the board node id" "$out" "BOARD_ID=PVT_b7"
 has "project-env --board prints Status option ids" "$out" "STATUS_OPTION[Claude Work This]=o2"

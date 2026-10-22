@@ -10,7 +10,8 @@
 #                                            project shares one board, so repo profiles cite this
 #                                            command instead of copying ids that can go stale.
 # Maps print one line per entry: REPO_ROOT[<repo>]=<path>, WORKTREE_PARENT[<repo>]=<dir>, ROUTE_SKILL[<route>]=<skill>,
-# REPO_MANAGER[<repo>]=<manager>, FIXTURE_EXT_BY_REPO[<repo>]=<ext>.
+# REPO_MANAGER[<repo>]=<manager>, FIXTURE_EXT_BY_REPO[<repo>]=<ext>,
+# AGENT_QC_NOTES_BY_REPO[<repo>]=<file>.
 # `project-env REPO_ROOT` prints "<repo>=<path>" lines; `project-env 'REPO_ROOT[x]'` one value.
 # Project: --project, else $PDO_PROJECT, else the project whose REPO_ROOT holds the cwd's repo.
 set -euo pipefail
@@ -68,11 +69,12 @@ if [[ -z "$KEY" ]]; then
   for k in "${SCALARS[@]}"; do printf '%s=%s\n' "$k" "${!k:-}"; done
   printf 'SELF_MANAGED_REPOS=%s\n' "$(managed)"
   map_lines REPO_ROOT full; map_lines WORKTREE_PARENT full; map_lines ROUTE_SKILL full; map_lines REPO_MANAGER full; map_lines FIXTURE_EXT_BY_REPO full
+  map_lines AGENT_QC_NOTES_BY_REPO full
   exit 0
 fi
 case "$KEY" in
-  REPO_ROOT|WORKTREE_PARENT|ROUTE_SKILL|REPO_MANAGER|FIXTURE_EXT_BY_REPO) map_lines "$KEY" short ;;
-  REPO_ROOT\[*\]|WORKTREE_PARENT\[*\]|ROUTE_SKILL\[*\]|REPO_MANAGER\[*\]|FIXTURE_EXT_BY_REPO\[*\])
+  REPO_ROOT|WORKTREE_PARENT|ROUTE_SKILL|REPO_MANAGER|FIXTURE_EXT_BY_REPO|AGENT_QC_NOTES_BY_REPO) map_lines "$KEY" short ;;
+  REPO_ROOT\[*\]|WORKTREE_PARENT\[*\]|ROUTE_SKILL\[*\]|REPO_MANAGER\[*\]|FIXTURE_EXT_BY_REPO\[*\]|AGENT_QC_NOTES_BY_REPO\[*\])
     n="${KEY%%[*}" k="${KEY#*[}"; k="${k%]}"
     declare -p "$n" >/dev/null 2>&1 || { echo; exit 1; }
     declare -n mm="$n"; [[ -n "${mm[$k]+x}" ]] || { echo; exit 1; }; echo "${mm[$k]}" ;;

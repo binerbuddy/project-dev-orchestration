@@ -306,6 +306,7 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # QC_PORTS_SHARED=1             # only when the human chose to share their dev ports with QC (qc may stop their servers)
 # AGENT_QC_PORTS="<ports>"      # agent QC (QC Agent workspace) ports, distinct from QC_PORTS and agents' ranges; off when unset
 # AGENT_QC_NOTES="docs/agent-qc-<name>.md"   # the project's agent-QC know-how (login, seed users, browser notes)
+# declare -A AGENT_QC_NOTES_BY_REPO=([<repo>]="docs/agent-qc-<repo>.md")   # a repo with its own recipe or pass rule
 # AGENT_QC_REVIEW_HOOK="hooks/<name>"         # run with <repo> <pr#> after a UX-review pass (e.g. request a preview)
 # WATCH_EVENT_HOOK="hooks/<name>"  # only for project events of its own (e.g. §Project extras comment commands)
 # MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
