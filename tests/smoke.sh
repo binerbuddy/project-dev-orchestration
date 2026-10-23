@@ -743,6 +743,13 @@ print(json.dumps([[r["auto_spawn"] for r in held], [bool(r.get("pr_capped")) for
                   any("pr_capped" in r or "auto_spawn_uncapped" in r for r in back)], separators=(",", ":")))
 PY
 )" '[[false,true,false],[true,false,true],[true,true,false],false]'
+eq "watch: wrap-up or rebase marker counts as finished" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+print([w.finished_marker(t) for t in ("x\nWrap-up done", "pushed\nrebase done", "Rebased onto main @ abc; idle")])
+PY
+)" '[True, True, False]'
 # feedback took the pass labels off; agent QC escalates; then a direct no-UX pass fires once
 mkprs '["QC escalated"]' '[]' >"$T/prs.json"
 out="$(W)"

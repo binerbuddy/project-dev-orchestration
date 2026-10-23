@@ -54,7 +54,7 @@ the highest P-label of the issues they close (it never downgrades).
 Hibernation: unless --peek, agents idle >= HIBERNATE_AFTER_MIN with no question pending and a
 session recorded are released with bin/hibernate when parked at 'ready for QC' or 'QC escalated'
 (quiet event 'hibernated') or finished: PR merged, or 'QC complete' / 'Ready for Merge' plus
-"wrap-up done" on screen, or the issue
+"wrap-up done" (or, after a rebase, "rebase done") on screen, or the issue
 closed with no open PR (quiet event 'closed_out'). They are released: side processes stopped,
 workspace closed. They stay in `agents` with status "hibernated" (built from metadata), so
 qc_complete / pr_merged still fire; bin/resume-agent brings them back.
@@ -252,7 +252,7 @@ def agents(org, repos, prev):
             "stalled": (not parked and not question and status in ("idle", "done") and idle_min >= STALL_MIN),
             "unchanged_min": idle_min, "digest": digest, "changed_at": changed_at,
             "session_id": meta.get("session_id"), "hibernated": False,
-            "wrapup_done": "wrap-up done" in tail.lower(), "issue_state": issue.get("state"),
+            "wrapup_done": finished_marker(tail), "issue_state": issue.get("state"),
         }
     out.update(hibernated_agents(org, repos, set(out)))
     return out
@@ -295,6 +295,13 @@ def hibernated_agents(org, repos, seen):
             "changed_at": meta["hibernated_at"], "session_id": meta.get("session_id"), "hibernated": True,
         }
     return out
+
+
+def finished_marker(tail):
+    """An agent's last line after the wrap-up prompt ("wrap-up done") or the rebase prompt ("rebase
+    done"). A rebase of a QC-passed PR scrolls the earlier wrap-up marker away, so either counts."""
+    t = tail.lower()
+    return "wrap-up done" in t or "rebase done" in t
 
 
 def auto_hibernate(project, ag):
