@@ -750,6 +750,19 @@ w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
 print([w.finished_marker(t) for t in ("x\nWrap-up done", "pushed\nrebase done", "Rebased onto main @ abc; idle")])
 PY
 )" '[True, True, False]'
+eq "watch: a wrap-up marker closes out without the idle grace; others still wait" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys, types
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+w.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+def agent(n, labels, done, status="idle", mins=0):
+    return {"repo": "widget", "number": n, "status": status, "question_pending": False, "session_id": "s",
+            "unchanged_min": mins, "wrapup_done": done, "pr": {"state": "OPEN", "labels": labels}}
+ag = {"a": agent(1, [w.QC_DONE], True), "b": agent(2, [w.QC_DONE], True, status="working"),
+      "c": agent(3, [w.QC_READY], False), "d": agent(4, [w.QC_DONE], False), "e": agent(5, [w.QC_READY], False, mins=9)}
+print(sorted((e["agent"], e["type"]) for e in w.auto_hibernate("acme", ag)))
+PY
+)" "[('a', 'closed_out'), ('e', 'hibernated')]"
 # feedback took the pass labels off; agent QC escalates; then a direct no-UX pass fires once
 mkprs '["QC escalated"]' '[]' >"$T/prs.json"
 out="$(W)"

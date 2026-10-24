@@ -54,7 +54,7 @@ the highest P-label of the issues they close (it never downgrades).
 Hibernation: unless --peek, agents idle >= HIBERNATE_AFTER_MIN with no question pending and a
 session recorded are released with bin/hibernate when parked at 'ready for QC' or 'QC escalated'
 (quiet event 'hibernated') or finished: PR merged, or 'QC complete' / 'Ready for Merge' plus
-"wrap-up done" (or, after a rebase, "rebase done") on screen, or the issue
+"wrap-up done" (or, after a rebase, "rebase done") on screen (no idle wait for these), or the issue
 closed with no open PR (quiet event 'closed_out'). They are released: side processes stopped,
 workspace closed. They stay in `agents` with status "hibernated" (built from metadata), so
 qc_complete / pr_merged still fire; bin/resume-agent brings them back.
@@ -312,10 +312,16 @@ def auto_hibernate(project, ag):
         labels = set((a.get("pr") or {}).get("labels", []))
         state = (a.get("pr") or {}).get("state")
         if (a.get("hibernated") or a["status"] not in ("idle", "done") or a["question_pending"]
-                or not a.get("session_id") or a["unchanged_min"] < HIBERNATE_AFTER_MIN):
+                or not a.get("session_id")):
+            continue
+        # QC passed and the agent printed its wrap-up marker: its final turn has ended, so no idle
+        # grace. Snapshots taken an hour apart (no background watcher) rarely match: idle recaps and
+        # compaction notices change the screen, which kept finished agents open for hours.
+        marked_done = bool(PASSED & labels and a.get("wrapup_done"))
+        if a["unchanged_min"] < HIBERNATE_AFTER_MIN and not marked_done:
             continue
         # finished: merged, or QC passed and the agent printed its wrap-up marker
-        closed_out = (state == "MERGED" or (PASSED & labels and a.get("wrapup_done"))
+        closed_out = (state == "MERGED" or marked_done
                       or (a.get("issue_state") == "closed" and state != "OPEN"))  # likely-fixed / won't-fix
         # waiting for QC, or escalated to the human after failed agent-QC rounds; a pass label wins
         parked_qc = state == "OPEN" and bool({QC_READY, QC_ESCALATED} & labels) and not PASSED & labels
