@@ -82,8 +82,8 @@ agent, `model: "opus"`; Codex/Grok: their subagents); otherwise do it yourself u
 Give it every item and a hard budget: **at most ~15 tool calls, medium breadth.** Per item it returns
 **facts only**:
 
-1. **Possible duplicates or related issues:** `gh search issues --owner <ORG> "<keywords>" --state all
-   --limit 10`, plus a title scan of open issues. Number, title, state, one-line reason.
+1. **Possible duplicates or related issues:** `gh search issues --owner <ORG> "<keywords>"
+   --limit 10` (open and closed by default; `--state` takes only open|closed), plus a title scan of open issues. Number, title, state, one-line reason.
 2. **Related memory and design docs:** your tool's memory index for this project if it keeps one
    (Claude Code: the project's auto-memory `MEMORY.md`), and the design-doc dir from the profile's
    `## Docs`, read from the default branch's checkout. File names plus one line each.
