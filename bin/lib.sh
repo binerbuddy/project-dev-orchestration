@@ -389,11 +389,13 @@ launch_claude() { launch_agent "$@"; }  # old name, kept for hooks and overlays 
 # not by a collaborator (it skips the one-time human-guide check in AGENTS.md).
 # No -n: a session name draws a labelled rule under question menus, which hides them from
 # herdr's blocked detection (it only reads text after the last horizontal rule).
+# PDO_REMOTE_CONTROL=0 leaves out --remote-control (an agent nobody watches, like the QC Agent).
 agent_command() {
-  local dir="$1" name="$2" model="$3" prompt="$4" cmd
+  local dir="$1" name="$2" model="$3" prompt="$4" cmd rc=()
   shift 4
+  [[ "${PDO_REMOTE_CONTROL:-1}" == 0 ]] || rc=(--remote-control "$name")
   # shellcheck disable=SC2046
-  printf -v cmd '%q ' env PDO_DISPATCHED=1 $(identity_wrapper "$dir") claude "$@" --remote-control "$name" --model "$model" "$prompt"
+  printf -v cmd '%q ' env PDO_DISPATCHED=1 $(identity_wrapper "$dir") claude "$@" "${rc[@]}" --model "$model" "$prompt"
   printf '%s' "$cmd"
 }
 

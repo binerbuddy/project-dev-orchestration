@@ -237,7 +237,8 @@ check "recycle-agent-qc: idle, nothing in progress -> /exit" grep -qx "herdr age
 eq "recycle-agent-qc: ... but an agent that won't exit isn't relaunched" "$(grep -c "pane run" "$SMOKE_LOG")" 0
 check "recycle-agent-qc: ... and says so" grep -q "failed: the QC Agent didn't exit" <<<"$out"
 : >"$SMOKE_LOG"; out="$("${R[@]}" SMOKE_HERDR_EXIT=1 SMOKE_HERDR_PANE=wQ:p1 DEFAULT_MODEL=opus "$BIN/recycle-agent-qc" --project acme --foreground)"
-check "recycle-agent-qc: exits, then relaunches the loop in the same pane" grep -q "herdr pane run wQ:p1 .*--remote-control QC.*acme.*/loop.*project-agent-qc.*project=acme" "$SMOKE_LOG"
+check "recycle-agent-qc: exits, then relaunches the loop in the same pane" grep -q "herdr pane run wQ:p1 .*claude.*--model.*/loop.*project-agent-qc.*project=acme" "$SMOKE_LOG"
+check "start-agent-qc: no remote control for the QC Agent" bash -c "! grep 'herdr pane run wQ:p1' '$SMOKE_LOG' | grep -q -- --remote-control"
 check "recycle-agent-qc: ... and logs it" grep -q "QC Agent running in workspace" <<<"$out"
 echo '{"repo":"widget","pr":7}' >"$RQ/state/agent-qc/in-progress.json"
 : >"$SMOKE_LOG"; out="$("${R[@]}" "$BIN/recycle-agent-qc" --project acme --foreground)"

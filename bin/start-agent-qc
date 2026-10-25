@@ -52,7 +52,8 @@ else
   WS_ID="$(herdr workspace create --cwd "$CONTROL_DIR" --label "$NAME" --no-focus | jq -r '[.. | objects | .workspace_id? // empty][0]')"
 fi
 PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
-set +e; launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "$LOOP"; rc=$?; set -e
+# no remote control: nobody interacts with or monitors the QC Agent (owner decision 2026-10-25)
+set +e; PDO_REMOTE_CONTROL=0 launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "$LOOP"; rc=$?; set -e
 [[ $rc -eq 0 ]] || die "QC Agent did not start cleanly (rc=$rc); see workspace \"$NAME\""
 herdr agent rename "$PANE_ID" "$AGENT" >/dev/null 2>&1 || true
 echo "QC Agent running in workspace \"$NAME\" (id $WS_ID)"
