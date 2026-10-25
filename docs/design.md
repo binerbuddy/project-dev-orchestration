@@ -143,7 +143,7 @@ token-free probe; the model only reads what changed.
   still sees what changed while it was down: `slot_freed`, `urgent`, `qc_feedback`, `pr_conflict`,
   `pr_cap_reached`, `design_ready`, `qc_complete`, `pr_merged`, `agent_gone`, `stalled`,
   `new_claude_work_this`, `usage_ceiling`, `heartbeat`. Quiet events (`hibernated`, `closed_out`,
-  `hibernate_failed`, `event_hook_failed`, and hook events marked `"quiet": true`) ride along with the
+  `hibernate_failed`, `event_hook_failed`, `tmp_swept`, and hook events marked `"quiet": true`) ride along with the
   next wake.
 - **Project events.** `WATCH_EVENT_HOOK` adds project-specific events to each snapshot (contract under
   Hooks, "Watcher event hook").
@@ -180,6 +180,18 @@ watcher).
   question is pending on its screen.
 - herdr reuses workspace ids after a close, so a stored id is trusted only while that workspace still
   carries the agent's name, and hibernation clears the ids.
+- **/tmp cleanup (2026-10-25).** /tmp is often a RAM-backed tmpfs, and agents failed on a full one. Most
+  of it was headless browser profiles (200-300 MB each) left in agents' Claude scratchpads
+  (`/tmp/claude-<uid>/<slug>/<session>/`). `bin/tmp-sweep` removes what nothing uses (no process has
+  its cwd there or names it on its command line):
+  - browser profiles older than 30 min;
+  - the whole scratchpad of a finished agent (`done_tracking`);
+  - scratchpads untouched for 7 days;
+  - files older than a day in shared tool caches (jest, node/v8 compile caches, tsx, playwright).
+
+  Hibernation removes the stopped session's profiles at once; the watcher runs the full sweep at most
+  hourly. Sessions started in the home directory (a personal assistant, not an agent) are skipped.
+  A closed-out agent keeps the rest of its scratchpad, since a UX review may resume it.
 
 ## QC
 

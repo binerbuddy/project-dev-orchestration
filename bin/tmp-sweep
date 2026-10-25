@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""tmp-sweep — free /tmp space that finished or idle agents left behind.
+
+Usage: tmp-sweep [--project P] [--session ID] [--dry-run] [--json]
+
+/tmp is often a RAM-backed tmpfs, so leftovers cost memory as well as disk; agents that filled it
+failed with "no space left". Agents keep their Claude scratchpad in /tmp/claude-<uid>/<cwd slug>/
+<session_id>/, and headless browser profiles (200-300 MB each) are most of what piles up there.
+
+Sessions started in the home directory are skipped. Nothing in use is touched: a path is in use when a live process has its cwd inside it or names it
+on its command line (chromium --user-data-dir=..., a dev server, a test run).
+
+Default (every engine project's watcher runs it at most hourly):
+  1. browser profiles anywhere under /tmp/claude-<uid>/ (a directory holding "Local State" or a
+     Default/Preferences file) that are not in use and older than TMP_SWEEP_PROFILE_MIN (30 min);
+  2. the whole scratchpad of a finished agent: its metadata says done_tracking (hibernated, then
+     its PR merged or its issue closed), so it won't be resumed;
+  3. any session scratchpad not in use and untouched for TMP_SWEEP_ORPHAN_DAYS (7) days;
+  4. files older than a day in shared tool caches in /tmp (jest, node and v8 compile caches,
+     tsx, playwright transforms): they rebuild on demand.
+--session ID   only step 1, for one session (bin/hibernate runs this after stopping its processes)
+--dry-run      print what would go, delete nothing
+--json         one JSON line: {"freed_mb", "removed": [{"path", "mb", "why"}]}
+"""
+import argparse
+import glob
+import json
+import os
+import shutil
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+UID = os.getuid()
+TMP = os.environ.get("TMP_SWEEP_ROOT", "/tmp")
+CLAUDE_TMP = os.path.join(TMP, f"claude-{UID}")
+PROFILE_MIN = float(os.environ.get("TMP_SWEEP_PROFILE_MIN", "30"))
+ORPHAN_DAYS = float(os.environ.get("TMP_SWEEP_ORPHAN_DAYS", "7"))
+CACHE_DAYS = 1.0
+CACHES = ["jest_rs", f"jest_{UID}", "node-compile-cache", f"v8-compile-cache-{UID}", f"tsx-{UID}",
+          f"playwright-transform-cache-{UID}"]
+
+
+def live_places():
+    """(cwd, cmdline) of every process we can read."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            cwd = os.readlink(f"/proc/{d}/cwd")
+            cmd = open(f"/proc/{d}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        out.append((cwd, cmd))
+    return out
+
+
+def in_use(path, procs):
+    return any(cwd == path or cwd.startswith(path + "/") or path in cmd for cwd, cmd in procs)
+
+
+def size_mb(path):
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_size
+            except OSError:
+                pass
+    return total / 1048576
+
+
+def newest_mtime(path):
+    newest = os.lstat(path).st_mtime
+    for root, dirs, files in os.walk(path):
+        for n in dirs + files:
+            try:
+                newest = max(newest, os.lstat(os.path.join(root, n)).st_mtime)
+            except OSError:
+                pass
+    return newest
+
+
+def is_profile(d):
+    return os.path.isfile(os.path.join(d, "Local State")) or os.path.isfile(os.path.join(d, "Default", "Preferences"))
+
+
+def profiles_under(top):
+    """Browser profile dirs under top (not descending into a profile once found)."""
+    found = []
+    for root, dirs, _ in os.walk(top):
+        if is_profile(root):
+            found.append(root)
+            dirs[:] = []
+        else:
+            dirs[:] = [x for x in dirs if x not in ("node_modules", ".git")]
+    return found
+
+
+# sessions started in the home directory (a personal assistant, not an agent) may keep a browser
+# profile on purpose, so they are left alone
+HOME_SLUG = os.path.expanduser("~").replace("/", "-")
+
+
+def sessions():
+    return [d for d in glob.glob(os.path.join(CLAUDE_TMP, "*", "*"))
+            if os.path.isdir(d) and os.path.basename(os.path.dirname(d)) != HOME_SLUG]
+
+
+def finished_sessions(state):
+    out = set()
+    for f in glob.glob(os.path.join(state, "agents", "*.json")):
+        try:
+            meta = json.load(open(f, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if meta.get("done_tracking") and meta.get("session_id"):
+            out.add(meta["session_id"])
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project")
+    ap.add_argument("--session")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    now, procs, plan = time.time(), live_places(), []
+
+    def add(path, why):
+        if any(path == p or path.startswith(p + "/") for p, _ in plan):
+            return
+        plan.append((path, why))
+
+    scope = [d for d in sessions() if os.path.basename(d) == a.session] if a.session else sessions()
+    if not a.session:
+        done = finished_sessions(pdo_config.load(a.project, "tmp-sweep")["state_dir"])
+        for d in scope:
+            if in_use(d, procs):
+                continue
+            if os.path.basename(d) in done:
+                add(d, "finished agent")
+            elif now - newest_mtime(d) > ORPHAN_DAYS * 86400:
+                add(d, f"untouched {ORPHAN_DAYS:g}+ days")
+    for d in scope:
+        for p in profiles_under(d):
+            if not in_use(p, procs) and (a.session or now - newest_mtime(p) > PROFILE_MIN * 60):
+                add(p, "browser profile")
+    if not a.session:
+        for c in CACHES:
+            top = os.path.join(TMP, c)
+            if not os.path.isdir(top) or os.lstat(top).st_uid != UID:
+                continue
+            for root, _, files in os.walk(top):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    try:
+                        if now - os.lstat(fp).st_mtime > CACHE_DAYS * 86400:
+                            add(fp, f"{c} cache")
+                    except OSError:
+                        pass
+
+    removed, freed = [], 0.0
+    cache_mb = {}
+    for path, why in plan:
+        mb = size_mb(path) if os.path.isdir(path) else (os.lstat(path).st_size / 1048576 if os.path.lexists(path) else 0)
+        if not a.dry_run:
+            try:
+                shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+            except OSError:
+                continue
+        freed += mb
+        if why.endswith(" cache"):  # one line per cache, not per file
+            cache_mb[why] = cache_mb.get(why, 0) + mb
+        else:
+            removed.append({"path": path, "mb": round(mb, 1), "why": why})
+    removed += [{"path": os.path.join(TMP, w[:-6]), "mb": round(mb, 1), "why": w + " (files > 1 day)"}
+                for w, mb in cache_mb.items()]
+    if a.json:
+        print(json.dumps({"freed_mb": round(freed, 1), "removed": removed, "dry_run": a.dry_run}))
+    else:
+        for r in removed:
+            print(f"{'would remove' if a.dry_run else 'removed'} {r['mb']:8.1f} MB  {r['why']}: {r['path']}")
+        print(f"tmp-sweep: {'would free' if a.dry_run else 'freed'} {freed:.0f} MB")
+
+
+if __name__ == "__main__":
+    main()

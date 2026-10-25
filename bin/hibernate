@@ -11,6 +11,7 @@ same session back later). It then:
      servers (API servers, bundler dev servers, esbuild), headless Chromium, playwright-mcp and their
      children. Never touched: claude itself (step 2 ends it), the shared QC worktree and the QC
      ports (QC_PORTS and AGENT_QC_PORTS), and database clones (disk, not RAM).
+     Then bin/tmp-sweep --session removes the browser profiles left in that scratchpad.
   2. closes the herdr workspace, which ends claude and its MCP servers;
   3. records hibernated_at in agents/<Repo>-<n>.json.
 bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibernated_at.
@@ -230,6 +231,14 @@ def main():
         return
     stop(procs)
     freed = rss // 1024
+    freed_tmp = 0
+    if session:  # the browsers just stopped: their profiles in the scratchpad go too (/tmp is often RAM)
+        r = subprocess.run([os.path.join(HERE, "bin", "tmp-sweep"), "--session", session, "--json"],
+                           capture_output=True, text=True, timeout=300)
+        try:
+            freed_tmp = json.loads(r.stdout)["freed_mb"]
+        except (ValueError, KeyError):
+            pass
     if not a.servers_only:
         # close only a workspace that is still this agent's (ids get reused after a close)
         if meta.get("workspace_id") and ws_labels.get(meta["workspace_id"]) == meta.get("name"):
@@ -250,6 +259,7 @@ def main():
         if not released:
             print(f"hibernate: warning: claim label not released: {r.stderr.strip()[:200]}", file=sys.stderr)
     print(json.dumps({"workspace": meta.get("name"), "hibernated": not a.servers_only, "stopped": len(procs), "freed_side_mb": freed,
+                      "freed_tmp_mb": freed_tmp,
                       "workspace_closed": not a.servers_only, "claim_released": released}))
 
 

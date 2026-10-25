@@ -21,6 +21,7 @@ has() { if [[ "$2" == *"$3"* ]]; then ok "$1"; else bad "$1" "[$2] lacks [$3]"; 
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_STATE_HOME="$T/home/.local/state"
 mkdir -p "$HOME"
 export PDO_CONFIG_DIRS="$T/cfg-a:$T/cfg-b" PDO_STATE_DIR="$T/state" PYTHONDONTWRITEBYTECODE=1
+export TMP_SWEEP_ROOT="$T/tmproot"  # the watcher and hibernate run tmp-sweep: never the real /tmp
 unset PDO_INBOX INTAKE_INBOX PDO_PROJECT PDO_SKILL_PREFIX GH_USER GH_TOKEN
 export GIT_AUTHOR_NAME=smoke GIT_AUTHOR_EMAIL=smoke@example.com GIT_COMMITTER_NAME=smoke GIT_COMMITTER_EMAIL=smoke@example.com
 export GIT_CONFIG_GLOBAL="$T/gitconfig" GIT_CONFIG_NOSYSTEM=1
@@ -188,7 +189,7 @@ for f in "$BIN"/* "$ENGINE"/tests/*.sh; do
 done
 check "bash -n lib.sh" bash -n "$BIN/lib.sh"
 check "python compile pdo_config.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$BIN/pdo_config.py"
-for p in queue watch hibernate pr-priority pr-agent fleet; do check "$p --help" "$BIN/$p" --help; done
+for p in queue watch hibernate tmp-sweep pr-priority pr-agent fleet; do check "$p --help" "$BIN/$p" --help; done
 
 # --- project resolution ---
 cd "$T/repos/widget.git/7-feature" || exit 1
@@ -743,6 +744,27 @@ print(json.dumps([[r["auto_spawn"] for r in held], [bool(r.get("pr_capped")) for
                   any("pr_capped" in r or "auto_spawn_uncapped" in r for r in back)], separators=(",", ":")))
 PY
 )" '[[false,true,false],[true,false,true],[true,true,false],false]'
+# tmp-sweep: stale profiles, finished and orphaned scratchpads, old cache files go; in-use, fresh and home-dir ones stay
+C="$TMP_SWEEP_ROOT/claude-$(id -u)"; S1="$C/-x-widget-5/s-live"; S2="$C/-x-widget-6/s-done"; S3="$C/-x-widget-7/s-old"
+HS="$C/$(tr / - <<<"$HOME")/s-home"
+mkdir -p "$S1/scratchpad/stale/Default" "$S1/scratchpad/busy" "$S1/scratchpad/fresh" "$S2/scratchpad" "$S3" "$HS/scratchpad/prof" "$TMP_SWEEP_ROOT/jest_rs/a"
+touch "$S1/scratchpad/stale/Default/Preferences" "$S1/scratchpad/busy/Local State" "$S1/scratchpad/fresh/Local State" \
+  "$S1/notes.md" "$S2/scratchpad/brief.md" "$S3/old.txt" "$HS/scratchpad/prof/Local State" "$TMP_SWEEP_ROOT/jest_rs/a/new"
+touch -d '2 hours ago' "$S1/scratchpad/stale" "$S1/scratchpad/stale/Default" "$S1/scratchpad/stale/Default/Preferences" \
+  "$S1/scratchpad/busy" "$S1/scratchpad/busy/Local State" "$HS/scratchpad/prof" "$HS/scratchpad/prof/Local State"
+touch -d '3 days ago' "$TMP_SWEEP_ROOT/jest_rs/a/old"
+touch -d '10 days ago' "$S3/old.txt" "$S3"
+echo '{"repo":"widget","number":60,"session_id":"s-done","done_tracking":true}' >"$WS/agents/widget-60.json"
+(exec -a "chrome --user-data-dir=$S1/scratchpad/busy" sleep 30) & BUSY=$!
+sleep 0.2
+out="$(PDO_STATE_DIR="$WS" "$BIN/tmp-sweep" --project acme --json)"
+kill $BUSY 2>/dev/null; wait $BUSY 2>/dev/null
+eq "tmp-sweep: removes stale profile, finished and orphaned sessions, old cache files" \
+  "$(jq -c '[.removed[].why] | sort' <<<"$out" 2>/dev/null)" '["browser profile","finished agent","jest_rs cache (files > 1 day)","untouched 7+ days"]'
+eq "tmp-sweep: keeps in-use and fresh profiles, notes, new cache files, home-dir sessions" \
+  "$(for f in "$S1/scratchpad/busy" "$S1/scratchpad/fresh" "$S1/notes.md" "$TMP_SWEEP_ROOT/jest_rs/a/new" "$HS/scratchpad/prof" "$S1/scratchpad/stale" "$S2" "$S3"; do [[ -e $f ]] && printf 1 || printf 0; done)" "11111000"
+out="$(PDO_STATE_DIR="$WS" "$BIN/tmp-sweep" --project acme --session s-live --json)"
+eq "tmp-sweep --session: a just-stopped session's profiles go at once" "$(jq -c '[.removed[].path | sub(".*/"; "")] | sort' <<<"$out")" '["busy","fresh"]'
 eq "watch: wrap-up or rebase marker counts as finished" "$(python3 - "$BIN/watch" <<'PY'
 import importlib.machinery, importlib.util, sys
 spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))

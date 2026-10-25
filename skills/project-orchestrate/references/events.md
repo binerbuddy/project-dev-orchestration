@@ -28,6 +28,7 @@ doesn't act on that.
 | `usage_ceiling` | Stop spawning. Report the weekly and 5-hour figures. The weekly reserve is for manual or hot work. |
 | `closed_out` | Informational. The watcher released a finished agent: PR merged, QC passed (`QC complete` or `Ready for Merge`) and it printed "wrap-up done" (or "rebase done" after a later rebase), or its issue closed with no open PR (likely-fixed confirmed, won't-fix). Session kept. One line. |
 | `hibernated` / `hibernate_failed` | Informational; they ride along with other events. The watcher released an agent parked at `ready for QC` or `QC escalated` (side processes stopped, workspace closed, session kept for `pdo resume-agent`). One line; for a failure include the reason and don't retry by hand. |
+| `tmp_swept` | Informational; rides along. The watcher's hourly `pdo tmp-sweep` freed 100 MB or more of /tmp (stale browser profiles, finished agents' scratchpads, old tool caches). One line. |
 | `event_hook_failed` | Informational; rides along. The project's `WATCH_EVENT_HOOK` failed or timed out (`detail`); the watcher retries next poll over the same window. One line; if it repeats, report it for the System Manager. |
 | other hook events marked `"quiet": true` | Informational; they ride along. A project's `WATCH_EVENT_HOOK` reported something it did (e.g. applied a label for a project command). One line each, with any `why`, so the human can act by hand when it was ignored. |
 | `first_run` / `heartbeat` | Nothing special. Continue to step 3. |

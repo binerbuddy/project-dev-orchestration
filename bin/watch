@@ -337,6 +337,29 @@ def auto_hibernate(project, ag):
     return ev
 
 
+TMP_SWEEP_EVERY = 3600
+
+
+def tmp_sweep(project):
+    """At most hourly, bin/tmp-sweep frees /tmp (browser profiles, finished agents' scratchpads, stale
+    tool caches); /tmp is often RAM-backed, and agents have failed on a full one. A quiet event when it
+    freed 100 MB or more."""
+    stamp = os.path.join(STATE_DIR, "tmp-sweep.at")
+    try:
+        if time.time() - os.path.getmtime(stamp) < TMP_SWEEP_EVERY:
+            return []
+    except OSError:
+        pass
+    open(stamp, "w").close()
+    try:
+        r = subprocess.run([os.path.join(HERE, "bin", "tmp-sweep"), "--project", project, "--json"],
+                           capture_output=True, text=True, timeout=600)
+        freed = json.loads(r.stdout)["freed_mb"]
+    except (subprocess.TimeoutExpired, ValueError, KeyError):
+        return []
+    return [{"type": "tmp_swept", "detail": f"freed {freed:.0f} MB in /tmp"}] if freed >= 100 else []
+
+
 def release_finished_claims(project, repos):
     """Finished agents (closed out, or hibernated and then merged or closed: done_tracking) whose
     managed-by claim label is still recorded as on: bin/claim --release. Metadata-only scan, so a
@@ -821,6 +844,7 @@ def main():
                 cur["waiting_on_you"] = waiting_on_you(cur["agents"])
             quiet += fresh
             quiet += release_finished_claims(a.project, load_repos(a.project)[1])
+            quiet += tmp_sweep(a.project)
         ev = (events(prev, cur) if prev else [{"type": "first_run"}]) + hook_wake  # the hook dedupes itself
         if not a.peek:
             tmp = state_file + ".tmp"
