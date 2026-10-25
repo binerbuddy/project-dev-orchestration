@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """tmp-sweep — free /tmp space that finished or idle agents left behind.
 
-Usage: tmp-sweep [--project P] [--session ID] [--dry-run] [--json]
+Usage: tmp-sweep [--project P] [--session ID [--whole]] [--dry-run] [--json]
 
 /tmp is often a RAM-backed tmpfs, so leftovers cost memory as well as disk; agents that filled it
 failed with "no space left". Agents keep their Claude scratchpad in /tmp/claude-<uid>/<cwd slug>/
 <session_id>/, and headless browser profiles (200-300 MB each) are most of what piles up there.
 
-Sessions started in the home directory are skipped. Nothing in use is touched: a path is in use when a live process has its cwd inside it or names it
+Sessions started in the home directory are skipped. An agent with an open PR (or still running) may be
+resumed, so its scratchpad is never removed whole; only its idle browser profiles go (the browser makes
+a fresh one on its next run). Nothing in use is touched: a path is in use when a live process has its cwd inside it or names it
 on its command line (chromium --user-data-dir=..., a dev server, a test run).
 
 Default (every engine project's watcher runs it at most hourly):
@@ -15,10 +17,12 @@ Default (every engine project's watcher runs it at most hourly):
      Default/Preferences file) that are not in use and older than TMP_SWEEP_PROFILE_MIN (30 min);
   2. the whole scratchpad of a finished agent: its metadata says done_tracking (hibernated, then
      its PR merged or its issue closed), so it won't be resumed;
-  3. any session scratchpad not in use and untouched for TMP_SWEEP_ORPHAN_DAYS (7) days;
+  3. any other session scratchpad not in use and untouched for TMP_SWEEP_ORPHAN_DAYS (7) days;
   4. files older than a day in shared tool caches in /tmp (jest, node and v8 compile caches,
      tsx, playwright transforms): they rebuild on demand.
 --session ID   only step 1, for one session (bin/hibernate runs this after stopping its processes)
+--whole        with --session: the session's whole scratchpad, unless it is an open-PR agent's (bin/
+               recycle-agent-qc runs this for the QC Agent session it just ended: nothing resumes it)
 --dry-run      print what would go, delete nothing
 --json         one JSON line: {"freed_mb", "removed": [{"path", "mb", "why"}]}
 """
@@ -27,6 +31,7 @@ import glob
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 
@@ -111,22 +116,37 @@ def sessions():
             if os.path.isdir(d) and os.path.basename(os.path.dirname(d)) != HOME_SLUG]
 
 
-def finished_sessions(state):
-    out = set()
-    for f in glob.glob(os.path.join(state, "agents", "*.json")):
+def agent_sessions(cfg):
+    """(finished, kept) session ids from agent metadata. Finished: done_tracking. Kept: not finished,
+    and still running or its branch has an open PR (a repo gh can't list keeps all of its agents)."""
+    finished, kept, by_repo = set(), set(), {}
+    for f in glob.glob(os.path.join(cfg["state_dir"], "agents", "*.json")):
         try:
             meta = json.load(open(f, encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if meta.get("done_tracking") and meta.get("session_id"):
-            out.add(meta["session_id"])
-    return out
+        sid = meta.get("session_id")
+        if not sid:
+            continue
+        if meta.get("done_tracking"):
+            finished.add(sid)
+        elif not meta.get("hibernated_at"):
+            kept.add(sid)
+        else:
+            by_repo.setdefault(meta.get("repo"), []).append((meta.get("branch"), sid))
+    for repo, agents in by_repo.items():
+        r = subprocess.run(["gh", "pr", "list", "-R", f"{cfg['org']}/{repo}", "--state", "open", "--limit", "500",
+                            "--json", "headRefName", "--jq", ".[].headRefName"], capture_output=True, text=True)
+        heads = set(r.stdout.split()) if r.returncode == 0 else None
+        kept |= {sid for branch, sid in agents if heads is None or branch in heads}
+    return finished - kept, kept
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project")
     ap.add_argument("--session")
+    ap.add_argument("--whole", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
@@ -137,13 +157,17 @@ def main():
             return
         plan.append((path, why))
 
+    if a.whole and not a.session:
+        ap.error("--whole needs --session")
     scope = [d for d in sessions() if os.path.basename(d) == a.session] if a.session else sessions()
-    if not a.session:
-        done = finished_sessions(pdo_config.load(a.project, "tmp-sweep")["state_dir"])
+    if not a.session or a.whole:
+        done, kept = agent_sessions(pdo_config.load(a.project, "tmp-sweep"))
         for d in scope:
-            if in_use(d, procs):
+            if in_use(d, procs) or os.path.basename(d) in kept:
                 continue
-            if os.path.basename(d) in done:
+            if a.whole:
+                add(d, "ended session")
+            elif os.path.basename(d) in done:
                 add(d, "finished agent")
             elif now - newest_mtime(d) > ORPHAN_DAYS * 86400:
                 add(d, f"untouched {ORPHAN_DAYS:g}+ days")

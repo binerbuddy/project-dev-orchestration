@@ -192,6 +192,11 @@ watcher).
   Hibernation removes the stopped session's profiles at once; the watcher runs the full sweep at most
   hourly. Sessions started in the home directory (a personal assistant, not an agent) are skipped.
   A closed-out agent keeps the rest of its scratchpad, since a UX review may resume it.
+  Owner decision (same day): an agent with an open PR (or still running) never loses its scratchpad,
+  not even to the 7-day rule, since it may be resumed; only its idle browser profiles go, because they
+  are what filled /tmp and the browser makes a fresh one. A gh failure keeps all of that repo's
+  agents. The QC Agent is never resumed: `recycle-agent-qc` removes the ended session's whole
+  scratchpad (`tmp-sweep --session ID --whole`).
 
 ## QC
 

@@ -43,6 +43,7 @@ case "$*" in
   "api -X DELETE repos/acme/widget/issues/"*"/labels/managed-by%3A"*) ;;
   "api repos/acme/widget/issues/"*"/comments -f body="*) echo 9001 ;;
   "issue edit"*) ;;
+  "pr list -R acme/widget --state open"*) echo feat/61 ;;  # tmp-sweep: open PRs keep their agents' scratchpads
   # qc-fixture-push: the fixture release and its assets
   "release view "*" -R acme/"*) [[ -f "$SMOKE_DIR/fixture-release" ]] || exit 1 ;;
   "release create "*" -R acme/"*) touch "$SMOKE_DIR/fixture-release" ;;
@@ -765,6 +766,22 @@ eq "tmp-sweep: keeps in-use and fresh profiles, notes, new cache files, home-dir
   "$(for f in "$S1/scratchpad/busy" "$S1/scratchpad/fresh" "$S1/notes.md" "$TMP_SWEEP_ROOT/jest_rs/a/new" "$HS/scratchpad/prof" "$S1/scratchpad/stale" "$S2" "$S3"; do [[ -e $f ]] && printf 1 || printf 0; done)" "11111000"
 out="$(PDO_STATE_DIR="$WS" "$BIN/tmp-sweep" --project acme --session s-live --json)"
 eq "tmp-sweep --session: a just-stopped session's profiles go at once" "$(jq -c '[.removed[].path | sub(".*/"; "")] | sort' <<<"$out")" '["busy","fresh"]'
+# an agent with an open PR keeps its scratchpad (even untouched 7+ days), but not its idle profiles; --whole clears an ended session
+S4="$C/-x-widget-61/s-pr"; S5="$C/-x-widget-62/s-gone"; S6="$C/-x-orch/s-qc"
+mkdir -p "$S4/scratchpad/prof" "$S5" "$S6/scratchpad/prof"
+touch "$S4/notes.md" "$S4/scratchpad/prof/Local State" "$S5/old.txt" "$S6/scratchpad/prof/Local State"
+touch -d '10 days ago' "$S4/notes.md" "$S4/scratchpad/prof/Local State" "$S4/scratchpad/prof" "$S4/scratchpad" "$S4" "$S5/old.txt" "$S5"
+echo '{"repo":"widget","number":61,"branch":"feat/61","session_id":"s-pr","hibernated_at":1}' >"$WS/agents/widget-61.json"
+echo '{"repo":"widget","number":62,"branch":"feat/62","session_id":"s-gone","hibernated_at":1}' >"$WS/agents/widget-62.json"
+out="$(PDO_STATE_DIR="$WS" "$BIN/tmp-sweep" --project acme --json)"
+eq "tmp-sweep: open-PR agent keeps its scratchpad, loses its idle profile; no-PR agent ages out" \
+  "$(for f in "$S4/notes.md" "$S4/scratchpad/prof" "$S5"; do [[ -e $f ]] && printf 1 || printf 0; done)" "100"
+PDO_STATE_DIR="$WS" "$BIN/tmp-sweep" --project acme --session s-pr --whole --json >/dev/null
+out="$(PDO_STATE_DIR="$WS" "$BIN/tmp-sweep" --project acme --session s-qc --whole --json)"
+eq "tmp-sweep --whole: an ended session goes, an open-PR agent's stays" \
+  "$(jq -r '.removed[].why' <<<"$out"; for f in "$S6" "$S4/notes.md"; do [[ -e $f ]] && printf 1 || printf 0; done)" "ended session
+01"
+rm -f "$WS/agents/widget-61.json" "$WS/agents/widget-62.json"
 eq "watch: wrap-up or rebase marker counts as finished" "$(python3 - "$BIN/watch" <<'PY'
 import importlib.machinery, importlib.util, sys
 spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))

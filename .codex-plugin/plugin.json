@@ -1,6 +1,6 @@
 {
   "name": "project-dev-orchestration",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "Issue-to-PR lifecycle skills and an orchestration engine for running a team of coding agents on any GitHub project.",
   "author": {
     "name": "binerbuddy",

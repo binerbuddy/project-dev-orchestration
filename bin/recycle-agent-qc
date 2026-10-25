@@ -55,6 +55,7 @@ case "$status" in idle|done) ;; *) log "skip: agent is $status"; exit 0 ;; esac
 if herdr pane read "$PANE" | tail -40 | grep -qE "Enter to select|Do you want to proceed"; then
   log "skip: a question is on screen"; exit 0
 fi
+SESSION="$(herdr agent list | jq -r --arg p "$PANE" '[.result.agents[] | select(.pane_id == $p) | .agent_session.value][0] // empty')"
 herdr agent prompt "$PANE" "/exit" >/dev/null
 sleep "${RECYCLE_SETTLE_SEC:-3}"
 # with a /loop wakeup pending, /exit asks first; option 1 is selected
@@ -66,4 +67,6 @@ for _ in $(seq 1 30); do
 done
 [[ $gone -eq 1 ]] || { log "failed: the QC Agent didn't exit; see workspace \"$NAME\""; exit 1; }
 log "exited the QC Agent (pane $PANE); relaunching"
+# nothing resumes an ended QC Agent session, so its whole scratchpad goes (/tmp is often RAM)
+[[ -z "$SESSION" ]] || "$HERE/bin/tmp-sweep" --project "$PROJECT" --session "$SESSION" --whole 2>&1 | tail -1 | while read -r l; do log "$l"; done
 "$HERE/bin/start-agent-qc" --project "$PROJECT" 2>&1 | while read -r l; do log "$l"; done
