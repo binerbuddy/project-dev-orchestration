@@ -26,7 +26,7 @@ difference; never rename it.
 | `client-requested` | `CARRY_LABELS` (each) | `0052cc` | A client or customer asked for it; carried onto PRs | pr-priority, intake |
 | `needs-triage` | | `fbca04` | Not yet reviewed by a human; the queue skips it | queue, intake, collaborators |
 | `epic-phase` | | `c5def5` | A phase of an epic; worked only by the epic's build agent | queue, spawn, feature-design |
-| `awaiting-ux-gate` | | `fbca04` | An agent waits for a human's prototype sign-off (on the issue and its PR) | hibernate, watch, feature-build, dispatch brief |
+| `awaiting-ux-gate` | | `ffe800` | An agent waits for a human's prototype sign-off (on the issue and its PR) | hibernate, watch, feature-build, dispatch brief |
 | `likely-fixed` | | `fbca04` | An agent thinks the default branch already does this; a human confirms | queue, watch, hibernate, dispatch brief |
 | `blocked-by-pr` | | `e99695` | The PR can't merge until another PR lands | small-fix, feature-build |
 | `on-hold` | | `6a737d` | Parked by a human; never started | queue, watch, intake |
@@ -36,9 +36,10 @@ difference; never rename it.
 | `orchestrator-system` | | `5a5a5a` | Work on the orchestration system itself (System Manager) | queue (excluded) |
 | `queue:work` | `QUEUE_LABEL` | `0e8a16` | In the orchestrator's queue (projects without a board) | queue (board-less mode) |
 
-**Colors.** Yellow (`fbca04`) means a human must act now, and only those labels are yellow: `needs-triage`,
-`likely-fixed`, `awaiting-ux-gate`, `QC complete - ready to review`, `QC escalated`, plus any repo-specific label
-with the same meaning (e.g. a "requires criteria review" label). `Ready for Merge` is the exception: a human merges it,
+**Colors.** Yellow means a human must act now, and only those labels are yellow: `needs-triage`,
+`likely-fixed`, `QC complete - ready to review`, `QC escalated` (`fbca04`), plus any repo-specific label with the
+same meaning (e.g. a "requires criteria review" label). `awaiting-ux-gate` is a brighter lemon yellow (`ffe800`) so
+it stands out: an agent's build is waiting on it, so it usually comes first. `Ready for Merge` is the exception: a human merges it,
 but it stays green (`0e8a16`). Every other label avoids yellow: P1 red, P2 orange, P3 blue, P4 pale; agent and
 pipeline states in teal, purple, blue or grey; blocked in pale red.
 
@@ -83,7 +84,7 @@ want() {  # want <name> <color> <description>
   if grep -qixF -- "$1" <<<"$have"; then
     grep -qxF -- "$1" <<<"$have" && echo "present  $1" || echo "present  $1 (as '$(grep -ixF -- "$1" <<<"$have")', case differs)"
     c="$(jq -r --arg n "$1" '.[] | select((.name|ascii_downcase) == ($n|ascii_downcase)) | .color' <<<"$colors")"
-    if [[ "${c,,}" != "${2,,}" ]] && { [[ "${2,,}" == fbca04 ]] || yellow "$c"; }; then
+    if [[ "${c,,}" != "${2,,}" ]] && { yellow "$2" || yellow "$c"; }; then
       printf 'drifted  %s   color %s, engine %s   (gh label edit %q -R %s --color %s)\n' "$1" "$c" "$2" "$(grep -ixF -- "$1" <<<"$have")" "$R" "$2"
     elif [[ "${c,,}" != "${2,,}" ]]; then
       echo "color    $1   $c (engine $2; cosmetic, left alone)"
