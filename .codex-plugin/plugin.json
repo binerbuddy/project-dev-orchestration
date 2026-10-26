@@ -1,6 +1,6 @@
 {
-  "name": "project-dev-orchestration",
-  "version": "0.9.8",
+  "name": "pdo",
+  "version": "0.10.0",
   "description": "Issue-to-PR lifecycle skills and an orchestration engine for running a team of coding agents on any GitHub project.",
   "author": {
     "name": "binerbuddy",
@@ -9,7 +9,13 @@
   "homepage": "https://github.com/binerbuddy/project-dev-orchestration",
   "repository": "https://github.com/binerbuddy/project-dev-orchestration",
   "license": "MIT",
-  "keywords": ["orchestration", "agents", "github", "workflow", "skills"],
+  "keywords": [
+    "orchestration",
+    "agents",
+    "github",
+    "workflow",
+    "skills"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Project Dev Orchestration",
@@ -17,8 +23,13 @@
     "longDescription": "Intake, design, build, PR review, review triage, QC and close-out skills that work on the git repo of the current directory, driven by the repo's .agents/project-profile.md. Pairs with the optional orchestration engine in bin/.",
     "developerName": "binerbuddy",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
     "websiteURL": "https://github.com/binerbuddy/project-dev-orchestration",
-    "defaultPrompt": ["Explain how work flows in this repo (project-how-it-works)"]
+    "defaultPrompt": [
+      "Explain how work flows in this repo (project-how-it-works)"
+    ]
   }
 }

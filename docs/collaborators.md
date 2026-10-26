@@ -12,20 +12,20 @@ disagree, the repo's guide wins.
 
 | Tool | Install |
 |---|---|
-| Claude Code | `/plugin marketplace add binerbuddy/project-dev-orchestration`, then `/plugin install project-dev-orchestration@project-dev-orchestration` |
-| Codex | `codex plugin marketplace add binerbuddy/project-dev-orchestration`, then `codex plugin add project-dev-orchestration@project-dev-orchestration` |
+| Claude Code | `/plugin marketplace add binerbuddy/project-dev-orchestration`, then `/plugin install pdo@project-dev-orchestration` |
+| Codex | `codex plugin marketplace add binerbuddy/project-dev-orchestration`, then `codex plugin add pdo@project-dev-orchestration` |
 | Grok Build | `grok plugin install binerbuddy/project-dev-orchestration` |
 
 **Updating.** Agents load the plugin when a session starts, so start a new session after updating.
 
 | Tool | Update |
 |---|---|
-| Claude Code | `claude plugin marketplace update project-dev-orchestration`, then `claude plugin update project-dev-orchestration@project-dev-orchestration` |
-| Codex | `codex plugin marketplace upgrade project-dev-orchestration`, then `codex plugin add project-dev-orchestration@project-dev-orchestration` |
+| Claude Code | `claude plugin marketplace update project-dev-orchestration`, then `claude plugin update pdo@project-dev-orchestration` |
+| Codex | `codex plugin marketplace upgrade project-dev-orchestration`, then `codex plugin add pdo@project-dev-orchestration` |
 | Grok Build | `grok plugin update` |
 
 Install the whole plugin, not single skills: they share reference files. In Claude Code a skill may show up
-namespaced, as `/project-dev-orchestration:project-<name>`; it's the same skill as `/project-<name>`.
+namespaced, as `/pdo:project-<name>`; it's the same skill as `/project-<name>`.
 
 ## 2. First time in a repo
 

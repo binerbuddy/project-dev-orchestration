@@ -15,7 +15,7 @@ The human's guide to an agent team run by project-dev-orchestration. You talk to
    orchestrator, and any extras your `TEAM_UP_HOOK` adds), then gives you a short status.
 
 Use the same command after `/clear`, or in a brand-new session, to get the System Manager back up to speed.
-(With the Claude Code plugin the skill may show as `/project-dev-orchestration:project-system-manager`.)
+(With the Claude Code plugin the skill may show as `/pdo:project-system-manager`.)
 
 ## Who's who
 

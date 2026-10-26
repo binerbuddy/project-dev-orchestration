@@ -212,7 +212,7 @@ eq "state dir from PDO_STATE_DIR" "$(jq -r .state_dir <<<"$J")" "$T/state"
 eq "inbox defaults under state" "$(jq -r .inbox <<<"$J")" "$T/state/intake-inbox"
 eq "self-managed repos" "$(jq -c .self_managed_repos <<<"$J")" '["docs"]'
 eq "config.env install-wide default" "$(jq -r .system_manager_workspace <<<"$J")" Acme-Ops
-eq "skill prefix default" "$(jq -r .route_skill.small <<<"$J")" "/project-dev-orchestration:project-small-feature-or-bug-fix"
+eq "skill prefix default" "$(jq -r .route_skill.small <<<"$J")" "/pdo:project-small-feature-or-bug-fix"
 eq "PDO_SKILL_PREFIX override" "$(PDO_SKILL_PREFIX=/ "$BIN/pdo-config" --project acme --json | jq -r .orchestrate_skill)" "/project-orchestrate"
 eq "label defaults" "$(jq -r '.label_qc_ready + "|" + .cwt_status + "|" + (.p_labels | join(","))' <<<"$J")" "ready for QC|Claude Work This|P1-urgent,P2-high,P3-medium,P4-low"
 eq "qc ports" "$(jq -c .qc_ports <<<"$J")" "[3999]"
@@ -338,7 +338,7 @@ out="$("$BIN/spawn" widget 12 --dry-run 2>&1)"
 eq "spawn dry-run route" "$(jq -r .route <<<"$out" 2>/dev/null)" small
 eq "spawn dry-run branch" "$(jq -r .branch <<<"$out" 2>/dev/null)" "fix/12-widget-crash-save"
 eq "spawn dry-run worktree" "$(jq -r .worktree <<<"$out" 2>/dev/null)" "$T/repos/widget.git/12-widget-crash-save"
-has "spawn dry-run prompt names the skill" "$(jq -r .prompt <<<"$out" 2>/dev/null)" "/project-dev-orchestration:project-small-feature-or-bug-fix Work acme/widget#12"
+has "spawn dry-run prompt names the skill" "$(jq -r .prompt <<<"$out" 2>/dev/null)" "/pdo:project-small-feature-or-bug-fix Work acme/widget#12"
 check "spawn dry-run logged no failure" test ! -e "$T/state/spawn-failures.jsonl"
 # BRANCH_PREFIX: issue type, then labels, else default
 jq '.type = null | .labels = [{name: "P2-high"}, {name: "Bug"}]' "$T/issue12.json" >"$T/issue12-nt.json"

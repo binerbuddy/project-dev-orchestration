@@ -8,7 +8,7 @@
 #   PDO_STATE_DIR    runtime state (default ${XDG_STATE_HOME:-~/.local/state}/project-dev-orchestration)
 #   PDO_INBOX        intake inbox (default $PDO_STATE_DIR/intake-inbox; INTAKE_INBOX is still honoured)
 #   PDO_PROJECT      project to use when --project is omitted (before cwd detection)
-#   PDO_SKILL_PREFIX the slash prefix for skill names (default "/project-dev-orchestration:", the
+#   PDO_SKILL_PREFIX the slash prefix for skill names (default "/pdo:", the
 #                    Claude Code plugin namespace; set "/" when the skills are linked bare, e.g. by
 #                    `bin/install --claude --link`, or for Codex/Grok skill dirs)
 # Each config dir may also hold config.env: install-wide defaults, sourced when lib.sh loads (the
@@ -47,7 +47,7 @@ _pdo_load_globals() {
   return 0
 }
 _pdo_load_globals
-: "${PDO_SKILL_PREFIX:=/project-dev-orchestration:}"
+: "${PDO_SKILL_PREFIX:=/pdo:}"
 export PDO_SKILL_PREFIX
 
 pdo_state_dir() { printf '%s' "${PDO_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/project-dev-orchestration}"; }

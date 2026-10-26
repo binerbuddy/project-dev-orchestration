@@ -29,16 +29,29 @@ A collaborator needs only the skills. The engine is for whoever runs the team.
 
 ```
 /plugin marketplace add binerbuddy/project-dev-orchestration
-/plugin install project-dev-orchestration@project-dev-orchestration
+/plugin install pdo@project-dev-orchestration
 ```
 
-or from a checkout: `bin/install --claude`.
+or from a checkout: `bin/install --claude`. The skills show up as `/pdo:project-<name>`.
+
+**Upgrading from 0.9 or earlier.** 0.10.0 renamed the plugin from `project-dev-orchestration` to `pdo` (the
+marketplace keeps its name). Remove the old one first, or every skill appears twice:
+
+```
+claude plugin uninstall project-dev-orchestration@project-dev-orchestration
+claude plugin marketplace update project-dev-orchestration
+claude plugin install pdo@project-dev-orchestration
+```
+
+then `/reload-plugins` (or restart) in open sessions. An engine install set `PDO_SKILL_PREFIX` in `config.env` only
+if you changed it; the default is now `/pdo:`. A `pdo` launcher from 0.9.8 follows the old plugin's versions: re-run
+`/project-setup repo+team` or `<plugin>/bin/install --bin` to point it at the new one.
 
 **Codex**
 
 ```
 codex plugin marketplace add binerbuddy/project-dev-orchestration
-codex plugin add project-dev-orchestration@project-dev-orchestration
+codex plugin add pdo@project-dev-orchestration
 ```
 
 or from a checkout: `bin/install --codex`. `bin/install --codex --link` links the skills into
@@ -94,8 +107,8 @@ and what has drifted, and only fills gaps.
   them side by side.
 - **Skill names.** The skills refer to each other as `/project-<name>` (e.g. `/project-intake inbox`).
   Under the Claude Code plugin a skill may appear namespaced, as
-  `/project-dev-orchestration:project-<name>`; both mean the same skill. The engine launches the
-  standing agents with `PDO_SKILL_PREFIX` (default `/project-dev-orchestration:`); set it to `/` in
+  `/pdo:project-<name>`; both mean the same skill. The engine launches the
+  standing agents with `PDO_SKILL_PREFIX` (default `/pdo:`); set it to `/` in
   your `config.env` when the skills are linked un-namespaced.
 - **Engine commands** appear in the skills as `pdo <name> …`. Without `pdo` on PATH, run
   `<engine checkout>/bin/<name> …`; a dispatch brief gives agents the absolute path, and a repo's `AGENTS.md`

@@ -17,7 +17,7 @@
 #              dir: ~/.claude/skills (Claude Code), ~/.agents/skills (Codex), $GROK_HOME/skills or
 #              ~/.grok/skills (Grok). Also the fallback when the tool's CLI isn't installed.
 #              Linked skills are un-namespaced: set PDO_SKILL_PREFIX="/" in your config.env so the
-#              engine launches /project-orchestrate rather than /project-dev-orchestration:project-orchestrate.
+#              engine launches /project-orchestrate rather than /pdo:project-orchestrate.
 #   --dry-run  print what would be done.
 # Links only: an existing non-link file or dir with the same name is left alone and reported.
 #
@@ -36,7 +36,8 @@
 #                on PATH (exit 1 when something is off).
 set -euo pipefail
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
-NAME=project-dev-orchestration
+NAME=project-dev-orchestration   # the marketplace
+PLUGIN=pdo                       # the plugin; Claude Code shows its skills as /pdo:<skill>
 DO_CLAUDE=0 DO_CODEX=0 DO_GROK=0 DO_BIN=0 LINK=0 DRY=0 PREFIX="$HOME/.local/bin"
 DO_GHID=0 GHID_MODE=install GHID_MAP_SRC=""
 usage() { sed -n '2,32p' "$0"; }
@@ -84,7 +85,7 @@ link_skills() {  # link_skills <dest dir>
 if [[ $DO_CLAUDE -eq 1 ]]; then
   if [[ $LINK -eq 0 ]] && command -v claude >/dev/null; then
     run claude plugin marketplace add "$REPO"
-    run claude plugin install "$NAME@$NAME"
+    run claude plugin install "$PLUGIN@$NAME"
   else
     [[ $LINK -eq 1 ]] || echo "install: claude CLI not found; linking skills instead"
     link_skills "$HOME/.claude/skills"
@@ -93,7 +94,7 @@ fi
 if [[ $DO_CODEX -eq 1 ]]; then
   if [[ $LINK -eq 0 ]] && command -v codex >/dev/null; then
     run codex plugin marketplace add "$REPO"
-    run codex plugin add "$NAME@$NAME"
+    run codex plugin add "$PLUGIN@$NAME"
   else
     [[ $LINK -eq 1 ]] || echo "install: codex CLI not found; linking skills instead"
     link_skills "$HOME/.agents/skills"

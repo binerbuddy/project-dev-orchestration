@@ -362,7 +362,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `AGENT_CLI` | `claude` | agent CLI (only `claude` today) |
 | `MAX_ACTIVE`, `WEEKLY_CEILING`, `FIVE_HOUR_CEILING` | 3, 80, 90 | concurrency and usage limits |
 
-`PDO_SKILL_PREFIX` (environment or `config.env`) defaults to `/project-dev-orchestration:`, the Claude
+`PDO_SKILL_PREFIX` (environment or `config.env`) defaults to `/pdo:`, the Claude
 Code plugin namespace. Set it to `/` when the skills are linked un-namespaced (`bin/install --link`).
 
 Example project env (`<config dir>/projects/acme.env`, plain bash):

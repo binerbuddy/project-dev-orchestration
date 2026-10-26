@@ -8,10 +8,10 @@
   },
   "plugins": [
     {
-      "name": "project-dev-orchestration",
+      "name": "pdo",
       "source": "./",
       "description": "Issue-to-PR lifecycle skills (intake, design, build, review, QC, close-out) plus the orchestration engine's operator skills.",
-      "version": "0.9.8",
+      "version": "0.10.0",
       "license": "MIT",
       "homepage": "https://github.com/binerbuddy/project-dev-orchestration"
     }
