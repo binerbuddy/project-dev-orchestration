@@ -49,7 +49,11 @@ The input can hold several items. Handle each separately, present them in one ba
 API silently drops `type`). Labels: `P1-urgent` … `P4-low`, `needs-triage`, `Security`, `small-win`,
 `needs-design`, `on-hold`, `client-requested` (the human says a client or customer asked for it),
 `needs UX review` (`LABEL_NEEDS_UX`; apply it when the fix or feature will change what users see or how they
-interact, or the human calls it design-sensitive: it is carried onto the PR and forces human UX review after agent QC),
+interact: a new or changed screen, dialog, control, menu item, layout, styling, copy or flow, or a bug fix whose
+result looks different; or when the human calls it design-sensitive. Leave it off server, API, data, perf and security
+work with no visible change, and bug fixes that only restore the existing look or behaviour. When unsure, apply it.
+Show it on the draft as its own decision point, `UX review: forced — <reason>`. It is carried onto the PR and forces
+human UX review after agent QC),
 the `route:*` labels, plus area labels. These are the engine defaults; a project may rename the P-labels in
 its env (`P_LABELS`; read it with `pdo project-env P_LABELS`). Board = org (or user) Project `PROJECT_NUMBER` of `ORG`.
 Filing is done by `pdo file-issue`.
