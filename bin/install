@@ -7,8 +7,12 @@
 #   --codex    Codex: add this repo as a plugin marketplace and install the plugin
 #              (`codex plugin marketplace add` + `codex plugin add`).
 #   --grok     Grok Build: install this repo as a plugin (`grok plugin install --trust`).
-#   --bin      put the engine on PATH: links bin/pdo into --prefix (default ~/.local/bin).
-#              Run any engine script as `pdo <script> ...`.
+#   --bin      put the engine on PATH as `pdo` in --prefix (default ~/.local/bin), and check the
+#              engine's requirements. Run any engine script as `pdo <script> ...`.
+#              From a git checkout: a symlink to bin/pdo. From an installed plugin (a versioned
+#              plugin-cache dir such as .../project-dev-orchestration/0.9.8): a small launcher that
+#              runs the newest installed version, so plugin updates need no re-install. This is how
+#              /project-setup installs the engine for a team.
 #   --link     instead of the tool's plugin system, symlink each skill into the tool's user skill
 #              dir: ~/.claude/skills (Claude Code), ~/.agents/skills (Codex), $GROK_HOME/skills or
 #              ~/.grok/skills (Grok). Also the fallback when the tool's CLI isn't installed.
@@ -103,9 +107,63 @@ if [[ $DO_GROK -eq 1 ]]; then
     link_skills "${GROK_HOME:-$HOME/.grok}/skills"
   fi
 fi
+LAUNCHER_MARK="# pdo launcher (project-dev-orchestration bin/install --bin)"
+
+# A plugin install lives in a versioned dir (<plugin dir>/<version>/) that the tool replaces on update,
+# and has no .git; a checkout is stable, so it gets the plain symlink.
+from_plugin() {
+  [[ ! -e "$REPO/.git" && "$(basename "$REPO")" =~ ^[0-9]+(\.[0-9]+)+([-+][0-9A-Za-z.-]+)?$ ]]
+}
+
+is_launcher() { [[ -f "$1" && ! -L "$1" ]] && grep -qxF "$LAUNCHER_MARK" "$1" 2>/dev/null; }
+
+write_launcher() {  # write_launcher <dst>: a pdo that runs the newest version under the plugin dir
+  local dst="$1" versions; versions="$(dirname "$REPO")"
+  if [[ -e "$dst" && ! -L "$dst" ]] && ! is_launcher "$dst"; then
+    echo "skip: $dst exists and is not a pdo link or launcher"; return 0
+  fi
+  if [[ $DRY -eq 1 ]]; then echo "would write launcher: $dst -> newest $versions/*/bin/pdo"; return 0; fi
+  mkdir -p "$(dirname "$dst")"
+  rm -f "$dst"
+  cat >"$dst" <<EOF
+#!/usr/bin/env bash
+$LAUNCHER_MARK
+# Runs the newest installed plugin version, so plugin updates need no re-install.
+# PDO_HOME=<engine checkout> overrides it (e.g. to try a local checkout).
+set -euo pipefail
+VERSIONS=$(printf '%q' "$versions")
+if [[ -n "\${PDO_HOME:-}" && -x "\$PDO_HOME/bin/pdo" ]]; then exec "\$PDO_HOME/bin/pdo" "\$@"; fi
+latest="\$(ls -d "\$VERSIONS"/*/bin/pdo 2>/dev/null | sort -V | tail -n 1)"
+[[ -n "\$latest" ]] || { echo "pdo: no engine under \$VERSIONS; reinstall the project-dev-orchestration plugin" >&2; exit 127; }
+exec "\$latest" "\$@"
+EOF
+  chmod +x "$dst"
+  echo "wrote launcher: $dst -> newest $versions/*/bin/pdo"
+}
+
+check_requirements() {  # report what the engine needs and this machine lacks; never fails the install
+  local missing=() c
+  for c in git jq gh python3 herdr; do command -v "$c" >/dev/null || missing+=("$c"); done
+  (( BASH_VERSINFO[0] >= 4 )) || missing+=("bash-4+")
+  if command -v python3 >/dev/null && ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))'; then
+    missing+=("python-3.8+")
+  fi
+  if [[ ${#missing[@]} -eq 0 ]]; then echo "requirements: ok (bash, git, jq, gh, python3, herdr)"
+  else echo "requirements: missing ${missing[*]}; the engine needs them before 'pdo team-up'"; fi
+}
+
 if [[ $DO_BIN -eq 1 ]]; then
-  link "$REPO/bin/pdo" "$PREFIX/pdo"
-  case ":$PATH:" in *":$PREFIX:"*) ;; *) echo "note: $PREFIX is not on your PATH" ;; esac
+  if from_plugin; then
+    write_launcher "$PREFIX/pdo"
+  elif is_launcher "$PREFIX/pdo"; then
+    # a checkout replaces an earlier plugin launcher
+    if [[ $DRY -eq 1 ]]; then echo "would replace launcher: $PREFIX/pdo -> $REPO/bin/pdo"
+    else rm -f "$PREFIX/pdo"; link "$REPO/bin/pdo" "$PREFIX/pdo"; fi
+  else
+    link "$REPO/bin/pdo" "$PREFIX/pdo"
+  fi
+  case ":$PATH:" in *":$PREFIX:"*) ;; *) echo "note: $PREFIX is not on your PATH; add it to your shell profile" ;; esac
+  check_requirements
 fi
 
 # ---------------------------------------------------------------------------------------------

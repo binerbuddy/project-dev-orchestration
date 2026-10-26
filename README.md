@@ -53,14 +53,21 @@ grok plugin install binerbuddy/project-dev-orchestration
 Grok reads the Claude plugin layout. From a checkout: `bin/install --grok`, or `--grok --link` to link the
 skills into `~/.grok/skills/`.
 
-**The engine** (only if you run the orchestrator): clone this repo, then
+**The engine** (only if you run the orchestrator) ships inside the plugin. Install the plugin as above, open your
+agent in the repo the team will work, and run:
 
 ```
-bin/install --bin                 # puts `pdo` on PATH: pdo queue, pdo spawn, pdo watch, ...
-mkdir -p ~/.config/project-dev-orchestration/projects
-$EDITOR ~/.config/project-dev-orchestration/projects/acme.env
-pdo team-up --project acme        # intake, QC and orchestrator agents, then a status report
+/project-setup repo+team
 ```
+
+It installs the engine from the plugin (`~/.local/bin/pdo`, a launcher that always runs the newest installed plugin
+version, so plugin updates need no re-install), checks the requirements below, registers the repo
+(`projects/<name>.env`, optionally a board), opens the repo-files PR, and tells you how to start the team
+(`/project-system-manager give me the status and fire up the dev team`, or `pdo team-up --project <name>`).
+
+To work on the engine itself, or pin a version, use a checkout instead: clone this repo and run `bin/install --bin`
+(a symlink to the checkout's `bin/pdo`; it replaces a plugin launcher). `PDO_HOME=<checkout> pdo …` runs a checkout
+for one command without changing the install.
 
 Requirements: bash 4+, python 3.8+, git 2.31+, jq, the GitHub CLI (`gh`), herdr, and an agent CLI
 (Claude Code today; launching is behind one seam, `launch_agent` in `bin/lib.sh`).

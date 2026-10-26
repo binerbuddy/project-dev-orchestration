@@ -27,6 +27,10 @@ Never `gh auth switch`: the active account is machine-wide, and switching it bre
 
 ## 1. Get oriented (first, in one pass)
 
+**No engine yet** (`command -v pdo` finds nothing and no checkout is named): this machine has no install to manage.
+Say so, and offer the one-step setup: in the product repo, `/project-setup repo+team` installs the engine from this
+plugin (a `pdo` launcher that follows plugin updates), registers the repo, and ends with how to start the team.
+
 1. **Live status:** `pdo sysreport [--project <p>]`. Read-only and safe (it uses `watch --peek`;
    a project's `SYSREPORT_HOOK` adds its own checks).
 2. **Decisions and design:** `$PDO_HOME/docs/design.md`, plus each overlay's `docs/design.md` when

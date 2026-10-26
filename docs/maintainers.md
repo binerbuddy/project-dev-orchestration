@@ -33,10 +33,12 @@ The profile's sections are described in [profile.md](profile.md).
 
 ## Run a team
 
-Install the engine (only on the machine that runs the team): clone the repository, then
+Install the engine (only on the machine that runs the team) through the plugin: install the plugin, then run
+`/project-setup repo+team` in the repo. It installs `pdo` from the plugin (a launcher that follows plugin updates),
+checks the requirements, registers the repo, and tells you how to start the team. To develop the engine or pin a
+version, clone the repository and run `bin/install --bin` instead. Then:
 
 ```
-bin/install --bin                 # puts `pdo` on PATH
 pdo team-up --project <name>      # intake, QC and orchestrator agents, then a status report
 ```
 

@@ -62,15 +62,19 @@ The arguments `repo-only` and `repo+team` pick one; the older names `collaborato
 its reason instead of asking whenever detection settles it:
 1. **Already registered** (`pdo project-env`, run from the repo, resolves a project): repo+team, checking that
    registration. "This repo is already registered with the engine as project `<p>`; I'll check that too."
-2. **No engine reachable**: repo-only. "The engine (`pdo`) isn't installed here, so I'll only add the repo
-   files." The engine is reachable when `pdo` is on PATH, or the human names an engine checkout: a directory whose
-   `bin/` holds `pdo` and `project-env`. If they name a wrapper or overlay directory with its own `bin/`, use it only
-   if its `bin/` runs every command this skill calls (`<dir>/bin/pdo help` lists them); otherwise ask for the engine
-   checkout itself.
+2. **No engine reachable and none shipped with this plugin**: repo-only. "The engine (`pdo`) isn't installed
+   here, so I'll only add the repo files." The engine is reachable when `pdo` is on PATH, or the human names an
+   engine checkout: a directory whose `bin/` holds `pdo` and `project-env`. If they name a wrapper or overlay
+   directory with its own `bin/`, use it only if its `bin/` runs every command this skill calls (`<dir>/bin/pdo help`
+   lists them); otherwise ask for the engine checkout itself. **The plugin ships the engine:** this skill's base
+   directory is `<plugin>/skills/project-setup/`, and `<plugin>/bin/install` (`../../bin/install` from the base
+   directory) is the engine's installer. When it exists, the engine is installable, not missing: go to 3.
 3. **Otherwise ask one plain question** (in round 1, below): "Is an orchestrator team (pdo) going to run on this
-   machine for this repo? **Yes:** I'll also register the repo with the engine. **No:** I'll only add the repo files
-   that tell everyone's agents how to work here." Recommend **Yes** when the config dirs already hold other
-   projects (this machine runs teams), else **No**.
+   machine for this repo? **Yes:** I'll also register the repo with the engine (and install the engine from this
+   plugin, when `pdo` isn't on PATH yet). **No:** I'll only add the repo files that tell everyone's agents how to work
+   here." Recommend **Yes** when the config dirs already hold other projects (this machine runs teams), else **No**.
+
+`repo+team` (by argument or answer) with no `pdo` on PATH installs the engine first (step 6, "Install the engine").
 
 **One of several repos in a project:** if `pdo project-env` run from this repo resolves a project whose
 `PRIMARY_REPO` is another repo, this repo is a secondary repo of that project. Use repo+team against that
@@ -204,8 +208,8 @@ orchestrator's queue)", or, in repo-only, "with no project board (a maintainer d
    Write it with `~/` when it is under the home directory (person-started sessions without `pdo` on PATH find the
    engine through it; a dispatch brief's absolute path still wins).
 3. **Else** (the engine only exists in a tool's versioned plugin cache, which the next upgrade replaces): never write
-   that path. Use "your project-dev-orchestration checkout", and suggest the human clone the engine and run
-   `bin/install --bin` from it.
+   that path. Install the engine (step 6, "Install the engine"), which puts a version-following `pdo` on PATH, and
+   use case 1. If the human declines, use "your project-dev-orchestration checkout".
 In repo-only, replace it with "your project-dev-orchestration checkout".
 A re-run reports an `AGENTS.md` that names a plugin-cache path as drifted and proposes the fix. For a headless repo, use the template's headless wording in the QC Checklist rule.
 
@@ -274,6 +278,17 @@ QC): say so in §QC data and leave both unset.
 ## 6. repo+team: engine registration
 
 Skip this whole step in repo-only.
+
+**Install the engine** (only when `command -v pdo` finds nothing). Run this plugin's installer, `<plugin>/bin/install
+--bin` (`../../bin/install` from this skill's base directory). From a plugin it writes `~/.local/bin/pdo`, a launcher
+that always runs the newest installed plugin version, so plugin updates need no re-install; from a git checkout it
+links `bin/pdo`. Report its output to the human:
+- `note: … is not on your PATH`: give the line to add to their shell profile (`export PATH="$HOME/.local/bin:$PATH"`),
+  and use the full path (`~/.local/bin/pdo`) for the rest of this run.
+- `requirements: missing …`: list what to install (the engine needs bash 4+, python 3.8+, git, jq, gh and herdr).
+  Carry on with the registration; `pdo team-up` waits until they are installed.
+- `skip: … exists`: a `pdo` that isn't the engine's is in the way; show it and ask before doing anything about it.
+Then create the config dir (`${XDG_CONFIG_HOME:-~/.config}/project-dev-orchestration/projects`) if it doesn't exist.
 
 **Env file.** The project name is the human's choice (suggest the repo name in lower case; it is what `--project`
 takes). Write `projects/<name>.env` into the first dir of `PDO_CONFIG_DIRS`, or the default
@@ -436,5 +451,7 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
    - **Drifted:** what was fixed on their yes, and what they chose to keep.
    - **Skipped:** declined items, labels that need a maintainer, `TODO(setup)` questions still open.
    - **Next steps:** merge the PR; point collaborators at the human guide, which links the general guide
-     (https://binerbuddy.github.io/project-dev-orchestration/) for installing the plugin; in repo+team, write any
-     hooks the project needs, then start the team with `pdo team-up --project <name>`.
+     (https://binerbuddy.github.io/project-dev-orchestration/) for installing the plugin; in repo+team, install any
+     missing requirements the engine install reported, write any hooks the project needs, then start the team: open
+     a herdr session and run `/project-system-manager give me the status and fire up the dev team` (or
+     `pdo team-up --project <name>`).

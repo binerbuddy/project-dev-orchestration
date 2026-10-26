@@ -866,6 +866,25 @@ check "install linked grok skills dir" test -L "$HOME/.grok/skills/project-orche
 check "install linked claude skills dir" test -L "$HOME/.claude/skills/project-orchestrate" -o ! -d "$ENGINE/skills/project-orchestrate"
 check "install linked pdo" test -L "$T/home/bin/pdo"
 eq "linked pdo works" "$("$T/home/bin/pdo" floor)" none
+has "install --bin checks requirements" "$out" "requirements:"
+
+# --- install --bin from a plugin cache: a launcher that follows the newest version ---
+PC="$T/plugcache/project-dev-orchestration"
+mkdir -p "$PC/0.9.0" "$PC/0.10.0/bin"
+cp -r "$ENGINE/bin" "$PC/0.9.0/bin"
+printf '#!/usr/bin/env bash\necho "newest $*"\n' >"$PC/0.10.0/bin/pdo"; chmod +x "$PC/0.10.0/bin/pdo"
+out="$("$PC/0.9.0/bin/install" --bin --prefix "$T/plugbin" 2>&1)"
+check "plugin install writes a launcher, not a link" test -f "$T/plugbin/pdo" -a ! -L "$T/plugbin/pdo"
+eq "launcher runs the newest version" "$("$T/plugbin/pdo" floor)" "newest floor"
+eq "PDO_HOME overrides the launcher" "$(PDO_HOME="$ENGINE" "$T/plugbin/pdo" floor)" none
+rm -rf "$PC/0.10.0"
+eq "launcher falls back to the remaining version" "$("$T/plugbin/pdo" floor)" none
+"$PC/0.9.0/bin/install" --bin --prefix "$T/plugbin" >/dev/null 2>&1
+check "re-running the plugin install keeps one launcher" test -f "$T/plugbin/pdo" -a ! -L "$T/plugbin/pdo"
+"$BIN/install" --bin --prefix "$T/plugbin" >/dev/null 2>&1
+check "a checkout install replaces the launcher with a link" test -L "$T/plugbin/pdo"
+rm -f "$T/plugbin/pdo"; printf '#!/bin/sh\necho mine\n' >"$T/plugbin/pdo"
+has "plugin install leaves a foreign pdo alone" "$("$PC/0.9.0/bin/install" --bin --prefix "$T/plugbin" 2>&1)" "skip:"
 
 # --- gh identities: the gh shim, the git credential helper, install / uninstall ---
 # Own HOME / XDG dirs / global gitconfig; a stub "real gh" records GH_TOKEN and argv.

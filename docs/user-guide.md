@@ -6,6 +6,8 @@ The human's guide to an agent team run by project-dev-orchestration. You talk to
 
 ## The 30-second version
 
+0. First time on this machine: install the plugin, open your agent in the repo and run `/project-setup repo+team`.
+   It installs the engine (`pdo`) from the plugin and registers the repo.
 1. Open an agent session in herdr, anywhere. Name its workspace after your `SYSTEM_MANAGER_WORKSPACE`
    (e.g. "Acme-Ops").
 2. Type: `/project-system-manager give me the status and fire up the dev team`
