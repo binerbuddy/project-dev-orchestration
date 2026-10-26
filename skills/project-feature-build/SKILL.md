@@ -137,8 +137,9 @@ For each phase:
    No-go → push, report what was learned and the options, STOP. This is a human decision.
 5. **Gates**: build the package first: a PR comment starting `<!-- ux-gate-phase-N -->` with a task-list of what to
    look at and confirm, the screenshots for the phase (paths, plus the line "Open them: `pdo shots <PR#>`"), the dev-server URL, and any decision the run needs. Leave the dev servers running. Ledger status →
-   `gate pending`. Under the orchestrator, also add the `awaiting-ux-gate` label to the issue while you wait (it frees
-   your slot) and remove it as soon as the human responds.
+   `gate pending`. Add the `awaiting-ux-gate` label to the PR while you wait, so it shows in the human's PR list,
+   and under the orchestrator to the issue too (it frees your slot). Remove it from both as soon as the human
+   responds.
    - `blocking`: push, post, report, STOP. The user resumes with `/project-feature-build <doc> resume`.
    - `async`: post, then continue with phases whose `depends-on` excludes the gated phase. Before starting a dependent
      phase, check for feedback (ticks/notes on the gate comment via `gh api`, a comment on the phase issue, or chat).

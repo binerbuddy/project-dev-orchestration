@@ -47,7 +47,7 @@ wrong (a "small" fix that needs a migration or a design decision) stops and asks
 | `UX testing skipped` | With `Ready for Merge`: agent QC found no visible change, so no human UX review. Its comment says why. |
 | `needs UX review` | On an issue or PR: the change is visible or design-sensitive, so it always gets a human UX review. Carried from issues onto PRs. Add it to a PR any time to pull it back into review. |
 | `QC escalated` | Agent QC failed twice; a human decides what happens next. |
-| `awaiting-ux-gate` | The agent waits for a human's prototype sign-off. |
+| `awaiting-ux-gate` | On an issue and its PR: the agent waits for a human's prototype sign-off. |
 | `likely-fixed` | The agent thinks main already does this; a human confirms and closes. |
 | `blocked-by-pr` | The PR can't merge until another PR lands. |
 | `orchestrator-system` | Work on the orchestration system itself, for its System Manager. |

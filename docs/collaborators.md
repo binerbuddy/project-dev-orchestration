@@ -71,7 +71,7 @@ names them): don't start it; ask that manager. An issue GitHub shows as "blocked
 | `Ready for Merge` | QC is done; awaiting code review and merge. Only a human applies it by hand. |
 | `QC escalated` | The team's QC Agent failed the PR twice; a maintainer decides. |
 | `needs UX review` | The change is visible to users: it always gets a human UX review. |
-| `awaiting-ux-gate` | An agent waits for a human to sign off a prototype. |
+| `awaiting-ux-gate` | On an issue and its PR: an agent waits for a human to sign off a prototype. |
 | `likely-fixed` | An agent thinks the issue is already done; a maintainer confirms and closes. |
 | `epic-phase` | One phase of an epic; worked only as part of the epic's build. |
 | `on-hold`, `blocked-by-pr`, `Security` | Parked; can't merge before another PR; ranks first in its priority. |

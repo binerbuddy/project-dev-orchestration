@@ -93,7 +93,7 @@ the queue status, the P-labels and the QC labels.
 - **Stop at `ready for QC`.** Stop every dev server and browser you started before labelling. Never
   merge.
 - **Answer remote QC on the PR**, with an `@mention`; the reporter reads GitHub, not your session.
-- **UX sign-off gates:** add `awaiting-ux-gate` to the issue while you wait; remove it when the human
+- **UX sign-off gates:** add `awaiting-ux-gate` to the issue and its PR while you wait; remove it from both when the human
   responds.
 - **Pin gh and git, never switch the account.** If the project env sets `GH_USER`, use
   `pdo with-gh-user gh …` (or `GH_TOKEN=$(gh auth token -u <user>) gh …`). `git push`/`fetch` over

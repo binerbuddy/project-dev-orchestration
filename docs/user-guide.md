@@ -110,7 +110,7 @@ the command that checks each; you QC by running them or by reading the evidence 
 | `Ready for Merge` / `UX testing skipped` | All QC done; awaiting code review and merge (UX skipped: no visible change). |
 | `QC escalated` | Agent QC failed twice; you decide. |
 | `needs UX review` | Always gets a human UX review. Intake sets it on issues; it's carried onto their PRs. |
-| `awaiting-ux-gate` | The agent is waiting for your prototype sign-off. |
+| `awaiting-ux-gate` | On an issue and its PR: the agent is waiting for your prototype sign-off. |
 | `likely-fixed` | The agent thinks it's already done; you confirm and close. |
 | `on-hold` | Parked by you; never started. |
 | `needs-triage` | Filed but not yet triaged; not started unless on Claude Work This. |
