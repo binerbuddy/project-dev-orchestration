@@ -122,7 +122,7 @@ without `--allow-phase`: the epic's build agent works every phase. Independent f
 
 - At most `MAX_ACTIVE` (default 3) **active** command agents. Parked agents (PR at `ready for QC` or QC
   complete, `likely-fixed`, `on-hold`, a design handed to build, idle at `awaiting-ux-gate`) don't count.
-- Spawning stops at `WEEKLY_CEILING` % of the weekly usage budget (default 80, keeping 20% for manual and
+- Spawning stops at `WEEKLY_CEILING` % of the weekly usage budget (default 90, keeping 10% for manual and
   hot work), and pauses at `FIVE_HOUR_CEILING` % of the 5-hour window (default 90). Usage comes from a
   cache file (`USAGE_CACHE`; the oh-my-claudecode HUD's cache by default). Missing data never blocks
   silently: it is reported as unknown.
@@ -360,7 +360,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `CONTROL_DIR` | the env's config dir | cwd of the standing orchestrator, QC and intake agents |
 | `ORCHESTRATE_SKILL` / `QC_SKILL` / `INTAKE_SKILL` | `${PDO_SKILL_PREFIX}project-orchestrate` / `…project-qc-review` / `…project-intake` | standing agents' skills |
 | `AGENT_CLI` | `claude` | agent CLI (only `claude` today) |
-| `MAX_ACTIVE`, `WEEKLY_CEILING`, `FIVE_HOUR_CEILING` | 3, 80, 90 | concurrency and usage limits |
+| `MAX_ACTIVE`, `WEEKLY_CEILING`, `FIVE_HOUR_CEILING` | 3, 90, 90 | concurrency and usage limits |
 
 `PDO_SKILL_PREFIX` (environment or `config.env`) defaults to `/pdo:`, the Claude
 Code plugin namespace. Set it to `/` when the skills are linked un-namespaced (`bin/install --link`).

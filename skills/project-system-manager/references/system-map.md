@@ -32,7 +32,7 @@ These are engine behaviour, not one team's taste; an overlay can change them whe
 allows, and records its own standing preferences in its own docs.
 
 - `MAX_ACTIVE` 3 active command agents (project env; also `WEEKLY_CEILING`, `FIVE_HOUR_CEILING`); parked, hibernated and UX-gate agents don't hold a slot.
-- Keep 20% of the weekly usage in reserve (spawning stops at 80% weekly, or 90% of the 5-hour window).
+- Keep 10% of the weekly usage in reserve (spawning stops at 90% weekly, or 90% of the 5-hour window).
 - The urgent bypass is P1-urgent AND on the queue status, nothing less.
 - Spawn floor via `pdo floor` (persisted).
 - No human review of design docs; prototypes get reviewed at UX gates.

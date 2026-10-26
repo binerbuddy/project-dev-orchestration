@@ -81,7 +81,7 @@ STATE_DIR = pdo_config.state_dir()  # replaced by the project's resolved state d
 CFG = {}
 USAGE_CACHE = os.environ.get("USAGE_CACHE") or os.path.expanduser("~/.claude/plugins/oh-my-claudecode/.usage-cache-anthropic.json")
 MAX_ACTIVE_DEFAULT = MAX_ACTIVE = 3
-WEEKLY_CEILING = 80   # keep 20% of the weekly budget for manual / hot work
+WEEKLY_CEILING = 90   # keep 10% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
 HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'

@@ -50,7 +50,7 @@ You can also type into any agent's workspace directly, or reach it through Remot
    - **Urgent bypass:** P1 **and** on Claude Work This starts even when every slot is full.
 2. **The orchestrator starts a command agent** in its own workspace and worktree, with up to 3 active at a
    time. Agents waiting on you at a UX sign-off, or parked at QC, don't count. New work stops when weekly
-   usage reaches 80%, keeping 20% in reserve for you.
+   usage reaches 90%, keeping 10% in reserve for you.
 3. **The agent explores, plans, builds, gets a review, and opens a PR.** The PR gets the P-label of its
    issue. If the issue turns out to be already fixed, it says so, labels it `likely-fixed`, and stops.
 4. **It labels the PR `ready for QC`** and posts a QC checklist, with test data when needed (published

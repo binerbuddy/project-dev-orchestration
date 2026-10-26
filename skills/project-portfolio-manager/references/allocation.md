@@ -17,7 +17,7 @@ consent.
 | `AGENT_MB` | from the profile | RAM one active agent of this project holds |
 | `AGENT_USAGE_WEIGHT` | from the profile | its relative draw on the shared usage budget |
 | `FLEET_ADVICE` | `ignore` | `honour`: `pdo queue` and `pdo watch` apply fresh advice |
-| `MAX_ACTIVE`, `WEEKLY_CEILING`, `FIVE_HOUR_CEILING` | 3, 80, 90 | the project's own limits; advice never raises them |
+| `MAX_ACTIVE`, `WEEKLY_CEILING`, `FIVE_HOUR_CEILING` | 3, 90, 90 | the project's own limits; advice never raises them |
 
 | Profile | MB per active agent | Usage weight | Typical |
 |---|---|---|---|

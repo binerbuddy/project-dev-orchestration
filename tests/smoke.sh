@@ -615,7 +615,7 @@ check "fleet without --write-advice writes nothing" test ! -e "$FS/fleet-advice.
 out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=2000 "$BIN/fleet" --json 2>/dev/null)"
 eq "fleet: low memory holds heavy, slows the rest" "$(jq -c '[.advice.alpha.advice, .advice.gamma.advice]' <<<"$out" 2>/dev/null)" '["hold","slow"]'
 has "fleet: hold reason names memory" "$(jq -r .advice.alpha.reason <<<"$out" 2>/dev/null)" "heavy project"
-out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 PDO_FLEET_WEEKLY=85 "$BIN/fleet" --json 2>/dev/null)"
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 PDO_FLEET_WEEKLY=95 "$BIN/fleet" --json 2>/dev/null)"
 eq "fleet: weekly over ceiling = only P1" "$(jq -c '[.advice.alpha.advice, .advice.gamma.advice]' <<<"$out" 2>/dev/null)" '["go","hold"]'
 out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=3900 "$BIN/fleet" --json 2>/dev/null)"
 eq "fleet: memory budget goes by priority and profile MB" "$(jq -c '[.advice.alpha.advice, .advice.alpha.suggested_max_active, .advice.gamma.advice, .advice.gamma.suggested_max_active]' <<<"$out" 2>/dev/null)" '["slow",2,"slow",0]'

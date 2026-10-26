@@ -465,7 +465,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         "project": p, "org": cfg["org"], "priority": cfg.get("portfolio_priority") or 3,
         "profile": prof, "agent_mb": agent_mb, "usage_weight": weight, "max_active": max_active,
         "fleet_advice_mode": cfg.get("fleet_advice") or "ignore",
-        "weekly_ceiling": cfg.get("weekly_ceiling") or 80, "five_hour_ceiling": cfg.get("five_hour_ceiling") or 90,
+        "weekly_ceiling": cfg.get("weekly_ceiling") or 90, "five_hour_ceiling": cfg.get("five_hour_ceiling") or 90,
         "gh_user": cfg.get("gh_user") or None, "state_dir": state, "inbox": cfg["inbox"],
         "manager": manager_of(cfg, workspaces, agents_by_ws),
         "self_managed": [{"repo": r, "manager": (cfg.get("repo_manager") or {}).get(r)} for r in sorted(self_managed)],
