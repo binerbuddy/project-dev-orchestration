@@ -36,7 +36,7 @@ shows as blocked.
 | **Repo Manager** | Repo Manager (acme), tab 1 of `acme` | The project's lead: starts and stops its orchestrator, QC and QC Agent, pauses and resumes work, "work #N now", QC requests. Opened by `pdo start-manager`; the CEO asks it to start its team. | You want something done in this project. |
 | **Orchestrator** | Orchestrator (acme), a tab in `acme` | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its tab. |
 | **Command agents** | `widget-<issue#> <brief>`, a tab in `acme` | Each takes one issue from start to a PR labelled `ready for QC`, asks you its questions directly, then hibernates until QC. | They ask you something (Remote Control and herdr notify you). |
-| **QC agent** | QC (acme), a tab in `acme` | Serves a PR on your local QC ports for hands-on QC, and relays your feedback. | You're QC'ing on your own machine. |
+| **Human review** | QC (acme), a tab in `acme` | Serves a PR on your local QC ports for your own hands-on QC or UX review (`/project-human-review`), and relays your feedback. Not the QC Agent, which tests PRs by itself first. | You're QC'ing on your own machine. |
 | **Intake** | intake | Turns bug reports and ideas into proper GitHub issues. Other agents queue reports in its inbox. | You have something to file, or the inbox needs a pass. |
 
 ## Everyday things to say to the CEO
@@ -79,7 +79,7 @@ at UX sign-offs, never design docs.
 
 ## QC
 
-**On your machine:** in the **QC (acme)** tab, run `/project-qc-review <PR#>`. It serves the PR from
+**On your machine:** in the **QC (acme)** tab, run `/project-human-review <PR#>`. It serves the PR from
 the shared QC worktree through your project's `QC_HOOK`. Type your findings in plain words; they go to the
 PR's agent and get posted on the PR. Say `pass` when it's good.
 
@@ -87,7 +87,7 @@ PR's agent and get posted on the PR. Say `pass` when it's good.
 PR's agent, which replies on the PR. To pass, add the `Ready for Merge` label (and remove
 `ready for QC` / `QC complete - ready to review`): the watcher sees the label and the agent wraps up (once per
 pass: after agent QC already passed it, nobody is prompted again). GitHub won't let a PR's author request
-changes on their own PR, so as the author give feedback in the agent's session or through `/project-qc-review`.
+changes on their own PR, so as the author give feedback in the agent's session or through `/project-human-review`.
 
 **Agent QC** (when the project env sets `AGENT_QC_PORTS`): `team-up` also starts the **QC Agent (acme)**
 tab (`pdo start-agent-qc`). It takes `ready for QC` PRs one at a time, highest priority first, and tests them

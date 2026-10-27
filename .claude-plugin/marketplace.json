@@ -11,7 +11,7 @@
       "name": "pdo",
       "source": "./",
       "description": "Issue-to-PR lifecycle skills (intake, design, build, review, QC, close-out) plus the orchestration engine's operator skills.",
-      "version": "0.13.0",
+      "version": "0.14.0",
       "license": "MIT",
       "homepage": "https://github.com/binerbuddy/project-dev-orchestration"
     }

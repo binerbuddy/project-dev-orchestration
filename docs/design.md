@@ -24,8 +24,10 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
   agents, routes events and moves board cards. It never edits product code.
 - **Command agent.** One per issue or epic, in its own herdr tab of its home (`<Repo>-<issue#> <2-3 word brief>`)
   and its own git worktree. It runs a lifecycle skill and orchestrates its own sub-agents.
-- **QC agent.** The standing `QC (<project>)` workspace (`project-qc-review`). It serves a PR on the
-  project's QC servers for the human's hands-on QC, and relays feedback to the PR's command agent.
+- **Human review.** The standing `QC (<project>)` tab (`project-human-review`, called `project-qc-review`
+  before 0.14). It serves a PR on the project's QC servers for a person's hands-on QC or UX review, and
+  relays feedback to the PR's command agent. Distinct from agent QC (`project-agent-qc`, the
+  `QC Agent (<project>)` tab), which tests every `ready for QC` PR first, unattended.
 - **Intake agent.** The standing `intake` workspace (`project-intake`). It turns reports into typed,
   prioritised issues. Other agents queue reports with `bin/intake-submit`; the human drains the queue.
 - **CEO.** The first session the human opens, one level above the per-project managers (`ceo`
@@ -66,7 +68,7 @@ One herdr workspace per manager, one tab per agent (`AGENT_LAYOUT=tabs`, the def
   with a question or menu pending.
 - **Closing.** Always `herdr tab close`, never `herdr workspace close`: herdr closes a workspace with its
   last tab, so an old-layout agent's own workspace still goes, and a home with other agents never does.
-  hibernate, spawn's rollback, the qc-review wrap-up and the orchestrator's `design_ready` step close tabs.
+  hibernate, spawn's rollback, the human-review wrap-up and the orchestrator's `design_ready` step close tabs.
 - **Status.** herdr reports `agent_status` per tab, and a blocked tab marks its whole home blocked in the
   sidebar. fleet and sysreport list status per tab, so a question in tab N reaches the CEO's list.
 - **Migration.** `pdo relayout` (dry run unless `--apply`) renames each idle manager's old workspace to
@@ -408,7 +410,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `AGENT_QC_NOTES_BY_REPO` | `()` | `declare -A`: repo → its own agent-QC notes file (recipe, optional `## Pass rule`); repos without an entry use `AGENT_QC_NOTES` |
 | `SYSTEM_MANAGER_WORKSPACE` | `System Manager` | named in the queue's `orchestrator-system` reason |
 | `CONTROL_DIR` | the env's config dir | cwd of the standing orchestrator, QC and intake agents |
-| `ORCHESTRATE_SKILL` / `QC_SKILL` / `INTAKE_SKILL` | `${PDO_SKILL_PREFIX}project-orchestrate` / `…project-qc-review` / `…project-intake` | standing agents' skills |
+| `ORCHESTRATE_SKILL` / `QC_SKILL` / `INTAKE_SKILL` | `${PDO_SKILL_PREFIX}project-orchestrate` / `…project-human-review` / `…project-intake` | standing agents' skills |
 | `AGENT_CLI` | `claude` | agent CLI (only `claude` today) |
 | `MAX_ACTIVE`, `WEEKLY_CEILING`, `FIVE_HOUR_CEILING` | 3, 90, 90 | concurrency and usage limits |
 

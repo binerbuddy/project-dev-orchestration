@@ -17,9 +17,9 @@ difference; never rename it.
 | `P2-high` | `P_LABELS` (2nd) | `d93f0b` | Security flaws, wrong results, things users need soon | queue, pr-priority, intake |
 | `P3-medium` | `P_LABELS` (3rd) | `0969da` | Real but tolerable bugs; normal features | queue, pr-priority, intake |
 | `P4-low` | `P_LABELS` (4th) | `c2e0c6` | Polish, clean-up, ideas | queue, pr-priority, intake |
-| `ready for QC` | `LABEL_QC_READY` | `1b998b` | Automated review+triage done; awaiting QC (agent QC first, where it runs) | lifecycle skills, watch, hibernate, qc-review, agent-qc |
-| `QC complete - ready to review` | `LABEL_QC_DONE` | `fbca04` | Agent QC passed; awaiting human UX review | qc-review, agent-qc, watch |
-| `Ready for Merge` | `LABEL_MERGE_READY` | `0e8a16` | QC passed (agent, plus human UX review where needed); awaiting code review and a manual merge | qc-review, agent-qc, watch, fleet |
+| `ready for QC` | `LABEL_QC_READY` | `1b998b` | Automated review+triage done; awaiting QC (agent QC first, where it runs) | lifecycle skills, watch, hibernate, human-review, agent-qc |
+| `QC complete - ready to review` | `LABEL_QC_DONE` | `fbca04` | Agent QC passed; awaiting human UX review | human-review, agent-qc, watch |
+| `Ready for Merge` | `LABEL_MERGE_READY` | `0e8a16` | QC passed (agent, plus human UX review where needed); awaiting code review and a manual merge | human-review, agent-qc, watch, fleet |
 | `UX testing skipped` | `LABEL_UX_SKIPPED` | `c5def5` | Agent QC passed; no visible change, so no human UX review (the agent's comment says why) | agent-qc, watch |
 | `needs UX review` | `LABEL_NEEDS_UX` | `d4c5f9` | Change is visible to users or design-sensitive: a human UX review is required after agent QC | intake, agent-qc, pr-priority (via `CARRY_LABELS`) |
 | `QC escalated` | `LABEL_QC_ESCALATED` | `fbca04` | Agent QC failed twice; waiting on the human to decide | agent-qc, watch, hibernate, fleet |

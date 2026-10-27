@@ -129,7 +129,7 @@ and what has drifted, and only fills gaps.
    │              runs a lifecycle skill)                 │
    │                   │ PR labelled "ready for QC"       │
    ▼                   ▼                                  │
- QC agent (project-qc-review) ── serves the PR ── qc ── QC_HOOK (project's servers)
+ human review (project-human-review) ── serves the PR ── qc ── QC_HOOK (project's servers)
    │ feedback / pass ──► resume-agent ──► same command agent, same session
    ▼
  human merges

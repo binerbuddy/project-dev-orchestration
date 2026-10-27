@@ -178,7 +178,7 @@ pdo_finalize() {
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
   ORCHESTRATE_SKILL="${ORCHESTRATE_SKILL:-${PDO_SKILL_PREFIX}project-orchestrate}"
   REPO_MANAGER_SKILL="${REPO_MANAGER_SKILL:-${PDO_SKILL_PREFIX}project-repo-manager}"
-  QC_SKILL="${QC_SKILL:-${PDO_SKILL_PREFIX}project-qc-review}"
+  QC_SKILL="${QC_SKILL:-${PDO_SKILL_PREFIX}project-human-review}"
   INTAKE_SKILL="${INTAKE_SKILL:-${PDO_SKILL_PREFIX}project-intake}"
   AGENT_QC_SKILL="${AGENT_QC_SKILL:-${PDO_SKILL_PREFIX}project-agent-qc}"
   # board Status and label vocabulary (today's names are the defaults)
@@ -496,7 +496,7 @@ agent_command() {
 }
 
 # write_meta <repo> <num> <json-fields>: merge fields into the agent's metadata file, which
-# the watcher, qc-review and resume-agent read (route, branch, worktree, cwd, session_id, …).
+# the watcher, human-review and resume-agent read (route, branch, worktree, cwd, session_id, …).
 write_meta() {
   local dir; dir="$(pdo_state_dir)/agents"; local f
   mkdir -p "$dir"; f="$dir/$1-$2.json"

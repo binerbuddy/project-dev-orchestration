@@ -276,6 +276,9 @@ has "project-env --board prints the board node id" "$out" "BOARD_ID=PVT_b7"
 has "project-env --board prints Status option ids" "$out" "STATUS_OPTION[Claude Work This]=o2"
 out="$("$BIN/project-env" --project beta --board 2>&1)"; has "project-env --board without a board fails clearly" "$out" "no PROJECT_NUMBER"
 
+eq "QC_SKILL default is the human-review skill (renamed from project-qc-review in 0.14)" "$("$BIN/project-env" --project acme QC_SKILL)" "/pdo:project-human-review"
+check "the old project-qc-review skill is gone" test ! -e "$ENGINE/skills/project-qc-review"
+
 # --- identity wrapper ---
 w="$(cd "$T" && bash -c "source '$BIN/lib.sh'; PROJECT=acme; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; pdo_finalize; identity_wrapper '$T/repos/widget.git'")"
 eq "identity: no GH_USER, no hook output = no wrapper" "$w" ""
@@ -928,7 +931,7 @@ eq "start-manager: exit" "$rc" 0
 check "start-manager: creates the home labelled with the project" grep -q "herdr workspace create --cwd .* --label acme --no-focus" "$SMOKE_LOG"
 check "start-manager: the Repo Manager is tab 1" grep -qx "herdr tab rename wN:t1 Repo Manager (acme)" "$SMOKE_LOG"
 check "start-manager: runs the repo-manager skill" grep -q "herdr pane run wN:p1 .*project-repo-manager.*project=acme" "$SMOKE_LOG"
-eq "start-manager: starts nothing else (no orchestrator, no QC)" "$(grep -cE 'orchestrate|qc-review|project-agent-qc|project-intake' "$SMOKE_LOG")" 0
+eq "start-manager: starts nothing else (no orchestrator, no QC)" "$(grep -cE 'orchestrate|human-review|project-agent-qc|project-intake' "$SMOKE_LOG")" 0
 out="$(MANAGER= "$BIN/start-manager" --project acme 2>&1)"; has "start-manager: needs a MANAGER" "$out" "no MANAGER"
 out="$("$BIN/start-manager" --project acme 2>&1)"; has "start-manager: refuses when the orchestrator is the manager" "$out" "MANAGER is the orchestrator"
 out="$("$BIN/start-manager" --project acme --repo widget 2>&1)"; has "start-manager --repo: only a self-managed repo" "$out" "not self-managed"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # start-qc — open the standing "QC (<project>)" herdr tab (in the project's home) running the QC skill
-# (QC_SKILL, default ${PDO_SKILL_PREFIX}project-qc-review) in CONTROL_DIR.
+# (QC_SKILL, default ${PDO_SKILL_PREFIX}project-human-review) in CONTROL_DIR.
 #
 # Usage: start-qc [--project P] [--model opus] [<PR#>]
 # With a PR number the agent starts serving it immediately (<QC_SKILL> <PR#>).

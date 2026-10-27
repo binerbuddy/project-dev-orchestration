@@ -92,7 +92,7 @@ each, plus any evidence the agent already gathered. <!-- profile §QC data -->
   failed rounds it adds `QC escalated` and a human decides. Add `needs UX review` to a PR to force a UX review.
 [end if]
 [if repo+team and the env sets QC_HOOK]
-- **QC servers on the manager's machine:** the manager can start this PR's QC servers with `/project-qc-review
+- **QC servers on the manager's machine:** the manager can start this PR's QC servers with `/project-human-review
   <PR#>`; ask them in the PR if you want that.
 [end if]
 

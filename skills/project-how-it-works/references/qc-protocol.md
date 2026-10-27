@@ -65,7 +65,7 @@ orchestrator's PR cap: `QC complete - ready to review` (UX review), `Ready for M
 merge), `QC escalated` (a decision).
 
 GitHub won't let a PR's author request changes on their own PR: an author gives feedback in the
-agent's session (or via `/project-qc-review` on an engine install) instead.
+agent's session (or via `/project-human-review` on an engine install) instead.
 
 Agents answering remote QC: the reviewer reads GitHub, not your session. Reply on the PR, ask any
 question there with an `@<author>` mention, and wait for their next review or reply. After fixing:

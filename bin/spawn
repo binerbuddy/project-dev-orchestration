@@ -203,7 +203,7 @@ if [[ $rc -eq 2 ]]; then trap - EXIT; die "agent is blocked on an unexpected pro
 herdr agent rename "$PANE_ID" "$AGENT" >/dev/null 2>&1 || true
 trap - EXIT
 [[ $CLAIM -eq 0 ]] || "$HERE/bin/claim" "$REPO" "$NUM" --project "$PROJECT" --agent "$NAME" >&2
-# metadata the watcher, qc-review and resume-agent use
+# metadata the watcher, human-review and resume-agent use
 write_meta "$REPO" "$NUM" "$(jq -n --arg repo "$REPO" --argjson num "$NUM" --arg route "$ROUTE" \
   --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg ws "$WS_ID" --arg pane "$PANE_ID" \
   --arg tab "$TAB_ID" --arg home "$HOME_WS" --arg name "$NAME" --arg session "$(session_of "$PANE_ID")" \
