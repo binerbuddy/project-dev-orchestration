@@ -21,7 +21,7 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
 - **Intake agent.** The standing `intake` workspace (`project-intake`). It turns reports into typed,
   prioritised issues. Other agents queue reports with `bin/intake-submit`; the human drains the queue.
 - **CEO.** The first session the human opens, one level above the per-project managers (`ceo`
-  skill). It turns the human's direction ("work acme", "pause gamma") into team operations
+  skill). It turns the human's direction ("work acme", "pause ti4") into team operations
   (`team-up`, `floor`), observes every project and the machine they share, gives the human one ranked
   "waiting on you" list, brokers cross-project requests and dependencies, and advises how resources
   are split. It never does project work. See [CEO](#ceo).
