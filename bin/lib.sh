@@ -177,6 +177,7 @@ pdo_finalize() {
   WATCH_EVENT_HOOK_TIMEOUT="${WATCH_EVENT_HOOK_TIMEOUT:-120}"  # seconds before the watcher gives up on it
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
   ORCHESTRATE_SKILL="${ORCHESTRATE_SKILL:-${PDO_SKILL_PREFIX}project-orchestrate}"
+  REPO_MANAGER_SKILL="${REPO_MANAGER_SKILL:-${PDO_SKILL_PREFIX}project-repo-manager}"
   QC_SKILL="${QC_SKILL:-${PDO_SKILL_PREFIX}project-qc-review}"
   INTAKE_SKILL="${INTAKE_SKILL:-${PDO_SKILL_PREFIX}project-intake}"
   AGENT_QC_SKILL="${AGENT_QC_SKILL:-${PDO_SKILL_PREFIX}project-agent-qc}"
@@ -236,10 +237,30 @@ pdo_team_home() {
   pdo_home_of "${PRIMARY_REPO:-$(printf '%s\n' "${!REPO_ROOT[@]}" | sort | head -1)}"
 }
 
+# pdo_home_manager <home>: who must be tab 1 of <home>: REPO_MANAGER[<home>] for a self-managed
+# repo's home, else MANAGER for the team's home (empty: no rule)
+pdo_home_manager() {
+  if declare -p REPO_MANAGER >/dev/null 2>&1 && [[ -n "${REPO_MANAGER[$1]:-}" && "$(pdo_home_of "$1")" == "$1" ]]; then
+    printf '%s' "${REPO_MANAGER[$1]}"; return
+  fi
+  [[ "$1" == "$(pdo_team_home)" ]] && printf '%s' "${MANAGER:-}"
+  return 0
+}
+
 # pdo_place <home> <name> <cwd>: open a herdr place for agent <name> (a tab in <home>, or its own
-# workspace under AGENT_LAYOUT=workspaces); sets PLACE_WS, PLACE_TAB and PLACE_PANE
+# workspace under AGENT_LAYOUT=workspaces); sets PLACE_WS, PLACE_TAB and PLACE_PANE. A missing home
+# is only ever created by its manager (tab 1): anyone else is refused (exit 3) until it runs.
 pdo_place() {
-  local out
+  local out mgr
+  if [[ -n "$1" && "${AGENT_LAYOUT:-tabs}" == tabs ]]; then
+    mgr="$(pdo_home_manager "$1")"
+    if [[ -n "$mgr" && "$2" != "$mgr" ]] && ! herdr workspace list 2>/dev/null \
+         | jq -e --arg h "$1" '.result.workspaces[] | select(.label == $h)' >/dev/null; then
+      echo "no home \"$1\" yet: its tab 1 is \"$mgr\", so start that first ($([[ "$mgr" == "Orchestrator ($PROJECT)" ]] \
+        && echo "pdo start-orchestrator" || echo "pdo start-manager")$([[ "$1" != "$(pdo_team_home)" ]] && echo " --repo $1") --project $PROJECT)" >&2
+      return 3
+    fi
+  fi
   out="$(AGENT_LAYOUT="$AGENT_LAYOUT" python3 "$PDO_HOME/bin/pdo_herdr.py" place "$1" "$2" "$3")" || return 1
   PLACE_WS="$(jq -r '.workspace_id // empty' <<<"$out")"
   PLACE_TAB="$(jq -r '.tab_id // empty' <<<"$out")"

@@ -76,7 +76,8 @@ agent in the repo the team will work, and run:
 It installs the engine from the plugin (`~/.local/bin/pdo`, a launcher that always runs the newest installed plugin
 version, so plugin updates need no re-install), checks the requirements below, registers the repo
 (`projects/<name>.env`, optionally a board), opens the repo-files PR, and tells you how to start the team
-(open a session named CEO and run `/ceo fire up <name>`, or `pdo team-up --project <name>`).
+(open a session named CEO and run `/ceo fire up <name>`: it opens the project's Repo Manager with
+`pdo start-manager`, which starts its team; or `pdo team-up --project <name>` without one).
 
 To work on the engine itself, or pin a version, use a checkout instead: clone this repo and run `bin/install --bin`
 (a symlink to the checkout's `bin/pdo`; it replaces a plugin launcher). `PDO_HOME=<checkout> pdo …` runs a checkout

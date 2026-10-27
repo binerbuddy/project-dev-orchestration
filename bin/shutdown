@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""shutdown — stop a project's whole team (or every project's), keeping everything resumable.
+
+Usage: shutdown (--project P | --all) [--apply] [--json]
+
+Without --apply it only prints the plan (a dry run). With --apply, in this order:
+  1. orchestrators: /exit, close their tab, stop their watcher (so nothing re-arms or spawns);
+  2. command agents (`<Repo>-<n> <brief>` in the project's repos): stop their side processes
+     (hibernate --servers-only), close their tab, record hibernated_at with hibernate_reason
+     "shutdown". The Claude session id and the managed-by claim stay, so `pdo resume-agent` brings
+     each back. Unlike hibernate, an agent need not be at 'ready for QC';
+  3. QC Agent and QC: stop their served stacks (`qc stop`, agent and human instance), /exit, close
+     their tab;
+  4. intake (only with --all: it serves every project);
+  5. Repo Managers last (the project's MANAGER and its REPO_MANAGER entries).
+Never touched: the CEO, the System Manager, and every herdr tab or workspace that isn't one of the
+names above (the human's own sessions). A tab with a question or menu pending is refused and listed:
+answer it, then run shutdown again.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+NEVER = {"CEO", "System Manager"}
+
+
+def run(*cmd, timeout=120):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout, r.stderr
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, "", str(e)
+
+
+def watcher_pids(project):
+    code, out, _ = run("pgrep", "-f", rf"bin/watch --project {re.escape(project)}( |$)")
+    return [int(x) for x in out.split()] if code == 0 else []
+
+
+def qc_served(cfg, agent):
+    """The PR a QC instance serves for one of this project's repos (projects can share a state dir,
+    so a served PR counts only for the project whose repo it is)."""
+    code, out, _ = run(os.path.join(HERE, "bin", "qc"), "status", "--project", cfg["project"], *(["--agent"] if agent else []))
+    try:
+        cur = json.loads(out.splitlines()[0]) if code == 0 and out else {}
+    except (ValueError, IndexError):
+        return None
+    m = re.search(r"github\.com/[^/]+/([^/]+)/pull/", cur.get("url") or "")
+    repo = m.group(1) if m else cur.get("repo")
+    return cur.get("pr") if cur.get("pr") and (repo is None or repo in cfg["repo_root"]) else None
+
+
+def plan(cfg, snapshot):
+    p = cfg["project"]
+    never = NEVER | {cfg.get("system_manager_workspace") or "System Manager"}
+    managers = [cfg.get("manager")] + list((cfg.get("repo_manager") or {}).values())
+    managers = [m for i, m in enumerate(managers) if m and m not in managers[:i] and m not in never]
+    repos = set(cfg["repo_root"])
+    steps = []
+
+    def add(kind, name, **extra):
+        slot = pdo_herdr.find(name, snapshot)
+        if not slot:
+            return
+        if pdo_herdr.question_pending(slot):
+            steps.append({"kind": kind, "name": name, "action": "refuse", "why": "a question or menu is pending: answer it, then run shutdown again"})
+            return
+        steps.append(dict({"kind": kind, "name": name, "action": "stop", "slot": slot, "status": slot["status"]}, **extra))
+
+    orch = f"Orchestrator ({p})"
+    if orch not in managers:
+        add("orchestrator", orch)
+    pids = watcher_pids(p)
+    if pids:
+        steps.append({"kind": "watcher", "name": f"watcher ({p})", "action": "stop", "pids": pids})
+    for slot in snapshot:
+        m = re.match(r"^(\S+)-(\d+) ", slot["name"] or "")
+        if m and m.group(1) in repos:
+            add("agent", slot["name"], repo=m.group(1), number=int(m.group(2)))
+    for name, agent in ((f"QC Agent ({p})", True), (f"QC ({p})", False)):
+        served = qc_served(cfg, agent) if (not agent or cfg.get("agent_qc_ports")) else None
+        if served:
+            steps.append({"kind": "qc-stack", "name": f"{'agent' if agent else 'human'} QC stack ({p})",
+                          "action": "stop", "agent": agent, "why": f"serving PR #{served}"})
+        add("qc", name)
+    for m in managers:
+        add("manager", m)
+    return steps
+
+
+def describe(s):
+    if s["action"] == "refuse":
+        return s["why"]
+    k = s["kind"]
+    if k == "watcher":
+        return f"stop pid {', '.join(map(str, s['pids']))}"
+    if k == "qc-stack":
+        return f"qc stop{' --agent' if s['agent'] else ''} ({s['why']})"
+    if k == "agent":
+        extra = " (interrupted mid-turn; it resumes where it stopped)" if s["status"] == "working" else ""
+        return f"{s['status']}: stop its side processes, close its tab, hibernate (reason shutdown){extra}"
+    return f"{s['status']}: /exit, close its tab"
+
+
+def stop_agent(cfg, s):
+    p = cfg["project"]
+    meta_file = os.path.join(cfg["state_dir"], "agents", f"{s['repo']}-{s['number']}.json")
+    if not os.path.exists(meta_file):
+        run(os.path.join(HERE, "bin", "agent-meta"), "backfill", "--project", p)
+    if os.path.exists(meta_file):
+        run(os.path.join(HERE, "bin", "hibernate"), s["repo"], str(s["number"]), "--project", p, "--servers-only", timeout=300)
+    pdo_herdr.close(s["slot"])
+    if not os.path.exists(meta_file):
+        return "tab closed (no metadata: resume will start fresh)"
+    meta = json.load(open(meta_file, encoding="utf-8"))
+    meta.update({"hibernated_at": int(time.time()), "hibernate_reason": "shutdown",
+                 "workspace_id": None, "pane_id": None, "tab_id": None})
+    with open(meta_file + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=1)
+    os.replace(meta_file + ".tmp", meta_file)
+    return "hibernated (shutdown)" + ("" if meta.get("session_id") else "; no session id: resume will start fresh")
+
+
+def apply(cfg, s):
+    p = cfg["project"]
+    if s["kind"] == "watcher":
+        for pid in s["pids"]:
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                pass
+        return "stopped"
+    if s["kind"] == "qc-stack":
+        code, _, err = run(os.path.join(HERE, "bin", "qc"), "stop", "--project", p, *(["--agent"] if s["agent"] else []), timeout=300)
+        return "stopped" if code == 0 else f"failed: {err.strip()[:160]}"
+    if s["kind"] == "agent":
+        return stop_agent(cfg, s)
+    slot = s["slot"]
+    if (slot.get("agent") or {}).get("agent") == "claude" and not pdo_herdr.exit_agent(slot["pane_id"]):
+        return "failed: it did not exit (left open)"
+    pdo_herdr.close(slot)
+    return "exited, tab closed"
+
+
+ORDER = {"orchestrator": 0, "watcher": 1, "agent": 2, "qc-stack": 3, "qc": 4, "intake": 5, "manager": 6}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--project")
+    g.add_argument("--all", action="store_true")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    names = pdo_config.projects() if a.all else [a.project]
+    snapshot = pdo_herdr.slots()
+    out, cfgs = [], []
+    for name in names:
+        cfg, err = pdo_config.try_load(name)
+        if not cfg:
+            print(f"shutdown: {name}: {err}", file=sys.stderr)
+            continue
+        cfgs.append(cfg)
+    jobs = [(c, plan(c, snapshot)) for c in cfgs]
+    shared = []
+    if a.all and cfgs:  # intake serves every project: only a full shutdown stops it
+        slot = pdo_herdr.find("intake", snapshot)
+        if slot:
+            shared.append({"kind": "intake", "name": "intake", "action": "refuse" if pdo_herdr.question_pending(slot) else "stop",
+                           "why": "a question or menu is pending: answer it, then run shutdown again",
+                           "slot": slot, "status": slot["status"]})
+        jobs.append((dict(cfgs[0], project="(shared)"), shared))
+    for cfg, steps in jobs:
+        name = cfg["project"]
+        steps.sort(key=lambda s: ORDER[s["kind"]])
+        if a.apply:
+            for s in steps:
+                if s["action"] == "stop":
+                    s["result"] = apply(cfg, s)
+        for s in steps:
+            s["detail"] = s.get("result") or describe(s)
+            s.pop("slot", None)
+        out.append({"project": name, "steps": steps})
+    if a.json:
+        print(json.dumps(out, indent=1))
+        return
+    for p in out:
+        print(f"== {p['project']}")
+        if not p["steps"]:
+            print("  nothing running")
+        for s in p["steps"]:
+            print(f"  [{s['action']}] {s['name']}: {s['detail']}")
+    left = sorted({x["name"] for x in snapshot if x["name"]} - {s["name"] for p in out for s in p["steps"]})
+    print(f"left alone: {', '.join(left) if left else 'nothing else'}")
+    if not a.apply:
+        print("dry run: nothing changed (--apply to do the 'stop' steps; 'refuse' ones are skipped)")
+
+
+if __name__ == "__main__":
+    main()

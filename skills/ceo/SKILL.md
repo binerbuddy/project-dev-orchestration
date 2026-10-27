@@ -38,13 +38,17 @@ carry no session name (a name hides question menus from herdr's blocked detectio
 `agent_command` in `bin/lib.sh`), so peer messaging lists them under generated names: reach them
 through herdr (section 3).
 
+Hierarchy: CEO → `Repo Manager (<project>)` (each project's lead, tab 1 of its home) →
+`Orchestrator (<project>)`, `QC (<project>)`, `QC Agent (<project>)`, command agents.
+
 | Name | Role |
 |---|---|
 | `CEO` | you; one per machine, opened first (`claude -n CEO`) |
 | `System Manager` | maintains the engine and overlays (scripts, prompts, skills, config) |
 | `intake` | drains the intake inbox |
-| `<project>` (workspace) | the project's home: tab 1 `Orchestrator (<project>)`, then its QC tabs and command agents |
-| `Orchestrator (<project>)` | the project's manager (`MANAGER`), runs the orchestrate loop |
+| `<project>` (workspace) | the project's home: tab 1 its manager, then the orchestrator, QC tabs and command agents |
+| `Repo Manager (<project>)` | the project's lead (`MANAGER`), tab 1 of its home (`pdo start-manager`): runs its team on your direction (`project-repo-manager` skill) |
+| `Orchestrator (<project>)` | runs the orchestrate loop; a later tab started by the Repo Manager (tab 1 and `MANAGER` itself only in a project without a Repo Manager) |
 | `QC (<project>)`, `QC Agent (<project>)` | the project's standing QC (tabs in the team's home) |
 | `<repo>` (workspace) | a self-managed repo's home: tab 1 `Repo Manager (<repo>)`, then its agents |
 | `Repo Manager (<repo>)` | the lead of a self-managed repo (`REPO_MANAGER[<repo>]`) |
@@ -96,11 +100,11 @@ The human steers with short directions; turn each into team operations and tell 
 
 | They say | You do |
 |---|---|
-| "work <p> issues" / "fire up <p>" | `pdo team-up --project <p>`: starts only what's missing (intake, QC, the QC Agent, `Orchestrator (<p>)`, the project's hook). If you paused it earlier (section 2's "pause"), clear that floor (`pdo floor clear --project <p>`); a floor you didn't set is the project's own: leave it. |
-| "fire up <p> to intake and work X" | as above, then ask `intake` to work the inbox for <p>, and tell `Orchestrator (<p>)` that X goes first (it moves X to its queue status). |
+| "work <p> issues" / "fire up <p>" | When the project has a Repo Manager (`MANAGER` other than `Orchestrator (<p>)`): `pdo start-manager --project <p>` (tab 1 of its home; it starts nothing else), then ask `Repo Manager (<p>)` to start its team; it runs team-up itself. Don't run team-up for such a project yourself. Otherwise (the orchestrator is the manager): `pdo team-up --project <p>`, which starts only what's missing. If you paused it earlier (section 2's "pause"), clear that floor (`pdo floor clear --project <p>`, or ask its Repo Manager); a floor you didn't set is the project's own: leave it. |
+| "fire up <p> to intake and work X" | as above, then ask `intake` to work the inbox for <p>, and tell the project's lead (`Repo Manager (<p>)`, else `Orchestrator (<p>)`) that X goes first. |
 | "work <p> and <q>" (only those) | team-up both; for every other running project, `pdo floor P1 --project <r>`: only P1 starts there, running agents finish. Say which projects you paused. |
 | "pause <p>" / "resume <p>" | `pdo floor P1 --project <p>` / `pdo floor clear --project <p>` (or the level they name), then tell its orchestrator in one line. |
-| "stop <p>" | ask which parts first. An orchestrator is stopped by telling it to end its `/loop`. Never close command agents' workspaces; they hibernate on their own. |
+| "stop <p>" | ask which parts first. Parts: tell its Repo Manager (or, without one, tell the orchestrator to end its `/loop`). Everything: `pdo shutdown --project <p>` (a dry run), then `--apply` on the human's yes; `pdo shutdown --all` for the whole fleet. Never close tabs by hand. |
 | "set the floor to Px on <p>" / "clear the floor" | `pdo floor Px --project <p>` / `pdo floor clear --project <p>`, then tell its orchestrator in one line. |
 | "work #N now" | the issue's owner does it: tell `Orchestrator (<p>)` (or `Repo Manager (<repo>)` for a self-managed repo) to put #N on its queue status now. It checks the floor and says if #N is below it. |
 | "QC PR #N" | `herdr agent prompt qc-<p> "$(pdo project-env --project <p> QC_SKILL) N"` once `QC (<p>)` is idle with no question pending, or `pdo start-qc --project <p> N` when it isn't running. |

@@ -21,8 +21,10 @@ itself, and takes the CEO's hand-offs.
 ## Who's who
 
 Each manager has one herdr workspace, its **home**, and every agent it runs is a tab in it, labelled
-with the agent's name: the project's home is labelled `acme`, with `Orchestrator (acme)` as tab 1, then
-the QC tabs and one tab per command agent. A self-managed repo's home is labelled with the repo's name
+with the agent's name: the project's home is labelled `acme`, with its lead, `Repo Manager (acme)`, as
+tab 1, then the orchestrator, the QC tabs and one tab per command agent. To stop a whole team, keeping
+every agent resumable: `pdo shutdown --project acme` (a dry run), then add `--apply`; `--all` stops
+every project's team and intake, never the CEO, the System Manager or your own sessions. A self-managed repo's home is labelled with the repo's name
 (`dnd3yond`), with its `Repo Manager (dnd3yond)` as tab 1. The CEO, System Manager and intake have
 workspaces of their own. herdr's sidebar shows every tab's agent, and a home with a question in any tab
 shows as blocked.
@@ -31,7 +33,8 @@ shows as blocked.
 |---|---|---|---|
 | **CEO** | CEO | Runs the teams: starts and pauses them on your direction, one "waiting on you" list across projects, brokers between projects. | Always first: tell it what to work on. |
 | **System Manager** | System Manager | Builds and maintains the system itself; fixes the machinery. Takes change requests from the CEO. | Something's broken, or you want to change how the system works. |
-| **Orchestrator** | Orchestrator (acme), tab 1 of `acme` | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its tab. |
+| **Repo Manager** | Repo Manager (acme), tab 1 of `acme` | The project's lead: starts and stops its orchestrator, QC and QC Agent, pauses and resumes work, "work #N now", QC requests. Opened by `pdo start-manager`; the CEO asks it to start its team. | You want something done in this project. |
+| **Orchestrator** | Orchestrator (acme), a tab in `acme` | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its tab. |
 | **Command agents** | `widget-<issue#> <brief>`, a tab in `acme` | Each takes one issue from start to a PR labelled `ready for QC`, asks you its questions directly, then hibernates until QC. | They ask you something (Remote Control and herdr notify you). |
 | **QC agent** | QC (acme), a tab in `acme` | Serves a PR on your local QC ports for hands-on QC, and relays your feedback. | You're QC'ing on your own machine. |
 | **Intake** | intake | Turns bug reports and ideas into proper GitHub issues. Other agents queue reports in its inbox. | You have something to file, or the inbox needs a pass. |

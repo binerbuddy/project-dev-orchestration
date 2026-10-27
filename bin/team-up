@@ -4,6 +4,9 @@
 #
 # Usage: team-up [--project P] [--no-hook] [hook options...]
 #
+# A project led by a Repo Manager (MANAGER other than its orchestrator) runs team-up from that Repo
+# Manager, which must already be running (pdo start-manager): team-up never starts the manager. When
+# the orchestrator is the manager (the default MANAGER) it starts first, so it is tab 1 of the home.
 # Starts, in order:
 #   1. herdr agent names         restored (they're wiped by herdr/session restarts)
 #   2. intake                    workspace + agent "intake"      (bin/start-intake)
@@ -43,12 +46,16 @@ spec = importlib.util.spec_from_loader("w", l); w = importlib.util.module_from_s
 w.restore_agent_names(project, w.load_repos(project)[1])
 PY
 
-step "intake";                 "$HERE/bin/start-intake" --project "$PROJECT" 2>&1 | tail -1
-step "QC ($PROJECT)";          "$HERE/bin/start-qc" --project "$PROJECT" 2>&1 | tail -1
-if [[ -n "${AGENT_QC_PORTS:-}" ]]; then
-  step "QC Agent ($PROJECT)";  "$HERE/bin/start-agent-qc" --project "$PROJECT" 2>&1 | tail -1
+# Tab 1 of the team's home is its manager. A Repo Manager (start-manager) must already be running:
+# team-up starts the team under it, never the manager itself. When the orchestrator is the manager
+# (the default MANAGER), it goes first so that it becomes tab 1.
+ORCH="Orchestrator ($PROJECT)"
+if [[ "${AGENT_LAYOUT:-tabs}" == tabs && -n "${MANAGER:-}" && "$MANAGER" != "$ORCH" ]] && ! pdo_find "$MANAGER" >/dev/null 2>&1; then
+  echo "team-up: $MANAGER isn't running; start it first (pdo start-manager --project $PROJECT), then run team-up from it"
+  exit 1
 fi
-step "Orchestrator ($PROJECT)"
+start_orchestrator() {
+step "$ORCH"
 out="$("$HERE/bin/start-orchestrator" --project "$PROJECT" 2>&1)"; rc=$?
 if [[ $rc -ne 0 && "$out" == *"already running"* ]]; then
   # The workspace surviving doesn't mean its /loop does: after a "shut down" the agent sits idle
@@ -66,6 +73,14 @@ if [[ $rc -ne 0 && "$out" == *"already running"* ]]; then
     echo "already running"
   fi
 else echo "$out" | tail -1; fi
+}
+[[ "${MANAGER:-}" == "$ORCH" ]] && start_orchestrator
+step "intake";                 "$HERE/bin/start-intake" --project "$PROJECT" 2>&1 | tail -1
+step "QC ($PROJECT)";          "$HERE/bin/start-qc" --project "$PROJECT" 2>&1 | tail -1
+if [[ -n "${AGENT_QC_PORTS:-}" ]]; then
+  step "QC Agent ($PROJECT)";  "$HERE/bin/start-agent-qc" --project "$PROJECT" 2>&1 | tail -1
+fi
+[[ "${MANAGER:-}" == "$ORCH" ]] || start_orchestrator
 
 # Project extras. The hook prints its own "<step> <result>" lines (use the same %-26s step
 # column); it gets the PDO_* env and any options team-up didn't recognise.

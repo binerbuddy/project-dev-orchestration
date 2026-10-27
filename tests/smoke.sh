@@ -918,6 +918,50 @@ check "hibernate (tabs): closes the agent's tab" grep -qx "herdr tab close wH:t3
 eq "hibernate (tabs): never closes a workspace (the manager's home)" "$(grep -c 'workspace close' "$SMOKE_LOG")" 0
 eq "hibernate (tabs): metadata drops the stale ids" "$(jq -c '[(.hibernated_at > 0), .workspace_id, .tab_id]' "$T/state/agents/widget-77.json")" '[true,null,null]'
 
+# start-manager: the project's Repo Manager opens tab 1 of a new home and starts nothing else
+echo '{"result":{"agents":[{"agent":"claude","workspace_id":"wN","tab_id":"wN:t1","pane_id":"wN:p1","agent_status":"idle"}]}}' >"$HL/sm-agents.json"
+echo '{"result":{"workspaces":[]}}' >"$HL/empty-ws.json"
+SM=(env MANAGER="Repo Manager (acme)" SMOKE_HERDR_AGENTS="$HL/sm-agents.json")
+: >"$SMOKE_LOG"
+out="$("${SM[@]}" SMOKE_HERDR_WS="$HL/empty-ws.json" "$BIN/start-manager" --project acme 2>&1)"; rc=$?
+eq "start-manager: exit" "$rc" 0
+check "start-manager: creates the home labelled with the project" grep -q "herdr workspace create --cwd .* --label acme --no-focus" "$SMOKE_LOG"
+check "start-manager: the Repo Manager is tab 1" grep -qx "herdr tab rename wN:t1 Repo Manager (acme)" "$SMOKE_LOG"
+check "start-manager: runs the repo-manager skill" grep -q "herdr pane run wN:p1 .*project-repo-manager.*project=acme" "$SMOKE_LOG"
+eq "start-manager: starts nothing else (no orchestrator, no QC)" "$(grep -cE 'orchestrate|qc-review|project-agent-qc|project-intake' "$SMOKE_LOG")" 0
+out="$(MANAGER= "$BIN/start-manager" --project acme 2>&1)"; has "start-manager: needs a MANAGER" "$out" "no MANAGER"
+out="$("$BIN/start-manager" --project acme 2>&1)"; has "start-manager: refuses when the orchestrator is the manager" "$out" "MANAGER is the orchestrator"
+out="$("$BIN/start-manager" --project acme --repo widget 2>&1)"; has "start-manager --repo: only a self-managed repo" "$out" "not self-managed"
+: >"$SMOKE_LOG"
+out="$("${SM[@]}" SMOKE_HERDR_WS="$HL/empty-ws.json" "$BIN/start-qc" --project acme 2>&1)"
+has "placement: nothing but the manager may create a home (start-qc says what to start)" "$out" "pdo start-manager --project acme"
+eq "placement: the refused start created nothing" "$(grep -cE 'workspace create|tab create' "$SMOKE_LOG")" 0
+out="$("${SM[@]}" SMOKE_HERDR_WS="$HL/empty-ws.json" "$BIN/team-up" --project acme --no-hook 2>&1)"; rc=$?
+eq "team-up: refuses while the Repo Manager isn't running" "$rc" 1
+has "team-up: says to start the Repo Manager first" "$out" "start it first (pdo start-manager --project acme)"
+
+# shutdown: everything of the project, in order; refuses a tab with a question; never the CEO or others
+echo '{"repo":"widget","number":78,"name":"widget-78 shut me","branch":"feat/78","session_id":"sess78","worktree":"'"$T"'/nowhere-78"}' >"$T/state/agents/widget-78.json"
+echo '{"result":{"workspaces":[{"label":"acme","workspace_id":"wH","agent_status":"blocked"},{"label":"CEO","workspace_id":"wC","agent_status":"idle"},{"label":"System Manager","workspace_id":"wS","agent_status":"working"},{"label":"my notes","workspace_id":"wP","agent_status":"idle"}]}}' >"$HL/sd-ws.json"
+echo '{"result":{"tabs":[{"label":"Repo Manager (acme)","number":1,"tab_id":"wH:t1","workspace_id":"wH","agent_status":"idle"},{"label":"Orchestrator (acme)","number":2,"tab_id":"wH:t2","workspace_id":"wH","agent_status":"idle"},{"label":"widget-78 shut me","number":3,"tab_id":"wH:t3","workspace_id":"wH","agent_status":"working"},{"label":"QC (acme)","number":4,"tab_id":"wH:t4","workspace_id":"wH","agent_status":"blocked"},{"label":"1","number":1,"tab_id":"wC:t1","workspace_id":"wC","agent_status":"idle"},{"label":"1","number":1,"tab_id":"wS:t1","workspace_id":"wS","agent_status":"working"},{"label":"1","number":1,"tab_id":"wP:t1","workspace_id":"wP","agent_status":"idle"}]}}' >"$HL/sd-tabs.json"
+echo '{"result":{"agents":[{"agent":"claude","workspace_id":"wH","tab_id":"wH:t1","pane_id":"wH:p1","agent_status":"idle"},{"agent":"claude","workspace_id":"wH","tab_id":"wH:t2","pane_id":"wH:p2","agent_status":"idle"},{"agent":"claude","workspace_id":"wH","tab_id":"wH:t3","pane_id":"wH:p3","agent_status":"working"},{"agent":"claude","workspace_id":"wH","tab_id":"wH:t4","pane_id":"wH:p4","agent_status":"blocked"},{"agent":"claude","workspace_id":"wC","tab_id":"wC:t1","pane_id":"wC:p1","agent_status":"idle"},{"agent":"claude","workspace_id":"wS","tab_id":"wS:t1","pane_id":"wS:p1","agent_status":"working"}]}}' >"$HL/sd-agents.json"
+SD=(env MANAGER="Repo Manager (acme)" SMOKE_HERDR_WS="$HL/sd-ws.json" SMOKE_HERDR_TABS="$HL/sd-tabs.json" SMOKE_HERDR_AGENTS="$HL/sd-agents.json")
+: >"$SMOKE_LOG"
+sd="$("${SD[@]}" "$BIN/shutdown" --project acme --json 2>&1)"
+eq "shutdown dry run: orchestrator, agent, QC refused (question), Repo Manager last" "$(jq -c '[.[0].steps[] | select(.kind != "qc-stack" and .kind != "watcher") | "\(.action):\(.name)"]' <<<"$sd" 2>/dev/null)" '["stop:Orchestrator (acme)","stop:widget-78 shut me","refuse:QC (acme)","stop:Repo Manager (acme)"]'
+eq "shutdown dry run: changes nothing" "$(grep -cE 'tab close|workspace close|agent prompt|hibernate' "$SMOKE_LOG")" 0
+has "shutdown dry run: lists what it leaves alone" "$("${SD[@]}" "$BIN/shutdown" --project acme 2>&1)" "left alone: CEO, System Manager, my notes"
+: >"$SMOKE_LOG"
+"${SD[@]}" SMOKE_HERDR_EXIT=1 "$BIN/shutdown" --project acme --apply >/dev/null 2>&1
+cp "$HL/sd-agents.json.saved" "$HL/sd-agents.json" 2>/dev/null || true
+check "shutdown --apply: exits the orchestrator and the Repo Manager" bash -c "grep -qx 'herdr agent prompt wH:p2 /exit' '$SMOKE_LOG' && grep -qx 'herdr agent prompt wH:p1 /exit' '$SMOKE_LOG'"
+check "shutdown --apply: closes their tabs and the agent's" bash -c "grep -qx 'herdr tab close wH:t2' '$SMOKE_LOG' && grep -qx 'herdr tab close wH:t3' '$SMOKE_LOG' && grep -qx 'herdr tab close wH:t1' '$SMOKE_LOG'"
+eq "shutdown --apply: the tab with a question is left alone" "$(grep -cE 'wH:t4|wH:p4 /exit' "$SMOKE_LOG")" 0
+eq "shutdown --apply: never the CEO, the System Manager or the human's own" "$(grep -cE 'w[CSP]:' "$SMOKE_LOG")" 0
+eq "shutdown --apply: never closes a workspace" "$(grep -c 'workspace close' "$SMOKE_LOG")" 0
+eq "shutdown --apply: the agent is hibernated (reason shutdown), session and resumability kept" "$(jq -c '[(.hibernated_at > 0), .hibernate_reason, .session_id, .tab_id]' "$T/state/agents/widget-78.json")" '[true,"shutdown","sess78",null]'
+eq "shutdown: the Repo Manager exits after everything else" "$(grep -E '/exit$' "$SMOKE_LOG" | tail -1)" "herdr agent prompt wH:p1 /exit"
+
 # relayout: rename an idle old-layout manager workspace into its home; a busy one waits; dry run first
 echo '{"result":{"workspaces":[{"label":"Orchestrator (acme)","workspace_id":"wM","agent_status":"idle"},{"label":"widget-5 old fix","workspace_id":"wO","agent_status":"working"},{"label":"CEO","workspace_id":"wC","agent_status":"idle"}]}}' >"$HL/rl-ws.json"
 echo '{"result":{"tabs":[{"label":"1","number":1,"tab_id":"wM:t1","workspace_id":"wM","agent_status":"idle"},{"label":"1","number":1,"tab_id":"wO:t1","workspace_id":"wO","agent_status":"working"},{"label":"1","number":1,"tab_id":"wC:t1","workspace_id":"wC","agent_status":"idle"}]}}' >"$HL/rl-tabs.json"

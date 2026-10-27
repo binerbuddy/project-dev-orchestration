@@ -141,6 +141,41 @@ def place(home, name, cwd, layout=None):
             "pane_id": (r.get("root_pane") or {}).get("pane_id"), "home": home}
 
 
+QUESTION_MARKERS = ("Enter to select", "Do you want to proceed")
+
+
+def question_pending(slot):
+    """A question or menu waits on the agent's screen (or herdr reports it blocked)."""
+    if not slot:
+        return False
+    if slot.get("status") == "blocked":
+        return True
+    pane = slot.get("pane_id")
+    if not pane:
+        return False
+    try:
+        r = subprocess.run(["herdr", "pane", "read", pane], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    tail = "\n".join(r.stdout.splitlines()[-40:])
+    return any(q in tail for q in QUESTION_MARKERS)
+
+
+def exit_agent(pane, wait=30):
+    """/exit a Claude agent in <pane> and wait until herdr no longer lists it. True when it's gone."""
+    import time
+    call("agent", "prompt", pane, "/exit")
+    time.sleep(3)
+    r = subprocess.run(["herdr", "pane", "read", pane], capture_output=True, text=True, timeout=15)
+    if "Exit and stop tasks" in "\n".join(r.stdout.splitlines()[-15:]):  # a /loop wakeup is pending
+        call("pane", "send-keys", pane, "enter")
+    for _ in range(wait):
+        if not any(a.get("pane_id") == pane for a in (call("agent", "list") or {}).get("agents", [])):
+            return True
+        time.sleep(1)
+    return False
+
+
 def close(slot):
     """Close an agent's tab (the workspace goes only if this was its last tab)."""
     if not slot or not slot.get("tab_id"):

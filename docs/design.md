@@ -11,8 +11,16 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
   hooks and skills. Reload it after a context clear with the `project-system-manager` skill; it reads
   [lessons-learned.md](lessons-learned.md) and runs `bin/sysreport`. Its workspace name is the project's
   `SYSTEM_MANAGER_WORKSPACE`.
-- **Orchestrator.** One long-lived agent session, `Orchestrator (<project>)`: tab 1 of the project's
-  home workspace (see "herdr layout" below), running `/loop` over the `project-orchestrate` skill. It ranks the queue, claims issues, spawns command
+- **Repo Manager.** Each project's lead, `Repo Manager (<project>)` (the project's `MANAGER`): tab 1 of
+  the project's home (see "herdr layout"), opened by `pdo start-manager`, running the
+  `project-repo-manager` skill. It runs that project's team on the human's and the CEO's direction:
+  status, start and stop of its orchestrator, QC, QC Agent and intake (`pdo start-*`, `pdo team-up`),
+  the floor, "work #N now", QC, agent QC, screenshots, and `pdo shutdown --project`. It hands engine
+  changes to the System Manager. Hierarchy: CEO → Repo Manager → orchestrator, QC, QC Agent, command
+  agents. A self-managed repo has its own (`REPO_MANAGER[<repo>]`, `start-manager --repo`). Without a
+  Repo Manager (the default `MANAGER`), the orchestrator is the manager and tab 1.
+- **Orchestrator.** One long-lived agent session, `Orchestrator (<project>)`: a tab in the project's
+  home, started by its Repo Manager when told, running `/loop` over the `project-orchestrate` skill. It ranks the queue, claims issues, spawns command
   agents, routes events and moves board cards. It never edits product code.
 - **Command agent.** One per issue or epic, in its own herdr tab of its home (`<Repo>-<issue#> <2-3 word brief>`)
   and its own git worktree. It runs a lifecycle skill and orchestrates its own sub-agents.
@@ -32,8 +40,9 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
 
 One herdr workspace per manager, one tab per agent (`AGENT_LAYOUT=tabs`, the default):
 
-- **Homes.** An orchestrated project's home is labelled with the project's name (`acme`): tab 1
-  `Orchestrator (acme)`, then `QC (acme)`, `QC Agent (acme)` and one tab per command agent
+- **Homes.** An orchestrated project's home is labelled with the project's name (`acme`): tab 1 its
+  manager (`MANAGER`: `Repo Manager (acme)`, or `Orchestrator (acme)` in a project without one), then
+  the orchestrator, `QC (acme)`, `QC Agent (acme)` and one tab per command agent
   (`<Repo>-<n> <brief>`) for every repo the orchestrator manages. A self-managed repo's home is labelled
   with the repo's name (`dnd3yond`): tab 1 `Repo Manager (dnd3yond)`, then its agents. When every repo of a
   project is self-managed, its standing QC tabs live in the primary repo's home (`pdo_team_home`;
@@ -43,8 +52,18 @@ One herdr workspace per manager, one tab per agent (`AGENT_LAYOUT=tabs`, the def
   matches a tab label first, then a workspace label, so agents of the old layout (one workspace per
   agent, labelled with its name) keep working during the switch. watch, queue, fleet, sysreport,
   agent-meta, pr-agent, hibernate, resume-agent, spawn and the start-* scripts all go through it.
-- **Placing.** `pdo_place <home> <name> <cwd>` (lib.sh) opens a tab in the home, creating the home (with
-  that agent as tab 1) if it is missing. A resumed old-layout agent reopens as a tab in its home.
+- **Placing.** `pdo_place <home> <name> <cwd>` (lib.sh) opens a tab in the home. Only the home's manager
+  (`pdo_home_manager`) may create a missing home, so it is always tab 1; anyone else is refused with
+  the command to run first (`pdo start-manager`, or `pdo start-orchestrator` when the orchestrator is the
+  manager). team-up never starts a Repo Manager and refuses while it isn't running; when the
+  orchestrator is the manager, team-up starts it first. A resumed old-layout agent reopens as a tab in
+  its home.
+- **Shutdown.** `pdo shutdown (--project P | --all) [--apply]` (a dry run by default) stops a team in
+  order: orchestrators and their watchers, command agents (side processes stopped, tab closed,
+  `hibernated_at` with `hibernate_reason: shutdown`; session id and claims kept, so `resume-agent`
+  brings each back), served QC stacks, QC Agent and QC, intake (`--all` only), Repo Managers last. It
+  never touches the CEO, the System Manager or any tab outside the fleet, and refuses (and lists) a tab
+  with a question or menu pending.
 - **Closing.** Always `herdr tab close`, never `herdr workspace close`: herdr closes a workspace with its
   last tab, so an old-layout agent's own workspace still goes, and a home with other agents never does.
   hibernate, spawn's rollback, the qc-review wrap-up and the orchestrator's `design_ready` step close tabs.
@@ -345,6 +364,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `REPO_ROOT` | (required) | `declare -A`: repo name → local clone root |
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
 | `AGENT_LAYOUT` | `tabs` | `tabs`: one herdr workspace per manager, one tab per agent; `workspaces`: one workspace per agent (pre-0.12) |
+| `REPO_MANAGER_SKILL` | `${PDO_SKILL_PREFIX}project-repo-manager` | the skill `start-manager` runs |
 | `TEAM_HOME` | | the standing agents' home workspace (default: the project's name, or the primary repo's when every repo is self-managed) |
 | `REPO_MANAGER` | `()` | `declare -A`: self-managed repo → its manager's workspace/session name (`fleet`) |
 | `MANAGER` | `Orchestrator (<p>)` with a board, else empty | the project manager's workspace/session name; empty = the human |
