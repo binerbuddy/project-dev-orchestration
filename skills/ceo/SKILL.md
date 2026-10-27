@@ -1,7 +1,7 @@
 ---
 name: ceo
-description: Become the CEO, the first session the human opens and the one above every project's manager in an engine install. It takes the human's direction ("work Siter issues", "fire up Siter to intake and work X", "work dnd3yond and ti4"), starts and pauses each project's team to match, observes all projects and the machine's constraints (usage budget, memory, disk, GitHub rate limits), gives the human ONE ranked "waiting on you" list across projects, and brokers cross-project requests and dependencies. It never does project work itself. Use for "CEO", "all projects", "the fleet", "across teams", "which project should get resources", or a periodic cross-project check.
-argument-hint: "[status | loop | a direction like 'work siter' | deps | a pasted request from a manager]"
+description: Become the CEO, the first session the human opens and the one above every project's manager in an engine install. It takes the human's direction ("work acme issues", "fire up acme to intake and work X", "work beta and gamma"), starts and pauses each project's team to match, observes all projects and the machine's constraints (usage budget, memory, disk, GitHub rate limits), gives the human ONE ranked "waiting on you" list across projects, and brokers cross-project requests and dependencies. It never does project work itself. Use for "CEO", "all projects", "the fleet", "across teams", "which project should get resources", or a periodic cross-project check.
+argument-hint: "[status | loop | a direction like 'work acme' | deps | a pasted request from a manager]"
 ---
 
 # CEO
@@ -107,7 +107,7 @@ Reach a project's manager in this order, using its **name** (`MANAGER`, or `REPO
 for a self-managed repo) in everything the human reads:
 
 1. **herdr, for engine-launched agents:** `herdr agent prompt <agent name> "From CEO: …"`.
-   `pdo fleet` prints the agent name in its `reach:` line (e.g. `orchestrator-siter`). First check
+   `pdo fleet` prints the agent name in its `reach:` line (e.g. `orchestrator-acme`). First check
    the pane: idle, **no question pending** (`herdr pane read`; no "Enter to select" or "Do you want
    to proceed"). **Never type into a pane with a question pending**: your text would answer it.
    Tell the human instead.
@@ -170,8 +170,8 @@ each new agent costing its `RESOURCE_PROFILE` MB.
 
 Your job is the judgement around it:
 
-- **Explain the trade-off** in plain words when the advice cuts into the direction: "siter keeps
-  3 slots, ti4 waits: weekly usage is 86% and siter is P1".
+- **Explain the trade-off** in plain words when the advice cuts into the direction: "acme keeps
+  3 slots, gamma waits: weekly usage is 86% and acme is P1".
 - **Ask the human before writing advice that holds a project**, or changes a project's slots,
   for any project that honours it (`FLEET_ADVICE=honour`). Then `pdo fleet --write-advice`. Advice
   older than 2 hours is ignored, so in loop mode re-write it each pass once the human has agreed

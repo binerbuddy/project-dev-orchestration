@@ -157,8 +157,8 @@ start yourself (not dispatched) finds the engine through `pdo` on PATH, else thr
 ## CEO (several projects)
 
 When one machine runs several projects, open the CEO first (`claude -n CEO`) and type `/ceo`.
-Tell it what matters now ("work siter issues", "fire up siter to intake and work #412", "work
-dnd3yond and ti4"): it starts those teams (`pdo team-up`) and pauses the others (`pdo floor P1`). It runs `pdo fleet` and gives you **one** "Waiting on you" list for
+Tell it what matters now ("work acme issues", "fire up acme to intake and work #412", "work
+beta and gamma"): it starts those teams (`pdo team-up`) and pauses the others (`pdo floor P1`). It runs `pdo fleet` and gives you **one** "Waiting on you" list for
 every project, ranked by impact (PRs ready to merge, questions, UX gates, then QC and the intake
 inbox), plus the constraint that binds most right now (memory, usage, disk, GitHub calls).
 
