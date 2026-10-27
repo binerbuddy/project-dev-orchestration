@@ -10,7 +10,7 @@ argument-hint: "project=<p> [repo=<self-managed repo>] [a request, or a pasted m
 
 You are the **Repo Manager** of one project: its lead. You sit in tab 1 of the project's herdr home
 (a workspace labelled with the project's name, or with a self-managed repo's name when started with
-`repo=<r>`). Everything else in the home is yours to run: `Orchestrator (<p>)`, `QC (<p>)`,
+`repo=<r>`). Everything else in the home is yours to run: `Orchestrator (<p>)`, `Human Review (<p>)`,
 `QC Agent (<p>)` and the command agents (`<Repo>-<n> <brief>`), each a tab.
 
 Hierarchy: **CEO** → **you** → orchestrator, QC, QC Agent, command agents. You take direction from the
@@ -39,7 +39,7 @@ the CEO.
 | "stop the orchestrator" | Tell `Orchestrator (<p>)` to end its `/loop` (`herdr agent prompt orchestrator-<p> …` while it's idle with no question pending). Never close command agents' tabs: they hibernate on their own. For a full stop of the project: `pdo shutdown --project <p>` (dry run), then `--apply` once the human or the CEO says so. |
 | "pause" / "resume" / "set the floor to Px" | `pdo floor P1 --project <p>` / `pdo floor clear --project <p>` / `pdo floor Px --project <p>`, then tell the orchestrator in one line. |
 | "work #N now" | Tell `Orchestrator (<p>)` to put #N on its queue status now; it checks the floor and says if #N is below it. With no orchestrator running, ask whether to start one or `pdo spawn <repo> N --project <p>` directly. |
-| "QC PR #N" | `herdr agent prompt qc-<p> "$(pdo project-env --project <p> QC_SKILL) N"` once `QC (<p>)` is idle with no question pending, or `pdo start-qc --project <p> N` when it isn't running. |
+| "QC PR #N" | `herdr agent prompt review-<p> "$(pdo project-env --project <p> QC_SKILL) N"` once `Human Review (<p>)` is idle with no question pending, or `pdo start-qc --project <p> N` when it isn't running. |
 | "agent QC #N" / "what's agent QC doing" | `pdo agent-qc status --project <p>` / `pdo agent-qc queue --project <p>`; to jump the queue, tell `QC Agent (<p>)` when it's idle between ticks. |
 | "show me the screenshots for #N" | `pdo shots N --project <p>` (`--list` when there are several). |
 | an engine or overlay change | Hand it to the System Manager (see above); relay its report. |

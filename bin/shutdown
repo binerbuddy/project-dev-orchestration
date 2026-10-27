@@ -9,7 +9,7 @@ Without --apply it only prints the plan (a dry run). With --apply, in this order
      (hibernate --servers-only), close their tab, record hibernated_at with hibernate_reason
      "shutdown". The Claude session id and the managed-by claim stay, so `pdo resume-agent` brings
      each back. Unlike hibernate, an agent need not be at 'ready for QC';
-  3. QC Agent and QC: stop their served stacks (`qc stop`, agent and human instance), /exit, close
+  3. QC Agent and Human Review (formerly "QC (<p>)"): stop their served stacks (`qc stop`, agent and human instance), /exit, close
      their tab;
   4. intake (only with --all: it serves every project);
   5. Repo Managers last (the project's MANAGER and its REPO_MANAGER entries).
@@ -87,12 +87,13 @@ def plan(cfg, snapshot):
         m = re.match(r"^(\S+)-(\d+) ", slot["name"] or "")
         if m and m.group(1) in repos:
             add("agent", slot["name"], repo=m.group(1), number=int(m.group(2)))
-    for name, agent in ((f"QC Agent ({p})", True), (f"QC ({p})", False)):
+    for names, agent in (([f"QC Agent ({p})"], True), ([f"Human Review ({p})", f"QC ({p})"], False)):
         served = qc_served(cfg, agent) if (not agent or cfg.get("agent_qc_ports")) else None
         if served:
             steps.append({"kind": "qc-stack", "name": f"{'agent' if agent else 'human'} QC stack ({p})",
                           "action": "stop", "agent": agent, "why": f"serving PR #{served}"})
-        add("qc", name)
+        for name in names:  # "QC (<p>)" is the human review's pre-0.15 name
+            add("qc", name)
     for m in managers:
         add("manager", m)
     return steps

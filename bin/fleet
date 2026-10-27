@@ -367,7 +367,8 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     gate_keys = {f"{g['repo']}#{g['number']}" for g in gates}
     active, parked, hibernated, stalled, questions, standing, owned = [], [], [], [], [], [], []
     seen = set()
-    standing_names = {f"Orchestrator ({p})": "orchestrator", f"QC ({p})": "qc", f"QC Agent ({p})": "agent-qc"}
+    standing_names = {f"Orchestrator ({p})": "orchestrator", f"Human Review ({p})": "human-review",
+                      f"QC ({p})": "human-review", f"QC Agent ({p})": "agent-qc"}  # "QC (<p>)": the pre-0.15 name
     for w in workspaces:
         label = w.get("label") or ""
         a = agents_by_ws.get(w.get("workspace_id"), {})

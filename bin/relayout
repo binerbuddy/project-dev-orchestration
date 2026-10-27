@@ -8,7 +8,9 @@ Without --apply it only prints the plan (a dry run). Per project:
   - each manager in its own old-layout workspace ("Orchestrator (<p>)", "Repo Manager (<repo>)"):
     rename that workspace to its home and its tab 1 to the manager's name. Only while it is idle or
     done with no question on screen, and no workspace already carries the home's name.
-  - each standing QC session ("QC (<p>)", "QC Agent (<p>)") in an old-layout workspace: restart it as
+  - a "QC (<p>)" tab (the human review's pre-0.15 name) in its home: relabel it "Human Review (<p>)"
+    (agent review-<p>) while it is idle and serves no review;
+  - each standing QC session ("Human Review (<p>)" or "QC (<p>)", "QC Agent (<p>)") in an old-layout workspace: restart it as
     a tab in the team's home (/exit, close its old tab, start-qc / start-agent-qc). Only while it is
     idle with no question, and nothing in progress: no PR served for local QC, no agent-QC PR held.
   - the CEO, intake and the System Manager keep their own workspaces and are never moved;
@@ -97,9 +99,19 @@ def plan_project(cfg, snapshot, workspaces):
     except (ValueError, IndexError):
         pass
     in_progress = os.path.exists(os.path.join(cfg["state_dir"], "agent-qc", "in-progress.json"))
-    standing = [(f"QC ({p})", "start-qc", qc_served and f"PR #{qc_served} is being served for local QC")]
+    review_busy = qc_served and f"PR #{qc_served} is being served for human review"
+    standing = [(f"Human Review ({p})", "start-qc", review_busy)]
     if cfg.get("agent_qc_ports"):
         standing.append((f"QC Agent ({p})", "start-agent-qc", in_progress and "agent QC holds a PR in progress"))
+    # the human review's pre-0.15 name: a tab in the home is relabelled in place when idle
+    old = pdo_herdr.find(f"QC ({p})", snapshot)
+    if old and old["layout"] == "tab" and not pdo_herdr.find(f"Human Review ({p})", snapshot):
+        why = idle_reason(old) or review_busy
+        steps.append({"kind": "qc", "name": f"QC ({p})", "home": team_home, "slot": old, "new_name": f"Human Review ({p})",
+                      "agent_name": f"review-{p}", "action": "wait" if why else "relabel",
+                      "why": why or f"relabel tab 'QC ({p})' -> 'Human Review ({p})' (agent review-{p})"})
+    elif old:  # its own old-layout workspace: restarted as a tab, under the new name
+        standing[0] = (f"QC ({p})", "start-qc", review_busy)
     for name, starter, busy in standing:
         slot = pdo_herdr.find(name, snapshot)
         if not slot:
@@ -147,6 +159,11 @@ def apply(project, step):
         ok = pdo_herdr.call("workspace", "rename", slot["workspace_id"], step["home"]) is not None
         ok = ok and pdo_herdr.call("tab", "rename", slot["tab_id"], step["name"]) is not None
         return "renamed" if ok else "failed: herdr rename"
+    if step["action"] == "relabel":
+        ok = pdo_herdr.call("tab", "rename", slot["tab_id"], step["new_name"]) is not None
+        if ok and slot.get("pane_id"):
+            pdo_herdr.call("agent", "rename", slot["pane_id"], step["agent_name"])
+        return "relabelled" if ok else "failed: herdr tab rename"
     if step["action"] == "restart":
         if (slot.get("agent") or {}).get("agent") == "claude" and not exit_agent(slot["pane_id"]):
             return "failed: it did not exit"
@@ -174,7 +191,7 @@ def main():
         if a.apply:
             # managers first: the standing QC tabs then land in the renamed home
             for s in sorted(steps, key=lambda s: s["kind"] != "manager"):
-                if s["action"] in ("rename", "restart"):
+                if s["action"] in ("rename", "restart", "relabel"):
                     s["result"] = apply(name, s)
         for s in steps:
             s.pop("slot", None)
@@ -187,7 +204,7 @@ def main():
         for s in p["steps"]:
             print(f"  [{s['action']}] {s['name']}: {s.get('result') or s['why']}")
     if not a.apply:
-        print("dry run: nothing changed (--apply to do the 'rename' and 'restart' steps)")
+        print("dry run: nothing changed (--apply to do the 'rename', 'relabel' and 'restart' steps)")
 
 
 if __name__ == "__main__":

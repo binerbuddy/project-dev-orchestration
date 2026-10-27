@@ -24,8 +24,8 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
   agents, routes events and moves board cards. It never edits product code.
 - **Command agent.** One per issue or epic, in its own herdr tab of its home (`<Repo>-<issue#> <2-3 word brief>`)
   and its own git worktree. It runs a lifecycle skill and orchestrates its own sub-agents.
-- **Human review.** The standing `QC (<project>)` tab (`project-human-review`, called `project-qc-review`
-  before 0.14). It serves a PR on the project's QC servers for a person's hands-on QC or UX review, and
+- **Human review.** The standing `Human Review (<project>)` tab, agent `review-<project>`
+  (`project-human-review`; the tab was `QC (<project>)` before 0.15, the skill `project-qc-review` before 0.14). It serves a PR on the project's QC servers for a person's hands-on QC or UX review, and
   relays feedback to the PR's command agent. Distinct from agent QC (`project-agent-qc`, the
   `QC Agent (<project>)` tab), which tests every `ready for QC` PR first, unattended.
 - **Intake agent.** The standing `intake` workspace (`project-intake`). It turns reports into typed,
@@ -206,7 +206,7 @@ token-free probe; the model only reads what changed.
 - **GitHub budget.** Below 600 GraphQL points left, the queue refresh and pr-priority are skipped. When a
   fetch fails, the last known PR facts are kept rather than concluding every PR vanished.
 - **Agent names.** herdr agent names don't survive a restart, so every pass restores the standard ones:
-  `intake`, `orchestrator-<project>`, `qc-<project>`, `<repo>-<n>`.
+  `intake`, `orchestrator-<project>`, `review-<project>` (`qc-<project>` before 0.15), `<repo>-<n>`.
 
 ## Hibernation and close-out
 

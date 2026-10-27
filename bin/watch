@@ -181,7 +181,8 @@ FIXED_NAMES = {"intake": "intake"}  # workspace label -> herdr agent name
 def restore_agent_names(project, repos):
     """herdr agent names don't survive a herdr/session restart, and other agents address these by
     name (e.g. `herdr agent prompt intake`), so put the standard names back."""
-    fixed = dict(FIXED_NAMES, **{f"Orchestrator ({project})": f"orchestrator-{project}", f"QC ({project})": f"qc-{project}",
+    fixed = dict(FIXED_NAMES, **{f"Orchestrator ({project})": f"orchestrator-{project}",
+                                 f"Human Review ({project})": f"review-{project}", f"QC ({project})": f"review-{project}",
                                  f"QC Agent ({project})": f"qc-agent-{project}"})
     for slot in pdo_herdr.slots():  # an agent's label is its tab's (or, old layout, its workspace's)
         a = slot.get("agent") or {}

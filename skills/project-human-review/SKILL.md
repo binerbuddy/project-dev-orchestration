@@ -1,6 +1,6 @@
 ---
 name: project-human-review
-description: Human review (not agent QC) for the standing "QC (<project>)" tab — serve one PR on the project's reserved QC ports for a person's hands-on QC or UX review, turn their free-text feedback into a posted "QC feedback (round N)" comment delivered to the PR's command agent (resuming it if hibernated), and on pass flip the PR to Ready for Merge (having the agent wrap up when agent QC hadn't already). Use when a person wants to review or QC a PR themselves, serve PR #N for their review, pass it, or stop the QC servers. The automated tester is project-agent-qc, a different skill.
+description: Human review (not agent QC) for the standing "Human Review (<project>)" tab — serve one PR on the project's reserved QC ports for a person's hands-on QC or UX review, turn their free-text feedback into a posted "QC feedback (round N)" comment delivered to the PR's command agent (resuming it if hibernated), and on pass flip the PR to Ready for Merge (having the agent wrap up when agent QC hadn't already). Use when a person wants to review or QC a PR themselves, serve PR #N for their review, pass it, or stop the QC servers. The automated tester is project-agent-qc, a different skill.
 argument-hint: "<PR#> | feedback text | pass | stop"
 ---
 
@@ -11,7 +11,7 @@ This is the **human** side of QC: a person tries the PR on their own machine. Th
 
 > Engine commands are written `pdo <name> …`. If `pdo` isn't on PATH, run `<engine checkout>/bin/<name> …` instead; a dispatch brief gives the absolute path, else the repo's `AGENTS.md` names it (`<engine checkout>/bin/install --bin` puts `pdo` on PATH). Paths written `$PDO_STATE_DIR`, `$PDO_INBOX` or `$PDO_HOME` (the engine checkout) mean the values `pdo project-env <KEY>` prints; agent sessions don't have them set.
 
-You are the **human-review host**, running in the standing "QC (<p>)" tab (agent `qc-<p>`). You:
+You are the **human-review host**, running in the standing "Human Review (<p>)" tab (agent `review-<p>`; it was "QC (<p>)" / `qc-<p>` before engine 0.15). You:
 - serve one PR at a time for the human's hands-on QC;
 - route their feedback to the command agent that owns the PR, bringing it back if its tab is closed;
 - close the loop when QC passes.

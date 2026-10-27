@@ -10,7 +10,7 @@
 # Starts, in order:
 #   1. herdr agent names         restored (they're wiped by herdr/session restarts)
 #   2. intake                    workspace + agent "intake"      (bin/start-intake)
-#   3. QC (<project>)            local QC agent                  (bin/start-qc)
+#   3. Human Review (<project>)  local human review              (bin/start-qc)
 #   4. QC Agent (<project>)      /loop <agent-QC skill>          (bin/start-agent-qc; only with AGENT_QC_PORTS)
 #   5. Orchestrator (<project>)  /loop <orchestrate skill>       (bin/start-orchestrator)
 #   6. TEAM_UP_HOOK              project extras (e.g. a remote preview host, a seed DB), if set;
@@ -76,7 +76,7 @@ else echo "$out" | tail -1; fi
 }
 [[ "${MANAGER:-}" == "$ORCH" ]] && start_orchestrator
 step "intake";                 "$HERE/bin/start-intake" --project "$PROJECT" 2>&1 | tail -1
-step "QC ($PROJECT)";          "$HERE/bin/start-qc" --project "$PROJECT" 2>&1 | tail -1
+step "Human Review ($PROJECT)"; "$HERE/bin/start-qc" --project "$PROJECT" 2>&1 | tail -1
 if [[ -n "${AGENT_QC_PORTS:-}" ]]; then
   step "QC Agent ($PROJECT)";  "$HERE/bin/start-agent-qc" --project "$PROJECT" 2>&1 | tail -1
 fi

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# start-qc — open the standing "QC (<project>)" herdr tab (in the project's home) running the QC skill
+# start-qc — open the standing "Human Review (<project>)" herdr tab (agent "review-<project>"; it was
+# "QC (<project>)" / "qc-<project>" before 0.15, and a live tab under that name is reused) in the project's
+# home, running the human-review skill
 # (QC_SKILL, default ${PDO_SKILL_PREFIX}project-human-review) in CONTROL_DIR.
 #
 # Usage: start-qc [--project P] [--model opus] [<PR#>]
@@ -23,15 +25,18 @@ pdo_resolve_project "$PROJECT"
 # shellcheck source=/dev/null
 HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
 MODEL="${MODEL:-$DEFAULT_MODEL}"
-NAME="QC ($PROJECT)"
+NAME="Human Review ($PROJECT)"
+# "QC (<project>)" was its name before 0.15: a live tab under the old name is still this agent
+pdo_find "QC ($PROJECT)" >/dev/null 2>&1 && ! pdo_find "$NAME" >/dev/null 2>&1 && NAME="QC ($PROJECT)"
 pdo_standing "$NAME" "$(pdo_team_home)" || die "could not open a herdr tab for \"$NAME\""
 PANE_ID="$STAND_PANE"
 if (( STAND_ALIVE )); then
+  herdr agent rename "$PANE_ID" "review-$PROJECT" >/dev/null 2>&1 || true
   [[ -n "$PR" ]] && herdr agent prompt "$PANE_ID" "$QC_SKILL $PR" >/dev/null
-  echo "QC agent already running in $STAND_WHERE${PR:+; asked it to serve PR #$PR}"
+  echo "human review already running in $STAND_WHERE${PR:+; asked it to serve PR #$PR}"
   exit 0
 fi
 set +e; launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "$QC_SKILL $PR"; rc=$?; set -e
-[[ $rc -eq 0 ]] || die "QC agent did not start cleanly (rc=$rc); see $STAND_WHERE"
-herdr agent rename "$PANE_ID" "qc-$PROJECT" >/dev/null 2>&1 || true
-echo "QC agent running in $STAND_WHERE"
+[[ $rc -eq 0 ]] || die "human review did not start cleanly (rc=$rc); see $STAND_WHERE"
+herdr agent rename "$PANE_ID" "review-$PROJECT" >/dev/null 2>&1 || true
+echo "human review running in $STAND_WHERE"

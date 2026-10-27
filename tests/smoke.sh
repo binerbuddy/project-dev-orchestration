@@ -943,6 +943,30 @@ out="$("${SM[@]}" SMOKE_HERDR_WS="$HL/empty-ws.json" "$BIN/team-up" --project ac
 eq "team-up: refuses while the Repo Manager isn't running" "$rc" 1
 has "team-up: says to start the Repo Manager first" "$out" "start it first (pdo start-manager --project acme)"
 
+# human review: "Human Review (<p>)" / review-<p>; a live tab under the pre-0.15 name "QC (<p>)" is reused
+echo '{"result":{"agents":[{"agent":"claude","workspace_id":"wH","tab_id":"wH:t1","pane_id":"wH:p1","agent_status":"idle"},{"agent":"claude","workspace_id":"wH","tab_id":"wH:t9","pane_id":"wH:p9","agent_status":"idle"}]}}' >"$HL/hr-agents.json"
+echo '{"result":{"tabs":[{"label":"Orchestrator (acme)","number":1,"tab_id":"wH:t1","workspace_id":"wH","agent_status":"idle"}]}}' >"$HL/hr-tabs.json"
+HR=(env SMOKE_HERDR_WS="$HL/ws.json" SMOKE_HERDR_TABS="$HL/hr-tabs.json" SMOKE_HERDR_AGENTS="$HL/hr-agents.json")
+: >"$SMOKE_LOG"
+out="$("${HR[@]}" "$BIN/start-qc" --project acme 2>&1)"
+check "human review: start-qc opens a 'Human Review (acme)' tab in the home" grep -q "herdr tab create --workspace wH --cwd .* --label Human Review (acme) --no-focus" "$SMOKE_LOG"
+check "human review: its agent is named review-acme" grep -qx "herdr agent rename wH:p9 review-acme" "$SMOKE_LOG"
+check "human review: runs the human-review skill" grep -q "herdr pane run wH:p9 .*project-human-review" "$SMOKE_LOG"
+echo '{"result":{"tabs":[{"label":"Orchestrator (acme)","number":1,"tab_id":"wH:t1","workspace_id":"wH","agent_status":"idle"},{"label":"QC (acme)","number":2,"tab_id":"wH:t2","workspace_id":"wH","agent_status":"idle"}]}}' >"$HL/hr-old-tabs.json"
+echo '{"result":{"agents":[{"agent":"claude","workspace_id":"wH","tab_id":"wH:t1","pane_id":"wH:p1","agent_status":"idle"},{"agent":"claude","workspace_id":"wH","tab_id":"wH:t2","pane_id":"wH:p2","agent_status":"idle"}]}}' >"$HL/hr-old-agents.json"
+HO=(env SMOKE_HERDR_WS="$HL/ws.json" SMOKE_HERDR_TABS="$HL/hr-old-tabs.json" SMOKE_HERDR_AGENTS="$HL/hr-old-agents.json")
+: >"$SMOKE_LOG"
+out="$("${HO[@]}" "$BIN/start-qc" --project acme 2>&1)"
+has "human review: a live 'QC (acme)' tab (pre-0.15 name) is the same agent, not a second one" "$out" 'already running in tab "QC (acme)"'
+eq "human review: no second tab opened" "$(grep -c 'tab create' "$SMOKE_LOG")" 0
+check "human review: the old tab's agent takes the new name" grep -qx "herdr agent rename wH:p2 review-acme" "$SMOKE_LOG"
+rl="$("${HO[@]}" "$BIN/relayout" --project acme --json 2>&1)"
+eq "relayout: an idle 'QC (acme)' tab is relabelled to 'Human Review (acme)'" "$(jq -c '[.[0].steps[] | select(.kind == "qc") | "\(.action):\(.name)"]' <<<"$rl" 2>/dev/null)" '["relabel:QC (acme)"]'
+: >"$SMOKE_LOG"
+"${HO[@]}" "$BIN/relayout" --project acme --apply >/dev/null 2>&1
+check "relayout --apply: the tab takes the new label" grep -qx "herdr tab rename wH:t2 Human Review (acme)" "$SMOKE_LOG"
+check "relayout --apply: and its agent the new name" grep -qx "herdr agent rename wH:p2 review-acme" "$SMOKE_LOG"
+
 # shutdown: everything of the project, in order; refuses a tab with a question; never the CEO or others
 echo '{"repo":"widget","number":78,"name":"widget-78 shut me","branch":"feat/78","session_id":"sess78","worktree":"'"$T"'/nowhere-78"}' >"$T/state/agents/widget-78.json"
 echo '{"result":{"workspaces":[{"label":"acme","workspace_id":"wH","agent_status":"blocked"},{"label":"CEO","workspace_id":"wC","agent_status":"idle"},{"label":"System Manager","workspace_id":"wS","agent_status":"working"},{"label":"my notes","workspace_id":"wP","agent_status":"idle"}]}}' >"$HL/sd-ws.json"
