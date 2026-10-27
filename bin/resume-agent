@@ -3,11 +3,13 @@
 #
 # Usage: resume-agent <repo> <issue#> (--prompt TEXT | --prompt-file F) [--project P] [--model M]
 #
-#  - Workspace alive: prompts the agent in place. Refuses (exit 3) while a question is pending on
-#    its screen, since typing would answer that question with the wrong text.
-#  - Workspace closed (including an agent released by bin/hibernate): recreates the worktree from the branch if needed, opens a workspace with
-#    the same name, and resumes the SAME Claude session (`claude --resume <id>`) so the agent
-#    keeps its context. Without a recorded session it starts fresh, pointed at its dispatch brief.
+#  - Alive (a tab with its name, or an old-layout workspace): prompts the agent in place. Refuses
+#    (exit 3) while a question is pending on its screen, since typing would answer that question
+#    with the wrong text.
+#  - Gone (including an agent released by bin/hibernate): recreates the worktree from the branch if
+#    needed, opens a tab with the same name in its manager's home (pdo_home_of; an old-layout agent
+#    moves there), and resumes the SAME Claude session (`claude --resume <id>`) so the agent keeps its
+#    context. Without a recorded session it starts fresh, pointed at its dispatch brief.
 # Prints a JSON line: {action: prompted|resumed|restarted, workspace_id, pane_id}.
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -40,29 +42,25 @@ META="$(cat "$META_FILE")"
 m() { jq -r --arg k "$1" '.[$k] // empty' <<<"$META"; }
 
 # --- alive: prompt in place ---
-WS_ID="$(m workspace_id)"
-# herdr reuses workspace ids after a close: trust the stored id only while that workspace still
-# carries this agent's name (a stale id once sent one agent's prompt into another agent's live session)
-if [[ -n "$WS_ID" ]] && ! herdr workspace list | jq -e --arg w "$WS_ID" --arg n "$(m name)" \
-     '.result.workspaces[] | select(.workspace_id == $w and .label == $n)' >/dev/null; then
-  WS_ID=""
-fi
-PANE_ID=""
-if [[ -n "$WS_ID" ]]; then
-  PANE_ID="$(herdr agent list | jq -r --arg w "$WS_ID" '[.result.agents[] | select(.workspace_id == $w and .agent == "claude") | .pane_id][0] // empty')"
+# find it by name (its tab label, or an old-layout workspace label): herdr reuses ids after a close,
+# and a stale id once sent one agent's prompt into another agent's live session
+SLOT="$(pdo_find "$(m name)" 2>/dev/null || true)"
+WS_ID="" PANE_ID=""
+if [[ -n "$SLOT" ]] && jq -e '.agent.agent == "claude"' >/dev/null <<<"$SLOT"; then
+  WS_ID="$(jq -r .workspace_id <<<"$SLOT")" PANE_ID="$(jq -r .pane_id <<<"$SLOT")"
 fi
 if [[ -n "$WS_ID" && -n "$PANE_ID" ]]; then
   SCREEN="$(herdr pane read "$PANE_ID" | tail -40)"
-  STATUS="$(herdr agent list | jq -r --arg p "$PANE_ID" '.result.agents[] | select(.pane_id == $p) | .agent_status')"
+  STATUS="$(jq -r '.agent.agent_status // .status' <<<"$SLOT")"
   if [[ "$STATUS" == blocked ]] || grep -qE "Enter to select|Do you want to proceed" <<<"$SCREEN"; then
-    die "$REPO#$NUM has a question pending in workspace $WS_ID; answer it first" 3
+    die "$REPO#$NUM has a question pending in \"$(m name)\"; answer it first" 3
   fi
   herdr agent prompt "$PANE_ID" "$PROMPT" >/dev/null
   jq -cn --arg name "$(m name)" --arg ws "$WS_ID" --arg pane "$PANE_ID" '{action: "prompted", workspace: $name, workspace_id: $ws, pane_id: $pane}'
   exit 0
 fi
 
-# --- gone: rebuild the workspace ---
+# --- gone: rebuild its place ---
 ROOT="${REPO_ROOT[$REPO]}"
 CWD="$(m cwd)"; CWD="${CWD:-$(m worktree)}"
 BRANCH="$(m branch)"
@@ -79,8 +77,10 @@ if [[ ! -d "$CWD" ]]; then
   fi
 fi
 
-WS_ID="$(herdr workspace create --cwd "$CWD" --label "$NAME" --no-focus | jq -r '[.. | objects | .workspace_id? // empty][0]')"
-PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
+# reopen it as a tab in its manager's home (an old-layout agent moves into the home here)
+HOME_WS="$(pdo_home_of "$REPO")"
+pdo_place "$HOME_WS" "$NAME" "$CWD" || die "could not open a herdr tab for $NAME in \"$HOME_WS\""
+WS_ID="$PLACE_WS" TAB_ID="$PLACE_TAB" PANE_ID="$PLACE_PANE"
 SESSION="$(m session_id)"
 ACTION=resumed
 if [[ -n "$SESSION" ]]; then
@@ -91,9 +91,9 @@ else
   FRESH="You are resuming as the command agent for $ORG/$REPO#$NUM (branch $BRANCH). Your previous session is gone.$([[ -f "$BRIEF" ]] && echo " Read your dispatch brief first: $BRIEF.") Then: $PROMPT"
   set +e; launch_agent "$PANE_ID" "$CWD" "$NAME" "$MODEL" "$FRESH"; rc=$?; set -e
 fi
-[[ $rc -eq 0 ]] || die "agent in workspace $WS_ID did not come up cleanly (rc=$rc)"
+[[ $rc -eq 0 ]] || die "agent in tab \"$NAME\" did not come up cleanly (rc=$rc)"
 herdr agent rename "$PANE_ID" "$(tr 'A-Z' 'a-z' <<<"$REPO" | tr -cd 'a-z0-9-' | cut -c1-24)-$NUM" >/dev/null 2>&1 || true
-write_meta "$REPO" "$NUM" "$(jq -n --arg ws "$WS_ID" --arg pane "$PANE_ID" --arg cwd "$CWD" \
-  --arg session "$(session_of "$PANE_ID")" '{workspace_id: $ws, pane_id: $pane, cwd: $cwd, session_id: $session,
-    hibernated_at: null}')"
+write_meta "$REPO" "$NUM" "$(jq -n --arg ws "$WS_ID" --arg tab "$TAB_ID" --arg home "$HOME_WS" --arg pane "$PANE_ID" \
+  --arg cwd "$CWD" --arg session "$(session_of "$PANE_ID")" '{workspace_id: $ws, tab_id: $tab, home: $home, pane_id: $pane,
+    cwd: $cwd, session_id: $session, hibernated_at: null}')"
 jq -cn --arg a "$ACTION" --arg name "$NAME" --arg ws "$WS_ID" --arg pane "$PANE_ID" '{action: $a, workspace: $name, workspace_id: $ws, pane_id: $pane}'

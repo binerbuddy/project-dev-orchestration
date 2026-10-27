@@ -25,7 +25,15 @@ machine-wide.
 
 ## Names
 
-Every standing session's herdr workspace is labelled `<Role> (<scope>)`. Engine-launched agents
+Every agent is labelled with its name, `<Role> (<scope>)` for standing sessions and
+`<Repo>-<n> <brief>` for command agents. Since engine 0.12 each manager has one herdr workspace, its
+**home**, labelled with the project's name (an orchestrated project: `acme`) or a self-managed repo's
+(`dnd3yond`); its agents are tabs in it, tab 1 being the manager, and the tab label is the agent's
+name. The CEO, `System Manager` and `intake` keep their own workspaces. Agents started before 0.12 may
+still sit in a workspace of their own, labelled with their name; `pdo herdr-agent find <name>` finds
+either (tab label first), `pdo herdr-agent names` lists them all, and `pdo relayout` (a dry run unless
+`--apply`) moves idle managers and standing QC into their homes. herdr's sidebar shows every tab's
+agent, and a blocked tab marks its home blocked too. Engine-launched agents
 carry no session name (a name hides question menus from herdr's blocked detection; see
 `agent_command` in `bin/lib.sh`), so peer messaging lists them under generated names: reach them
 through herdr (section 3).
@@ -35,9 +43,12 @@ through herdr (section 3).
 | `CEO` | you; one per machine, opened first (`claude -n CEO`) |
 | `System Manager` | maintains the engine and overlays (scripts, prompts, skills, config) |
 | `intake` | drains the intake inbox |
+| `<project>` (workspace) | the project's home: tab 1 `Orchestrator (<project>)`, then its QC tabs and command agents |
 | `Orchestrator (<project>)` | the project's manager (`MANAGER`), runs the orchestrate loop |
-| `QC (<project>)`, `QC Agent (<project>)` | the project's standing QC |
+| `QC (<project>)`, `QC Agent (<project>)` | the project's standing QC (tabs in the team's home) |
+| `<repo>` (workspace) | a self-managed repo's home: tab 1 `Repo Manager (<repo>)`, then its agents |
 | `Repo Manager (<repo>)` | the lead of a self-managed repo (`REPO_MANAGER[<repo>]`) |
+| `<Repo>-<n> <brief>` | a command agent (a tab in its repo's home) |
 | `<Repo>-<n> <slug>` | a command agent working one issue |
 
 When an env's `MANAGER` / `REPO_MANAGER`, or a running workspace, doesn't follow this, tell the

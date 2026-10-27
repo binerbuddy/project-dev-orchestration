@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""relayout — move a project's standing agents to the tab layout (engine 0.12+): one herdr workspace
+per manager (its home, labelled with the project or self-managed repo name), one tab per agent.
+
+Usage: relayout [--project P] [--apply] [--json]
+
+Without --apply it only prints the plan (a dry run). Per project:
+  - each manager in its own old-layout workspace ("Orchestrator (<p>)", "Repo Manager (<repo>)"):
+    rename that workspace to its home and its tab 1 to the manager's name. Only while it is idle or
+    done with no question on screen, and no workspace already carries the home's name.
+  - each standing QC session ("QC (<p>)", "QC Agent (<p>)") in an old-layout workspace: restart it as
+    a tab in the team's home (/exit, close its old tab, start-qc / start-agent-qc). Only while it is
+    idle with no question, and nothing in progress: no PR served for local QC, no agent-QC PR held.
+  - the CEO, intake and the System Manager keep their own workspaces and are never moved;
+  - live command agents in old-layout workspaces are listed, never touched: each moves into its home
+    the next time it is hibernated and resumed.
+Managers go first, so the QC tabs land in the renamed home. Anything not ready is reported as
+"wait" with the reason; run again later. Re-runs skip what is already in place.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
+
+HERE = pdo_config.ENGINE_HOME
+QUESTION = ("Enter to select", "Do you want to proceed")
+
+
+def run(*cmd, timeout=60):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 1, ""
+
+
+def question_on_screen(pane):
+    if not pane:
+        return False
+    _, out = run("herdr", "pane", "read", pane, timeout=15)
+    return any(q in "\n".join(out.splitlines()[-40:]) for q in QUESTION)
+
+
+def idle_reason(slot):
+    """None when the agent may be touched now, else why not."""
+    status = slot.get("status")
+    if status not in ("idle", "done"):
+        return f"it is {status}"
+    if status == "blocked" or question_on_screen(slot.get("pane_id")):
+        return "a question is pending"
+    return None
+
+
+def plan_project(cfg, snapshot, workspaces):
+    p = cfg["project"]
+    team_home = cfg.get("team_home") or p
+    self_managed = set(cfg.get("self_managed_repos") or [])
+    managers = []
+    if set(cfg["repo_root"]) - self_managed and cfg.get("manager"):
+        managers.append((cfg["manager"], team_home))
+    for repo, name in (cfg.get("repo_manager") or {}).items():
+        if repo in self_managed and name and (name, repo) not in managers:
+            managers.append((name, repo))
+    labels = {w.get("label") for w in workspaces}
+    # the CEO, intake and the System Manager keep their own workspaces
+    keep_own = {"CEO", "intake", "System Manager", cfg.get("system_manager_workspace") or "System Manager"}
+    managers = [(n, h) for n, h in managers if n not in keep_own]
+    steps = []
+    for name, home in managers:
+        slot = pdo_herdr.find(name, snapshot)
+        if not slot:
+            steps.append({"kind": "manager", "name": name, "home": home, "action": "none",
+                          "why": "not running; it starts in its home"})
+        elif slot["layout"] == "tab":
+            steps.append({"kind": "manager", "name": name, "home": home, "action": "none",
+                          "why": f"already tab in '{slot['workspace']}'"})
+        elif home in labels:
+            steps.append({"kind": "manager", "name": name, "home": home, "action": "wait",
+                          "why": f"a workspace named '{home}' already exists: restart '{name}' as a tab there by hand"})
+        else:
+            why = idle_reason(slot)
+            steps.append({"kind": "manager", "name": name, "home": home, "slot": slot,
+                          "action": "wait" if why else "rename", "why": why or
+                          f"rename workspace '{name}' -> '{home}', its tab 1 -> '{name}'"})
+    qc_served = None
+    code, out = run(os.path.join(HERE, "bin", "qc"), "status", "--project", p)
+    try:
+        qc_served = json.loads(out.splitlines()[0]).get("pr") if code == 0 and out else None
+    except (ValueError, IndexError):
+        pass
+    in_progress = os.path.exists(os.path.join(cfg["state_dir"], "agent-qc", "in-progress.json"))
+    standing = [(f"QC ({p})", "start-qc", qc_served and f"PR #{qc_served} is being served for local QC")]
+    if cfg.get("agent_qc_ports"):
+        standing.append((f"QC Agent ({p})", "start-agent-qc", in_progress and "agent QC holds a PR in progress"))
+    for name, starter, busy in standing:
+        slot = pdo_herdr.find(name, snapshot)
+        if not slot:
+            continue
+        if slot["layout"] == "tab":
+            steps.append({"kind": "qc", "name": name, "home": team_home, "action": "none",
+                          "why": f"already tab in '{slot['workspace']}'"})
+            continue
+        why = idle_reason(slot) or busy
+        steps.append({"kind": "qc", "name": name, "home": team_home, "slot": slot, "starter": starter,
+                      "action": "wait" if why else "restart",
+                      "why": why or f"restart as a tab in '{team_home}' (/exit, close its old tab, {starter})"})
+    if not (set(cfg["repo_root"]) - self_managed):
+        slot = pdo_herdr.find(f"Orchestrator ({p})", snapshot)
+        if slot:
+            steps.append({"kind": "note", "name": f"Orchestrator ({p})", "home": team_home, "action": "none",
+                          "why": "every repo is self-managed, so it has nothing to queue; not moved (stop it if unneeded)"})
+    repos = set(cfg["repo_root"])
+    for slot in snapshot:
+        m = re.match(r"^(\S+)-(\d+) ", slot["name"] or "")
+        if m and m.group(1) in repos and slot["layout"] == "workspace":
+            home = m.group(1) if m.group(1) in self_managed else p
+            steps.append({"kind": "agent", "name": slot["name"], "home": home, "action": "none",
+                          "why": f"live in its own workspace ({slot['status']}); moves to '{home}' on its next resume"})
+    return steps
+
+
+def exit_agent(pane):
+    run("herdr", "agent", "prompt", pane, "/exit", timeout=15)
+    time.sleep(3)
+    _, screen = run("herdr", "pane", "read", pane, timeout=15)
+    if "Exit and stop tasks" in "\n".join(screen.splitlines()[-15:]):  # a /loop wakeup is pending
+        run("herdr", "pane", "send-keys", pane, "enter", timeout=15)
+    for _ in range(30):
+        agents = (pdo_herdr.call("agent", "list") or {}).get("agents", [])
+        if not any(a.get("pane_id") == pane for a in agents):
+            return True
+        time.sleep(1)
+    return False
+
+
+def apply(project, step):
+    slot = step["slot"]
+    if step["action"] == "rename":
+        ok = pdo_herdr.call("workspace", "rename", slot["workspace_id"], step["home"]) is not None
+        ok = ok and pdo_herdr.call("tab", "rename", slot["tab_id"], step["name"]) is not None
+        return "renamed" if ok else "failed: herdr rename"
+    if step["action"] == "restart":
+        if (slot.get("agent") or {}).get("agent") == "claude" and not exit_agent(slot["pane_id"]):
+            return "failed: it did not exit"
+        pdo_herdr.close(slot)
+        code, out = run(os.path.join(HERE, "bin", step["starter"]), "--project", project, timeout=300)
+        return ("restarted: " if code == 0 else "failed: ") + (out.strip().splitlines() or [""])[-1][:160]
+    return "skipped"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--project")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    names = [a.project] if a.project else pdo_config.projects()
+    out = []
+    for name in names:
+        cfg, err = pdo_config.try_load(name)
+        if not cfg:
+            print(f"relayout: {name}: {err}", file=sys.stderr)
+            continue
+        workspaces = (pdo_herdr.call("workspace", "list") or {}).get("workspaces", [])
+        steps = plan_project(cfg, pdo_herdr.slots(workspaces), workspaces)
+        if a.apply:
+            # managers first: the standing QC tabs then land in the renamed home
+            for s in sorted(steps, key=lambda s: s["kind"] != "manager"):
+                if s["action"] in ("rename", "restart"):
+                    s["result"] = apply(name, s)
+        for s in steps:
+            s.pop("slot", None)
+        out.append({"project": name, "home": cfg.get("team_home"), "steps": steps})
+    if a.json:
+        print(json.dumps(out, indent=1))
+        return
+    for p in out:
+        print(f"== {p['project']} (team home: {p['home']})")
+        for s in p["steps"]:
+            print(f"  [{s['action']}] {s['name']}: {s.get('result') or s['why']}")
+    if not a.apply:
+        print("dry run: nothing changed (--apply to do the 'rename' and 'restart' steps)")
+
+
+if __name__ == "__main__":
+    main()

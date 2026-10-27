@@ -12,7 +12,7 @@ same session back later). It then:
      children. Never touched: claude itself (step 2 ends it), the shared QC worktree and the QC
      ports (QC_PORTS and AGENT_QC_PORTS), and database clones (disk, not RAM).
      Then bin/tmp-sweep --session removes the browser profiles left in that scratchpad.
-  2. closes the herdr workspace, which ends claude and its MCP servers;
+  2. closes the agent's herdr tab (never its manager's workspace), which ends claude and its MCP servers;
   3. records hibernated_at in agents/<Repo>-<n>.json.
 bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibernated_at.
 
@@ -40,6 +40,7 @@ import time
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
 QC_PORTS = set()  # the project's QC_PORTS + AGENT_QC_PORTS: never stopped (the human's and the QC Agent's servers)
@@ -103,7 +104,7 @@ def side_processes(worktree, session_id, qc_worktree, keep_mcp):
 
     protected = {os.getpid(), os.getppid()} | qc_port_pids()
     # claude's ancestors (the herdr pane shell) end claude if killed: always leave them to
-    # `workspace close`, or keep them for --servers-only
+    # the tab close, or keep them for --servers-only
     for pid, p in procs.items():
         if p["comm"] == "claude":
             up = p["ppid"]
@@ -179,11 +180,10 @@ def main():
         worktree = ""
     qc_wt = os.path.join(cfg["worktree_parent"].get(a.repo, "/nonexistent"), cfg["qc_worktree"])
 
-    # herdr reuses workspace ids: an id only counts while its label is still this agent's name
-    ws_labels = {w["workspace_id"]: w.get("label") for w in json.loads(run("herdr", "workspace", "list") or '{"result":{"workspaces":[]}}')["result"]["workspaces"]}
-    agents = json.loads(run("herdr", "agent", "list") or '{"result":{"agents":[]}}')["result"]["agents"]
-    pane = next((x for x in agents if x.get("workspace_id") == meta.get("workspace_id")
-                     and ws_labels.get(meta.get("workspace_id")) == meta.get("name") and x.get("agent") == "claude"), None)
+    # find the agent by its name (its tab label, or an old-layout workspace label): herdr reuses ids,
+    # so a recorded id alone never identifies it
+    slot = pdo_herdr.find(meta.get("name") or "")
+    pane = slot["agent"] if slot and (slot.get("agent") or {}).get("agent") == "claude" else None
 
     if not a.servers_only:
         if not session or not glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session}.jsonl")):
@@ -227,7 +227,7 @@ def main():
     if a.dry_run:
         for p in procs:
             print(f"would stop {p['pid']} {p['comm']}: {p['cmd'][:100]}")
-        print(f"would free ~{rss // 1024} MB of side processes" + ("" if a.servers_only else "; would close the workspace"))
+        print(f"would free ~{rss // 1024} MB of side processes" + ("" if a.servers_only else "; would close its tab"))
         return
     stop(procs)
     freed = rss // 1024
@@ -240,11 +240,12 @@ def main():
         except (ValueError, KeyError):
             pass
     if not a.servers_only:
-        # close only a workspace that is still this agent's (ids get reused after a close)
-        if meta.get("workspace_id") and ws_labels.get(meta["workspace_id"]) == meta.get("name"):
-            subprocess.run(["herdr", "workspace", "close", meta["workspace_id"]], capture_output=True)
+        # close the agent's TAB, never a workspace: a manager's home keeps its other tabs, and an
+        # old-layout agent's own workspace goes with its last tab
+        if slot:
+            pdo_herdr.close(slot)
         meta["hibernated_at"] = int(time.time())
-        meta["workspace_id"] = meta["pane_id"] = None  # don't let a stale id point at a future workspace
+        meta["workspace_id"] = meta["pane_id"] = meta["tab_id"] = None  # stale ids must not point at a future place
         if a.closed_out:
             meta["closed_out"] = True
         with open(meta_file + ".tmp", "w", encoding="utf-8") as f:
@@ -260,7 +261,7 @@ def main():
             print(f"hibernate: warning: claim label not released: {r.stderr.strip()[:200]}", file=sys.stderr)
     print(json.dumps({"workspace": meta.get("name"), "hibernated": not a.servers_only, "stopped": len(procs), "freed_side_mb": freed,
                       "freed_tmp_mb": freed_tmp,
-                      "workspace_closed": not a.servers_only, "claim_released": released}))
+                      "tab_closed": not a.servers_only, "claim_released": released}))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start-agent-qc — open the standing "QC Agent (<project>)" herdr workspace (agent name
+# start-agent-qc — open the standing "QC Agent (<project>)" herdr tab in the project's home (agent name
 # "qc-agent-<project>") running `/loop <AGENT_QC_SKILL> project=<project>` (default
 # ${PDO_SKILL_PREFIX}project-agent-qc) in CONTROL_DIR. It QCs every 'ready for QC' PR in
 # AGENT_QC_REPOS, one at a time, on AGENT_QC_PORTS, before any human sees it. Off unless the
@@ -29,31 +29,26 @@ HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
 MODEL="${MODEL:-$DEFAULT_MODEL}"
 NAME="QC Agent ($PROJECT)" AGENT="qc-agent-$PROJECT"
 LOOP="/loop $AGENT_QC_SKILL project=$PROJECT"
-WS_ID="$(herdr workspace list | jq -r --arg n "$NAME" '[.result.workspaces[] | select(.label == $n) | .workspace_id][0] // empty')"
-if [[ -n "$WS_ID" ]]; then
-  PANE="$(herdr agent list | jq -r --arg w "$WS_ID" '[.result.agents[] | select(.workspace_id == $w and .agent == "claude") | "\(.agent_status) \(.pane_id)"][0] // empty')"
-  if [[ -n "$PANE" ]]; then
-    herdr agent rename "${PANE#* }" "$AGENT" >/dev/null 2>&1 || true
-    # alive but idle, nothing in progress, no question on screen, and no tick for 90 min (each tick
-    # runs `agent-qc next`, which touches the heartbeat; idle ticks are at most 30 min apart): its
-    # /loop has ended
-    HB="$PDO_STATE_DIR/agent-qc/heartbeat"
-    age=$(( $(date +%s) - $(stat -c %Y "$HB" 2>/dev/null || echo 0) ))
-    if [[ "${PANE%% *}" == idle && ! -f "$PDO_STATE_DIR/agent-qc/in-progress.json" ]] && (( age > 5400 )) \
-       && ! herdr pane read "${PANE#* }" | tail -40 | grep -qE "Enter to select|Do you want to proceed"; then
-      herdr agent prompt "${PANE#* }" "$LOOP" >/dev/null
-      echo "QC Agent was idle in workspace \"$NAME\"; restarted $LOOP"
-    else
-      echo "QC Agent already running in workspace \"$NAME\""
-    fi
-    exit 0
+pdo_standing "$NAME" "$(pdo_team_home)" || die "could not open a herdr tab for \"$NAME\""
+if (( STAND_ALIVE )); then
+  herdr agent rename "$STAND_PANE" "$AGENT" >/dev/null 2>&1 || true
+  # alive but idle, nothing in progress, no question on screen, and no tick for 90 min (each tick
+  # runs `agent-qc next`, which touches the heartbeat; idle ticks are at most 30 min apart): its
+  # /loop has ended
+  HB="$PDO_STATE_DIR/agent-qc/heartbeat"
+  age=$(( $(date +%s) - $(stat -c %Y "$HB" 2>/dev/null || echo 0) ))
+  if [[ "$STAND_STATUS" == idle && ! -f "$PDO_STATE_DIR/agent-qc/in-progress.json" ]] && (( age > 5400 )) \
+     && ! herdr pane read "$STAND_PANE" | tail -40 | grep -qE "Enter to select|Do you want to proceed"; then
+    herdr agent prompt "$STAND_PANE" "$LOOP" >/dev/null
+    echo "QC Agent was idle in $STAND_WHERE; restarted $LOOP"
+  else
+    echo "QC Agent already running in $STAND_WHERE"
   fi
-else
-  WS_ID="$(herdr workspace create --cwd "$CONTROL_DIR" --label "$NAME" --no-focus | jq -r '[.. | objects | .workspace_id? // empty][0]')"
+  exit 0
 fi
-PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
+PANE_ID="$STAND_PANE"
 # no remote control: nobody interacts with or monitors the QC Agent (owner decision 2026-10-25)
 set +e; PDO_REMOTE_CONTROL=0 launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "$LOOP"; rc=$?; set -e
-[[ $rc -eq 0 ]] || die "QC Agent did not start cleanly (rc=$rc); see workspace \"$NAME\""
+[[ $rc -eq 0 ]] || die "QC Agent did not start cleanly (rc=$rc); see $STAND_WHERE"
 herdr agent rename "$PANE_ID" "$AGENT" >/dev/null 2>&1 || true
-echo "QC Agent running in workspace \"$NAME\" (id $WS_ID)"
+echo "QC Agent running in $STAND_WHERE"

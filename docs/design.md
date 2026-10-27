@@ -11,10 +11,10 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
   hooks and skills. Reload it after a context clear with the `project-system-manager` skill; it reads
   [lessons-learned.md](lessons-learned.md) and runs `bin/sysreport`. Its workspace name is the project's
   `SYSTEM_MANAGER_WORKSPACE`.
-- **Orchestrator.** One long-lived agent session in its own herdr workspace, `Orchestrator (<project>)`,
-  running `/loop` over the `project-orchestrate` skill. It ranks the queue, claims issues, spawns command
+- **Orchestrator.** One long-lived agent session, `Orchestrator (<project>)`: tab 1 of the project's
+  home workspace (see "herdr layout" below), running `/loop` over the `project-orchestrate` skill. It ranks the queue, claims issues, spawns command
   agents, routes events and moves board cards. It never edits product code.
-- **Command agent.** One per issue or epic, in its own herdr workspace (`<Repo>-<issue#> <2-3 word brief>`)
+- **Command agent.** One per issue or epic, in its own herdr tab of its home (`<Repo>-<issue#> <2-3 word brief>`)
   and its own git worktree. It runs a lifecycle skill and orchestrates its own sub-agents.
 - **QC agent.** The standing `QC (<project>)` workspace (`project-qc-review`). It serves a PR on the
   project's QC servers for the human's hands-on QC, and relays feedback to the PR's command agent.
@@ -27,6 +27,33 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
   are split. It never does project work. See [CEO](#ceo).
 - **Human.** Answers questions directly in a command agent's workspace, does UX and QC review, and merges
   by hand.
+
+## herdr layout (engine 0.12+)
+
+One herdr workspace per manager, one tab per agent (`AGENT_LAYOUT=tabs`, the default):
+
+- **Homes.** An orchestrated project's home is labelled with the project's name (`acme`): tab 1
+  `Orchestrator (acme)`, then `QC (acme)`, `QC Agent (acme)` and one tab per command agent
+  (`<Repo>-<n> <brief>`) for every repo the orchestrator manages. A self-managed repo's home is labelled
+  with the repo's name (`dnd3yond`): tab 1 `Repo Manager (dnd3yond)`, then its agents. When every repo of a
+  project is self-managed, its standing QC tabs live in the primary repo's home (`pdo_team_home`;
+  `TEAM_HOME` overrides). The CEO, `System Manager` and `intake` keep their own workspaces.
+- **Names are labels.** The tab label is the agent's name everywhere the engine used a workspace label
+  before. `bin/pdo_herdr.py` (`pdo herdr-agent`) is the one place that maps names to herdr places: it
+  matches a tab label first, then a workspace label, so agents of the old layout (one workspace per
+  agent, labelled with its name) keep working during the switch. watch, queue, fleet, sysreport,
+  agent-meta, pr-agent, hibernate, resume-agent, spawn and the start-* scripts all go through it.
+- **Placing.** `pdo_place <home> <name> <cwd>` (lib.sh) opens a tab in the home, creating the home (with
+  that agent as tab 1) if it is missing. A resumed old-layout agent reopens as a tab in its home.
+- **Closing.** Always `herdr tab close`, never `herdr workspace close`: herdr closes a workspace with its
+  last tab, so an old-layout agent's own workspace still goes, and a home with other agents never does.
+  hibernate, spawn's rollback, the qc-review wrap-up and the orchestrator's `design_ready` step close tabs.
+- **Status.** herdr reports `agent_status` per tab, and a blocked tab marks its whole home blocked in the
+  sidebar. fleet and sysreport list status per tab, so a question in tab N reaches the CEO's list.
+- **Migration.** `pdo relayout` (dry run unless `--apply`) renames each idle manager's old workspace to
+  its home and its tab 1 to the manager's name, and restarts idle standing QC sessions as tabs there
+  (nothing served, no agent-QC PR in progress). Live command agents are never moved; each moves into its
+  home the next time it is hibernated and resumed. `AGENT_LAYOUT=workspaces` restores the old layout.
 
 ## Spawning
 
@@ -317,6 +344,8 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QUEUE_LABEL` | `queue:work` | board-less projects only: the issue label that puts an issue in the queue; empty = no queue |
 | `REPO_ROOT` | (required) | `declare -A`: repo name → local clone root |
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
+| `AGENT_LAYOUT` | `tabs` | `tabs`: one herdr workspace per manager, one tab per agent; `workspaces`: one workspace per agent (pre-0.12) |
+| `TEAM_HOME` | | the standing agents' home workspace (default: the project's name, or the primary repo's when every repo is self-managed) |
 | `REPO_MANAGER` | `()` | `declare -A`: self-managed repo → its manager's workspace/session name (`fleet`) |
 | `MANAGER` | `Orchestrator (<p>)` with a board, else empty | the project manager's workspace/session name; empty = the human |
 | `MANAGER_SLUG` | a slug of `MANAGER` (else of the project name), e.g. `orchestrator-acme` | the claim label is `managed-by:<slug>`; cut to 39 characters |

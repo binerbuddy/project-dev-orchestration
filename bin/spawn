@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# spawn — start a command agent for one GitHub issue in its own herdr workspace.
+# spawn — start a command agent for one GitHub issue in a herdr tab of its manager's workspace.
 #
 # Usage: spawn <repo> <issue#> [--route small|design|build] [--brief "2-3 words"]
 #              [--base <ref>] [--model <alias>] [--project P] [--no-claim] [--allow-phase] [--dry-run]
 #
 # Creates a dedicated git worktree under WORKTREE_PARENT[<repo>] (the bare root, or "<clone>-worktrees"
 # next to a plain clone), so each agent has its own cwd and OMC state; then
-# writes a dispatch brief, opens a herdr workspace named "<Repo>-<n> <brief>", and
+# writes a dispatch brief, opens a herdr tab named "<Repo>-<n> <brief>" in its home (the project's workspace, or a self-managed repo's), and
 # starts the agent (AGENT_CLI, default claude) there with Remote Control on and the route's lifecycle skill as the
 # first prompt. On success, claims the issue (bin/claim: managed-by label, claim comment, board In Progress).
 set -euo pipefail
@@ -144,9 +144,9 @@ WORKTREE="${WORKTREE_PARENT[$REPO]}/$SLUG"
 [[ "$ROUTE" == design ]] && WORKTREE="${WORKTREE_PARENT[$REPO]}/$SLUG-design"
 
 # --- duplicate guards ---
-if herdr workspace list 2>/dev/null | jq -e --arg p "$REPO-$NUM " \
-     '.result.workspaces[] | select(.label | startswith($p))' >/dev/null; then
-  die "a herdr workspace for $REPO-$NUM already exists"
+# an agent's name is its tab label (or, in the old layout, its workspace label): check both
+if "$HERE/bin/herdr-agent" names 2>/dev/null | grep -q -- "^$REPO-$NUM "; then
+  die "a herdr agent for $REPO-$NUM already exists"
 fi
 [[ ! -e "$WORKTREE" ]] || die "worktree path already exists: $WORKTREE"
 if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then die "branch already exists: $BRANCH"; fi
@@ -164,10 +164,11 @@ if [[ $DRY -eq 1 ]]; then
   exit 0
 fi
 
-# --- worktree (rolled back, with the workspace, if a later step fails) ---
-WS_ID=""
+# --- worktree (rolled back, with the agent's tab, if a later step fails) ---
+WS_ID="" TAB_ID=""
 rollback() {
-  [[ -n "$WS_ID" ]] && herdr workspace close "$WS_ID" >/dev/null 2>&1 || true
+  # close only the tab: the workspace may be the manager's home with other agents in it
+  [[ -n "$TAB_ID" ]] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
   git -C "$ROOT" worktree remove --force "$WORKTREE" 2>/dev/null || true
   git -C "$ROOT" branch -D "$BRANCH" >/dev/null 2>&1 || true
 }
@@ -191,15 +192,13 @@ text = re.sub(r"\{\{([A-Z]+)\}\}", lambda m: os.environ.get(m.group(1), m.group(
 open(dst, "w", encoding="utf-8", newline="\n").write(text)
 PY
 
-# --- herdr workspace + agent ---
-WS_JSON="$(herdr workspace create --cwd "$WORKTREE" --label "$NAME" --no-focus)"
-WS_ID="$(jq -r '[.. | objects | .workspace_id? // empty][0]' <<<"$WS_JSON")"
-[[ -n "$WS_ID" && "$WS_ID" != null ]] || die "workspace create returned no id: $WS_JSON"
-PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
-[[ -n "$PANE_ID" && "$PANE_ID" != null ]] || die "no pane in workspace $WS_ID"
+# --- herdr place (a tab in its manager's home, AGENT_LAYOUT=tabs) + agent ---
+HOME_WS="$(pdo_home_of "$REPO")"
+pdo_place "$HOME_WS" "$NAME" "$WORKTREE" || die "could not open a herdr tab for $NAME in \"$HOME_WS\""
+WS_ID="$PLACE_WS" TAB_ID="$PLACE_TAB" PANE_ID="$PLACE_PANE"
 
 set +e; launch_agent "$PANE_ID" "$WORKTREE" "$NAME" "$MODEL" "$PROMPT"; rc=$?; set -e
-if [[ $rc -eq 2 ]]; then trap - EXIT; die "agent is blocked on an unexpected prompt; left workspace \"$NAME\" open for a human"; fi
+if [[ $rc -eq 2 ]]; then trap - EXIT; die "agent is blocked on an unexpected prompt; left tab \"$NAME\" open for a human"; fi
 [[ $rc -eq 0 ]] || die "agent did not become ready"
 herdr agent rename "$PANE_ID" "$AGENT" >/dev/null 2>&1 || true
 trap - EXIT
@@ -207,11 +206,12 @@ trap - EXIT
 # metadata the watcher, qc-review and resume-agent use
 write_meta "$REPO" "$NUM" "$(jq -n --arg repo "$REPO" --argjson num "$NUM" --arg route "$ROUTE" \
   --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg ws "$WS_ID" --arg pane "$PANE_ID" \
-  --arg name "$NAME" --arg session "$(session_of "$PANE_ID")" \
+  --arg tab "$TAB_ID" --arg home "$HOME_WS" --arg name "$NAME" --arg session "$(session_of "$PANE_ID")" \
   '{repo: $repo, number: $num, route: $route, branch: $branch, worktree: $worktree, cwd: $worktree,
-    name: $name, workspace_id: $ws, pane_id: $pane, session_id: $session, spawned_at: (now | floor), hibernated_at: null}')"
+    name: $name, workspace_id: $ws, tab_id: $tab, home: $home, pane_id: $pane, session_id: $session,
+    spawned_at: (now | floor), hibernated_at: null}')"
 
-jq -n --arg name "$NAME" --arg agent "$AGENT" --arg ws "$WS_ID" --arg pane "$PANE_ID" --arg route "$ROUTE" \
-  --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg brief "$BRIEF_FILE" \
-  '{spawned: true, name: $name, agent: $agent, workspace_id: $ws, pane_id: $pane, route: $route,
+jq -n --arg name "$NAME" --arg agent "$AGENT" --arg ws "$WS_ID" --arg tab "$TAB_ID" --arg home "$HOME_WS" \
+  --arg pane "$PANE_ID" --arg route "$ROUTE" --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg brief "$BRIEF_FILE" \
+  '{spawned: true, name: $name, agent: $agent, workspace_id: $ws, tab_id: $tab, home: $home, pane_id: $pane, route: $route,
     branch: $branch, worktree: $worktree, brief: $brief}'

@@ -62,6 +62,7 @@ import time
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
 WARN = []
@@ -304,8 +305,9 @@ def manager_of(cfg, workspaces, agents_by_ws):
         if w:
             a = agents_by_ws.get(w.get("workspace_id"), {})
             m.update(live=True, agent=a.get("name"), status=a.get("agent_status") or w.get("agent_status"))
+            where = (f"herdr tab '{name}' in '{w['home']}'" if w.get("home") else f"herdr workspace '{name}'")
             m["reach"] = ("peer message (tool's peer messaging), else "
-                          + (f"herdr agent prompt {a['name']}" if a.get("name") else f"herdr workspace '{name}'")
+                          + (f"herdr agent prompt {a['name']}" if a.get("name") else where)
                           + (" (question pending: tell the human instead)" if m["status"] == "blocked" else ""))
         else:
             m["reach"] = f"not running: ask the human to start '{name}'"
@@ -354,7 +356,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     except (OSError, ValueError):
         cap = PR_CAP_DEFAULT
 
-    # agents: live workspaces labelled <Repo>-<n> <brief>, then hibernated metadata
+    # agents: live places (tabs or old-layout workspaces) labelled <Repo>-<n> <brief>, then hibernated metadata
     snap = read_json(os.path.join(state, f"{p}-watch.json"), {}) or {}
     snap_agents = snap.get("agents") or {}
     snap_age = None
@@ -958,7 +960,16 @@ def main():
     gstate = pdo_config.global_state_dir()
 
     workspaces, agents, herdr_ok = herdr_state()
-    agents_by_ws = {x.get("workspace_id"): x for x in agents}
+    # one entry per agent place, either layout: a tab in its manager's home (labelled with the agent's
+    # name) or an old-layout workspace. Status is per tab, so a question in tab N of a home is seen.
+    if herdr_ok:
+        tabs = (pdo_herdr.call("tab", "list") or {}).get("tabs", [])
+        places = pdo_herdr.slots(workspaces, tabs, agents)
+        workspaces = [{"label": x["name"], "workspace_id": x.get("tab_id") or x["workspace_id"], "agent_status": x["status"],
+                       "home": x["workspace"] if x["layout"] == "tab" else None} for x in places]
+        agents_by_ws = {(x.get("tab_id") or x["workspace_id"]): (x.get("agent") or {}) for x in places}
+    else:
+        agents_by_ws = {}
 
     users = sorted({c.get("gh_user") or "" for c in cfgs})
     envs = {u: gh_env(u) for u in users}

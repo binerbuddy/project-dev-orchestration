@@ -40,9 +40,10 @@ fi
 
 log() { echo "$(date '+%F %T') $*"; }
 NAME="QC Agent ($PROJECT)"
-WS_ID="$(herdr workspace list | jq -r --arg n "$NAME" '[.result.workspaces[] | select(.label == $n) | .workspace_id][0] // empty')"
-[[ -n "$WS_ID" ]] || { log "skip: no workspace \"$NAME\""; exit 0; }
-PANE="$(herdr agent list | jq -r --arg w "$WS_ID" '[.result.agents[] | select(.workspace_id == $w and .agent == "claude") | .pane_id][0] // empty')"
+# found by name: its tab in the project's home, or an old-layout workspace
+SLOT="$(pdo_find "$NAME" 2>/dev/null || true)"
+[[ -n "$SLOT" ]] || { log "skip: no tab or workspace \"$NAME\""; exit 0; }
+PANE="$(jq -r 'select(.agent.agent == "claude") | .pane_id // empty' <<<"$SLOT")"
 [[ -n "$PANE" ]] || { log "skip: no agent in \"$NAME\""; exit 0; }
 
 sleep "${RECYCLE_SETTLE_SEC:-5}"  # the caller's turn is still running; let herdr see it as working
@@ -65,7 +66,7 @@ for _ in $(seq 1 30); do
   herdr agent list | jq -e --arg p "$PANE" '.result.agents[] | select(.pane_id == $p)' >/dev/null || { gone=1; break; }
   sleep 1
 done
-[[ $gone -eq 1 ]] || { log "failed: the QC Agent didn't exit; see workspace \"$NAME\""; exit 1; }
+[[ $gone -eq 1 ]] || { log "failed: the QC Agent didn't exit; see \"$NAME\""; exit 1; }
 log "exited the QC Agent (pane $PANE); relaunching"
 # nothing resumes an ended QC Agent session, so its whole scratchpad goes (/tmp is often RAM)
 [[ -z "$SESSION" ]] || "$HERE/bin/tmp-sweep" --project "$PROJECT" --session "$SESSION" --whole 2>&1 | tail -1 | while read -r l; do log "$l"; done

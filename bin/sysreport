@@ -25,8 +25,10 @@ echo "== spawn floor: $("$HERE/bin/floor" --project "$PROJECT")"
 U="${USAGE_CACHE:-$HOME/.claude/plugins/oh-my-claudecode/.usage-cache-anthropic.json}"
 [[ -f "$U" ]] && echo "== usage: weekly $(jq -r .data.weeklyPercent "$U")%, 5h $(jq -r .data.fiveHourPercent "$U")%"
 
-echo "== herdr workspaces (name | status)"
-herdr workspace list 2>/dev/null | jq -r '.result.workspaces[] | "  \(.label) | \(.agent_status)"'
+# one line per agent, per tab: a blocked agent in any tab of a home shows here (and in pdo fleet)
+echo "== herdr agents (workspace > tab | status)"
+"$HERE/bin/herdr-agent" slots 2>/dev/null | jq -r '.[] | select(.name != "")
+  | "  \(if .layout == "tab" then "\(.workspace) > \(.name)" else .name end) | \(.status)"'
 echo "== named agents: $(herdr agent list 2>/dev/null | jq -r '[.result.agents[] | .name // empty] | join(", ")')"
 
 if pgrep -f '[b]in/watch --project' >/dev/null; then

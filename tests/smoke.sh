@@ -43,7 +43,9 @@ case "$*" in
   "api -X DELETE repos/acme/widget/issues/"*"/labels/managed-by%3A"*) ;;
   "api repos/acme/widget/issues/"*"/comments -f body="*) echo 9001 ;;
   "issue edit"*) ;;
-  "pr list -R acme/widget --state open"*) echo feat/61 ;;  # tmp-sweep: open PRs keep their agents' scratchpads
+  "pr list -R acme/widget --state open"*) echo feat/61 ;;
+  "pr list -R acme/widget --head feat/77"*) echo '[{"number":77,"labels":[{"name":"ready for QC"}],"state":"OPEN","isDraft":false}]' ;;
+  "api repos/acme/widget/issues/77 --jq"*) echo '{"state":"open","labels":[]}' ;;  # tmp-sweep: open PRs keep their agents' scratchpads
   # qc-fixture-push: the fixture release and its assets
   "release view "*" -R acme/"*) [[ -f "$SMOKE_DIR/fixture-release" ]] || exit 1 ;;
   "release create "*" -R acme/"*) touch "$SMOKE_DIR/fixture-release" ;;
@@ -118,6 +120,11 @@ case "$1 ${2:-}" in
   "pane run") if [[ -n "${SMOKE_HERDR_EXIT:-}" && -f "$SMOKE_HERDR_AGENTS.saved" ]]; then mv "$SMOKE_HERDR_AGENTS.saved" "$SMOKE_HERDR_AGENTS"; fi
               echo '{"result":{}}' ;;
   "pane list") echo "{\"result\":{\"panes\":[{\"pane_id\":\"${SMOKE_HERDR_PANE:-}\"}]}}" ;;
+  "tab list") if [[ -n "${SMOKE_HERDR_TABS:-}" ]]; then cat "$SMOKE_HERDR_TABS"; else echo '{"result":{"tabs":[]}}'; fi ;;
+  # a new place: SMOKE_HERDR_NEW names the new workspace (or, for a tab, the home's) id
+  "tab create") w="${SMOKE_HERDR_NEW:-wH}"; echo "{\"result\":{\"tab\":{\"tab_id\":\"$w:t9\"},\"root_pane\":{\"pane_id\":\"$w:p9\"}}}" ;;
+  "workspace create") w="${SMOKE_HERDR_NEW:-wN}"
+    echo "{\"result\":{\"workspace\":{\"workspace_id\":\"$w\"},\"tab\":{\"tab_id\":\"$w:t1\"},\"root_pane\":{\"pane_id\":\"$w:p1\"}}}" ;;
   *) echo '{"result":{}}' ;;
 esac
 EOF
@@ -249,7 +256,7 @@ sed -i 's/"idle"/"working"/' "$RQ/agents.json"
 : >"$SMOKE_LOG"; out="$("${R[@]}" "$BIN/recycle-agent-qc" --project acme --foreground)"
 check "recycle-agent-qc: still working -> no restart" bash -c '! grep -q "agent prompt" "$0"' "$SMOKE_LOG"
 out="$("${R[@]}" SMOKE_HERDR_WS=/dev/null "$BIN/recycle-agent-qc" --project acme --foreground 2>&1)"
-check "recycle-agent-qc: no QC Agent workspace -> skip" grep -q "skip: no workspace" <<<"$out"
+check "recycle-agent-qc: no QC Agent tab or workspace -> skip" grep -q "skip: no tab or workspace" <<<"$out"
 out="$("${R[@]}" "$BIN/recycle-agent-qc" --project acme)"
 check "recycle-agent-qc: detaches by default" grep -q "will restart the QC Agent once this turn ends" <<<"$out"
 eq "default state dir" "$(env -u PDO_STATE_DIR "$BIN/pdo-config" --state-dir)" "$T/home/.local/state/project-dev-orchestration"
@@ -853,6 +860,77 @@ has "watch hook: failures warn on stderr" "$(cat "$T/watch.err")" "WATCH_EVENT_H
 out="$(WATCH_EVENT_HOOK="$T/missing-hook" W)"
 eq "watch hook: a missing hook is a warning" "$(jq -c '[.events[] | .type]' <<<"$out" 2>/dev/null)" '["event_hook_failed"]'
 eq "project-env prints WATCH_EVENT_HOOK" "$(WATCH_EVENT_HOOK=hooks/x "$BIN/project-env" --project acme WATCH_EVENT_HOOK)" "$T/cfg-a/hooks/x"
+
+# --- herdr layouts: one tab per agent in its manager's home, old one-workspace-per-agent, mixed ---
+HL="$T/layout"; mkdir -p "$HL"
+# home "acme" (tabs: Orchestrator, widget-7) + an old-layout workspace widget-5 + intake on its own
+echo '{"result":{"workspaces":[{"label":"acme","workspace_id":"wH","agent_status":"blocked"},{"label":"widget-5 old fix","workspace_id":"wO","agent_status":"idle"},{"label":"intake","workspace_id":"wI","agent_status":"idle"}]}}' >"$HL/ws.json"
+echo '{"result":{"tabs":[{"label":"Orchestrator (acme)","number":1,"tab_id":"wH:t1","workspace_id":"wH","agent_status":"idle"},{"label":"widget-7 tabbed fix","number":2,"tab_id":"wH:t2","workspace_id":"wH","agent_status":"blocked"},{"label":"1","number":1,"tab_id":"wO:t1","workspace_id":"wO","agent_status":"idle"},{"label":"1","number":1,"tab_id":"wI:t1","workspace_id":"wI","agent_status":"idle"},{"label":"2","number":2,"tab_id":"wI:t2","workspace_id":"wI","agent_status":"unknown"}]}}' >"$HL/tabs.json"
+echo '{"result":{"agents":[{"agent":"claude","name":"orchestrator-acme","workspace_id":"wH","tab_id":"wH:t1","pane_id":"wH:p1","agent_status":"idle"},{"agent":"claude","name":"widget-7","workspace_id":"wH","tab_id":"wH:t2","pane_id":"wH:p2","agent_status":"blocked"},{"agent":"claude","name":"widget-5","workspace_id":"wO","tab_id":"wO:t1","pane_id":"wO:p1","agent_status":"idle"},{"agent":"claude","name":"intake","workspace_id":"wI","tab_id":"wI:t1","pane_id":"wI:p1","agent_status":"idle"}]}}' >"$HL/agents.json"
+L=(env SMOKE_HERDR_WS="$HL/ws.json" SMOKE_HERDR_TABS="$HL/tabs.json" SMOKE_HERDR_AGENTS="$HL/agents.json")
+eq "layout: find a tab agent by its tab label" "$("${L[@]}" "$BIN/herdr-agent" find "widget-7 tabbed fix" | jq -c '[.layout, .workspace, .tab_id, .pane_id, .status]')" '["tab","acme","wH:t2","wH:p2","blocked"]'
+eq "layout: find an old-layout agent by its workspace label" "$("${L[@]}" "$BIN/herdr-agent" find "widget-5 old fix" | jq -c '[.layout, .tab_id, .pane_id]')" '["workspace","wO:t1","wO:p1"]'
+eq "layout: the manager is tab 1 of its home" "$("${L[@]}" "$BIN/herdr-agent" find "Orchestrator (acme)" | jq -c '[.layout, .tab_id]')" '["tab","wH:t1"]'
+eq "layout: names = tab labels + old workspace labels, not the home or unnamed extra tabs" "$("${L[@]}" "$BIN/herdr-agent" names | LC_ALL=C sort | paste -sd'|')" 'Orchestrator (acme)|intake|widget-5 old fix|widget-7 tabbed fix'
+check "layout: an unknown name is not found" bash -c "! ${L[*]} '$BIN/herdr-agent' find 'widget-9 nothing'"
+: >"$SMOKE_LOG"
+"${L[@]}" "$BIN/herdr-agent" close "widget-7 tabbed fix"
+check "layout: closing a tab agent closes only its tab" grep -qx "herdr tab close wH:t2" "$SMOKE_LOG"
+"${L[@]}" "$BIN/herdr-agent" close "widget-5 old fix"
+check "layout: closing an old-layout agent closes its (only) tab" grep -qx "herdr tab close wO:t1" "$SMOKE_LOG"
+eq "layout: nothing ever closes a workspace" "$(grep -c 'workspace close' "$SMOKE_LOG")" 0
+: >"$SMOKE_LOG"
+eq "layout: place in an existing home = a new tab there" "$("${L[@]}" "$BIN/herdr-agent" place acme "widget-8 new fix" /tmp | jq -c '[.workspace_id, .tab_id, .pane_id, .home]')" '["wH","wH:t9","wH:p9","acme"]'
+check "layout: the new tab carries the agent's name" grep -q "herdr tab create --workspace wH --cwd /tmp --label widget-8 new fix --no-focus" "$SMOKE_LOG"
+: >"$SMOKE_LOG"
+eq "layout: place in a missing home creates it, this agent as tab 1" "$("${L[@]}" SMOKE_HERDR_NEW=wD "$BIN/herdr-agent" place docs "Repo Manager (docs)" /tmp | jq -c '[.workspace_id, .tab_id, .pane_id]')" '["wD","wD:t1","wD:p1"]'
+check "layout: the new home is labelled with its name" grep -q "herdr workspace create --cwd /tmp --label docs --no-focus" "$SMOKE_LOG"
+check "layout: its first tab is renamed to the agent" grep -qx "herdr tab rename wD:t1 Repo Manager (docs)" "$SMOKE_LOG"
+: >"$SMOKE_LOG"
+"${L[@]}" AGENT_LAYOUT=workspaces "$BIN/herdr-agent" place acme "widget-8 new fix" /tmp >/dev/null
+check "layout: AGENT_LAYOUT=workspaces keeps one workspace per agent" grep -q "herdr workspace create --cwd /tmp --label widget-8 new fix --no-focus" "$SMOKE_LOG"
+eq "layout: no herdr tab data = one slot per workspace (pre-0.12 herdr)" "$(SMOKE_HERDR_WS="$HL/ws.json" SMOKE_HERDR_AGENTS="$HL/agents.json" "$BIN/herdr-agent" find "widget-5 old fix" | jq -c '[.layout, .pane_id]')" '["workspace","wO:p1"]'
+homes="$(bash -c 'source "$1/lib.sh"; pdo_resolve_project acme; HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+  echo "$(pdo_home_of widget) $(pdo_home_of docs) $(pdo_team_home) $AGENT_LAYOUT"' _ "$BIN")"
+eq "layout: homes (orchestrated repo -> project, self-managed repo -> itself, team -> project)" "$homes" "acme docs acme tabs"
+eq "layout: a project whose every repo is self-managed homes its team in the primary repo's" "$(bash -c 'source "$1/lib.sh"; pdo_resolve_project acme; HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; SELF_MANAGED_REPOS=(docs widget); pdo_finalize; pdo_team_home' _ "$BIN")" "widget"
+# mixed layout in the queue and the watcher: an agent in a tab blocks a second spawn, and is tracked
+cat >"$HL/delta-tabs.json" <<'EOF'
+{"result":{"tabs":[{"label":"Orchestrator (delta)","number":1,"tab_id":"wD:t1","workspace_id":"wD","agent_status":"idle"},{"label":"tool-1 tabbed work","number":2,"tab_id":"wD:t2","workspace_id":"wD","agent_status":"working"}]}}
+EOF
+echo '{"result":{"workspaces":[{"label":"delta","workspace_id":"wD","agent_status":"working"},{"label":"tool-26 old work","workspace_id":"wX","agent_status":"idle"}]}}' >"$HL/delta-ws.json"
+qd="$(PDO_CONFIG_DIRS="$T/cfg-q" SMOKE_HERDR_WS="$HL/delta-ws.json" SMOKE_HERDR_TABS="$HL/delta-tabs.json" "$BIN/queue" --project delta --all --json 2>&1)"
+eq "layout: queue excludes issues with a live agent in a tab or an old workspace (no double spawn)" "$(jq -c '[.excluded[] | select(.number == 1 or .number == 26) | "\(.number):\(.excluded | join(","))"]' <<<"$qd")" '["1:workspace-open","26:workspace-open"]'
+pk="$(PDO_CONFIG_DIRS="$T/cfg-q" SMOKE_HERDR_WS="$HL/delta-ws.json" SMOKE_HERDR_TABS="$HL/delta-tabs.json" "$BIN/watch" --project delta --peek 2>/dev/null)"
+eq "layout: the watcher tracks agents in tabs and in old workspaces" "$(jq -c '[.agents | to_entries[] | select(.value.hibernated | not) | .key] | sort' <<<"$pk" 2>/dev/null)" '["tool#1","tool#26"]'
+eq "layout: the watcher records a tab agent's tab and home" "$(jq -c '.agents["tool#1"] | [.tab_id, .home, .workspace]' <<<"$pk" 2>/dev/null)" '["wD:t2","delta","tool-1 tabbed work"]'
+
+# hibernate in the tab layout: it closes the agent's tab, never its manager's home
+mkdir -p "$T/state/agents" "$HOME/.claude/projects/p"; : >"$HOME/.claude/projects/p/sess77.jsonl"
+echo '{"repo":"widget","number":77,"name":"widget-77 tab hibernate","branch":"feat/77","session_id":"sess77","worktree":"'"$T"'/nowhere-77","workspace_id":"wH","tab_id":"wH:t3"}' >"$T/state/agents/widget-77.json"
+echo '{"result":{"workspaces":[{"label":"acme","workspace_id":"wH","agent_status":"idle"}]}}' >"$HL/hb-ws.json"
+echo '{"result":{"tabs":[{"label":"Orchestrator (acme)","number":1,"tab_id":"wH:t1","workspace_id":"wH","agent_status":"idle"},{"label":"widget-77 tab hibernate","number":3,"tab_id":"wH:t3","workspace_id":"wH","agent_status":"idle"}]}}' >"$HL/hb-tabs.json"
+echo '{"result":{"agents":[{"agent":"claude","workspace_id":"wH","tab_id":"wH:t1","pane_id":"wH:p1","agent_status":"idle"},{"agent":"claude","workspace_id":"wH","tab_id":"wH:t3","pane_id":"wH:p3","agent_status":"idle"}]}}' >"$HL/hb-agents.json"
+: >"$SMOKE_LOG"
+out="$(SMOKE_HERDR_WS="$HL/hb-ws.json" SMOKE_HERDR_TABS="$HL/hb-tabs.json" SMOKE_HERDR_AGENTS="$HL/hb-agents.json" "$BIN/hibernate" widget 77 --project acme 2>&1)"; rc=$?
+eq "hibernate (tabs): exit" "$rc" 0
+check "hibernate (tabs): closes the agent's tab" grep -qx "herdr tab close wH:t3" "$SMOKE_LOG"
+eq "hibernate (tabs): never closes a workspace (the manager's home)" "$(grep -c 'workspace close' "$SMOKE_LOG")" 0
+eq "hibernate (tabs): metadata drops the stale ids" "$(jq -c '[(.hibernated_at > 0), .workspace_id, .tab_id]' "$T/state/agents/widget-77.json")" '[true,null,null]'
+
+# relayout: rename an idle old-layout manager workspace into its home; a busy one waits; dry run first
+echo '{"result":{"workspaces":[{"label":"Orchestrator (acme)","workspace_id":"wM","agent_status":"idle"},{"label":"widget-5 old fix","workspace_id":"wO","agent_status":"working"},{"label":"CEO","workspace_id":"wC","agent_status":"idle"}]}}' >"$HL/rl-ws.json"
+echo '{"result":{"tabs":[{"label":"1","number":1,"tab_id":"wM:t1","workspace_id":"wM","agent_status":"idle"},{"label":"1","number":1,"tab_id":"wO:t1","workspace_id":"wO","agent_status":"working"},{"label":"1","number":1,"tab_id":"wC:t1","workspace_id":"wC","agent_status":"idle"}]}}' >"$HL/rl-tabs.json"
+echo '{"result":{"agents":[{"agent":"claude","workspace_id":"wM","tab_id":"wM:t1","pane_id":"wM:p1","agent_status":"idle"},{"agent":"claude","workspace_id":"wO","tab_id":"wO:t1","pane_id":"wO:p1","agent_status":"working"}]}}' >"$HL/rl-agents.json"
+RL=(env SMOKE_HERDR_WS="$HL/rl-ws.json" SMOKE_HERDR_TABS="$HL/rl-tabs.json" SMOKE_HERDR_AGENTS="$HL/rl-agents.json")
+: >"$SMOKE_LOG"
+rl="$("${RL[@]}" "$BIN/relayout" --project acme --json 2>&1)"
+eq "relayout dry run: idle manager -> rename into its home; live old agent listed, untouched" "$(jq -c '[.[0].steps[] | "\(.action):\(.name)"]' <<<"$rl" 2>/dev/null)" '["rename:Orchestrator (acme)","none:widget-5 old fix"]'
+eq "relayout dry run: changes nothing" "$(grep -cE 'herdr (workspace|tab) (rename|close|create)|agent prompt' "$SMOKE_LOG")" 0
+"${RL[@]}" "$BIN/relayout" --project acme --apply >/dev/null 2>&1
+check "relayout --apply: the workspace becomes the home" grep -qx "herdr workspace rename wM acme" "$SMOKE_LOG"
+check "relayout --apply: its tab 1 takes the manager's name" grep -qx "herdr tab rename wM:t1 Orchestrator (acme)" "$SMOKE_LOG"
+eq "relayout --apply: live command agents and the CEO are never touched" "$(grep -cE 'wO|wC' "$SMOKE_LOG")" 0
 
 # --- pdo dispatcher ---
 has "pdo help lists commands" "$("$BIN/pdo" help)" "intake-submit"

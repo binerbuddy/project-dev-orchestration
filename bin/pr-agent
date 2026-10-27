@@ -17,6 +17,7 @@ import sys
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
 
@@ -56,12 +57,9 @@ def main():
     alive = status = None
     question = False
     if agent:
-        # herdr reuses workspace ids: an id only counts while its label is still this agent's name
-        labels = {w["workspace_id"]: w.get("label") for w in json.loads(run("herdr", "workspace", "list") or '{"result":{"workspaces":[]}}')["result"]["workspaces"]}
-        agents = json.loads(run("herdr", "agent", "list") or '{"result":{"agents":[]}}')["result"]["agents"]
-        pane = next((x for x in agents if x.get("workspace_id") == agent.get("workspace_id")
-                     and labels.get(agent.get("workspace_id")) == agent.get("name")
-                     and x.get("agent") == "claude"), None)
+        # find it by name (its tab label, or an old-layout workspace label): herdr reuses ids
+        slot = pdo_herdr.find(agent.get("name") or "")
+        pane = slot["agent"] if slot and (slot.get("agent") or {}).get("agent") == "claude" else None
         alive = bool(pane)
         if pane:
             status = pane.get("agent_status")

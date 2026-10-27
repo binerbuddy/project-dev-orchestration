@@ -20,13 +20,20 @@ itself, and takes the CEO's hand-offs.
 
 ## Who's who
 
-| Agent | herdr workspace | What it does | You talk to it when… |
+Each manager has one herdr workspace, its **home**, and every agent it runs is a tab in it, labelled
+with the agent's name: the project's home is labelled `acme`, with `Orchestrator (acme)` as tab 1, then
+the QC tabs and one tab per command agent. A self-managed repo's home is labelled with the repo's name
+(`dnd3yond`), with its `Repo Manager (dnd3yond)` as tab 1. The CEO, System Manager and intake have
+workspaces of their own. herdr's sidebar shows every tab's agent, and a home with a question in any tab
+shows as blocked.
+
+| Agent | herdr tab (workspace) | What it does | You talk to it when… |
 |---|---|---|---|
 | **CEO** | CEO | Runs the teams: starts and pauses them on your direction, one "waiting on you" list across projects, brokers between projects. | Always first: tell it what to work on. |
 | **System Manager** | System Manager | Builds and maintains the system itself; fixes the machinery. Takes change requests from the CEO. | Something's broken, or you want to change how the system works. |
-| **Orchestrator** | Orchestrator (acme) | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its workspace. |
-| **Command agents** | `widget-<issue#> <brief>` | Each takes one issue from start to a PR labelled `ready for QC`, asks you its questions directly, then hibernates until QC. | They ask you something (Remote Control and herdr notify you). |
-| **QC agent** | QC (acme) | Serves a PR on your local QC ports for hands-on QC, and relays your feedback. | You're QC'ing on your own machine. |
+| **Orchestrator** | Orchestrator (acme), tab 1 of `acme` | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its tab. |
+| **Command agents** | `widget-<issue#> <brief>`, a tab in `acme` | Each takes one issue from start to a PR labelled `ready for QC`, asks you its questions directly, then hibernates until QC. | They ask you something (Remote Control and herdr notify you). |
+| **QC agent** | QC (acme), a tab in `acme` | Serves a PR on your local QC ports for hands-on QC, and relays your feedback. | You're QC'ing on your own machine. |
 | **Intake** | intake | Turns bug reports and ideas into proper GitHub issues. Other agents queue reports in its inbox. | You have something to file, or the inbox needs a pass. |
 
 ## Everyday things to say to the CEO
@@ -36,14 +43,14 @@ itself, and takes the CEO's hand-offs.
 | `status` | Health, who's working or hibernated, what's waiting on you, queue top, spawn floor, usage. |
 | `fire up acme` / `work acme issues` | Starts whatever of acme's team isn't running (safe to repeat), then gives the status. |
 | `work acme and beta` | Starts those teams and pauses the others' new work (floor P1). |
-| `what's waiting on me` | Questions, UX sign-offs, PRs ready for QC, and the intake inbox, by workspace name. |
+| `what's waiting on me` | Questions, UX sign-offs, PRs ready for QC, and the intake inbox, by agent name. |
 | `pause acme` / `resume acme` | Sets acme's spawn floor to P1, or back. Running agents keep going. |
 | `set the floor to P2` / `clear the floor` | Changes which priorities may start automatically. |
 | `work #123 now` | Puts the issue on **Claude Work This**; the orchestrator starts it within about 5 minutes. |
 | `QC PR #264` | Has the QC agent serve that PR locally. |
 | `show me the screenshots for #374` | Opens that PR's screenshot folder (`pdo shots 374`). |
 
-You can also type into any agent's workspace directly, or reach it through Remote Control.
+You can also type into any agent's tab directly, or reach it through Remote Control.
 
 ## How work flows
 
@@ -51,14 +58,14 @@ You can also type into any agent's workspace directly, or reach it through Remot
    first within a level.
    - **Spawn floor:** nothing below the floor starts, not even CWT.
    - **Urgent bypass:** P1 **and** on Claude Work This starts even when every slot is full.
-2. **The orchestrator starts a command agent** in its own workspace and worktree, with up to 3 active at a
+2. **The orchestrator starts a command agent** in its own tab and worktree, with up to 3 active at a
    time. Agents waiting on you at a UX sign-off, or parked at QC, don't count. New work stops when weekly
    usage reaches 90%, keeping 10% in reserve for you.
 3. **The agent explores, plans, builds, gets a review, and opens a PR.** The PR gets the P-label of its
    issue. If the issue turns out to be already fixed, it says so, labels it `likely-fixed`, and stops.
 4. **It labels the PR `ready for QC`** and posts a QC checklist, with test data when needed (published
    with `qc-fixture-push`) and how to give feedback and pass. About 5 minutes later the agent **hibernates**: its
-   workspace closes, its memory is freed, and its session is saved.
+   tab closes, its memory is freed, and its session is saved.
 5. **You (or a remote reviewer) QC it.** Feedback wakes the same agent with its full context; it fixes,
    pushes and re-labels.
 6. **On a QC pass, the agent wraps the PR up.** You merge it by hand. Finished agents close on their own.
@@ -69,7 +76,7 @@ at UX sign-offs, never design docs.
 
 ## QC
 
-**On your machine:** in the **QC (acme)** workspace, run `/project-qc-review <PR#>`. It serves the PR from
+**On your machine:** in the **QC (acme)** tab, run `/project-qc-review <PR#>`. It serves the PR from
 the shared QC worktree through your project's `QC_HOOK`. Type your findings in plain words; they go to the
 PR's agent and get posted on the PR. Say `pass` when it's good.
 
@@ -80,7 +87,7 @@ pass: after agent QC already passed it, nobody is prompted again). GitHub won't 
 changes on their own PR, so as the author give feedback in the agent's session or through `/project-qc-review`.
 
 **Agent QC** (when the project env sets `AGENT_QC_PORTS`): `team-up` also starts the **QC Agent (acme)**
-workspace (`pdo start-agent-qc`). It takes `ready for QC` PRs one at a time, highest priority first, and tests them
+tab (`pdo start-agent-qc`). It takes `ready for QC` PRs one at a time, highest priority first, and tests them
 on its own ports and database clone: the checklist, the touched areas and their neighbours in a browser, the API
 directly, and two users at once. A fail posts "Agent QC findings (round N)" and resumes the PR's agent; two failed
 rounds add `QC escalated` for you. A pass posts a short UX call by the visible-change rule: `QC complete - ready to
@@ -173,7 +180,7 @@ inbox), plus the constraint that binds most right now (memory, usage, disk, GitH
 It never does project work and never stops another project's agents; it asks that project's
 manager. Projects opt in to its advice with `FLEET_ADVICE=honour` in their env file, and set
 `PORTFOLIO_PRIORITY` (1 = highest), `RESOURCE_PROFILE` (`light`, `medium`, `heavy`), `MANAGER`
-(the manager's workspace name) and, for self-managed repos, `REPO_MANAGER`. Cross-project
+(the manager's name, its tab 1 label) and, for self-managed repos, `REPO_MANAGER`. Cross-project
 dependencies: `pdo fleet deps add "<org/repo#n>" blocks "<org/repo#m>"`.
 
 ## Claims and coordination between managers
@@ -223,6 +230,6 @@ GitHub accounts"; undo with `pdo install --gh-identities --uninstall`.
 ## When something looks wrong
 
 - Ask the System Manager: `status`, then describe what you see.
-- If an agent shows "blocked", it's waiting on you: open its workspace, or use Remote Control.
+- If an agent shows "blocked", it's waiting on you: open its tab, or use Remote Control.
 - If an agent was closed by accident, resuming it is safe; ask the System Manager to bring #N back.
 - Design: [design.md](design.md). Traps already found: [lessons-learned.md](lessons-learned.md).

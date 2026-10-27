@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start-orchestrator — open the "Orchestrator (<project>)" herdr workspace running
+# start-orchestrator — open the "Orchestrator (<project>)" herdr tab (tab 1 of the project's home workspace) running
 # `/loop <ORCHESTRATE_SKILL>` (default ${PDO_SKILL_PREFIX}project-orchestrate) in CONTROL_DIR.
 #
 # Usage: start-orchestrator [--project P] [--model opus] [--drain]
@@ -26,17 +26,11 @@ NAME="Orchestrator ($PROJECT)"
 # Reuse the workspace after a crash or kill: relaunch only if no Claude is alive in it.
 # All orchestrator state is external (herdr, GitHub, $PDO_STATE_DIR), so a fresh session
 # picks up where the dead one stopped; its first tick replaces any orphaned watcher.
-WS_ID="$(herdr workspace list | jq -r --arg n "$NAME" '[.result.workspaces[] | select(.label == $n) | .workspace_id][0] // empty')"
-if [[ -n "$WS_ID" ]]; then
-  if herdr agent list | jq -e --arg w "$WS_ID" '.result.agents[] | select(.workspace_id == $w and .agent == "claude")' >/dev/null; then
-    die "the orchestrator is already running in workspace \"$NAME\""
-  fi
-  echo "restarting the orchestrator in existing workspace \"$NAME\""
-else
-  WS_ID="$(herdr workspace create --cwd "$CONTROL_DIR" --label "$NAME" --no-focus | jq -r '[.. | objects | .workspace_id? // empty][0]')"
-fi
-PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
+# its tab in the project's home (tab or old-layout workspace, found by name)
+pdo_standing "$NAME" "$(pdo_team_home)" || die "could not open a herdr tab for \"$NAME\""
+(( STAND_ALIVE == 0 )) || die "the orchestrator is already running in $STAND_WHERE"
+PANE_ID="$STAND_PANE"
 set +e; launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "/loop $ORCHESTRATE_SKILL $ARGS project=$PROJECT"; rc=$?; set -e
-[[ $rc -eq 0 ]] || die "orchestrator did not start cleanly (rc=$rc); see workspace $WS_ID"
+[[ $rc -eq 0 ]] || die "orchestrator did not start cleanly (rc=$rc); see $STAND_WHERE"
 herdr agent rename "$PANE_ID" "orchestrator-$PROJECT" >/dev/null 2>&1 || true
-echo "orchestrator running in workspace \"$NAME\" (id $WS_ID)"
+echo "orchestrator running in $STAND_WHERE"

@@ -75,6 +75,7 @@ import time
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
 STATE_DIR = pdo_config.state_dir()  # replaced by the project's resolved state dir in load_repos()
@@ -180,13 +181,13 @@ FIXED_NAMES = {"intake": "intake"}  # workspace label -> herdr agent name
 def restore_agent_names(project, repos):
     """herdr agent names don't survive a herdr/session restart, and other agents address these by
     name (e.g. `herdr agent prompt intake`), so put the standard names back."""
-    labels = {w["workspace_id"]: w.get("label") or "" for w in herdr("workspace", "list").get("workspaces", [])}
     fixed = dict(FIXED_NAMES, **{f"Orchestrator ({project})": f"orchestrator-{project}", f"QC ({project})": f"qc-{project}",
                                  f"QC Agent ({project})": f"qc-agent-{project}"})
-    for a in herdr("agent", "list").get("agents", []):
+    for slot in pdo_herdr.slots():  # an agent's label is its tab's (or, old layout, its workspace's)
+        a = slot.get("agent") or {}
         if a.get("name") or a.get("agent") != "claude":
             continue
-        label = labels.get(a.get("workspace_id"), "")
+        label = slot["name"]
         m = re.match(r"^(\S+)-(\d+) ", label)
         want = fixed.get(label) or (f"{re.sub(r'[^a-z0-9-]', '', m.group(1).lower())[:24]}-{m.group(2)}"
                                     if m and m.group(1) in repos else None)
@@ -195,16 +196,17 @@ def restore_agent_names(project, repos):
 
 
 def agents(org, repos, prev):
-    workspaces = herdr("workspace", "list").get("workspaces", [])
-    panes = {a["workspace_id"]: a for a in herdr("agent", "list").get("agents", [])}
     out = {}
-    for w in workspaces:
-        m = re.match(r"^(\S+)-(\d+) (.+)$", w.get("label") or "")
+    # both layouts: a tab labelled "<Repo>-<n> <brief>" in its manager's home, or (old) a workspace
+    for w in sorted(pdo_herdr.slots(), key=lambda x: x["layout"] != "tab"):
+        m = re.match(r"^(\S+)-(\d+) (.+)$", w["name"] or "")
         if not m or m.group(1) not in repos:
             continue
         repo, num, brief = m.group(1), int(m.group(2)), m.group(3)
         key = f"{repo}#{num}"
-        a = panes.get(w["workspace_id"], {})
+        if key in out:  # one agent per issue: a tab (sorted first) wins over an old-layout workspace
+            continue
+        a = w.get("agent") or {}
         pane = a.get("pane_id")
         screen = run(["herdr", "pane", "read", pane], timeout=15) if pane else ""
         tail = "\n".join(screen.splitlines()[-60:])
@@ -221,7 +223,7 @@ def agents(org, repos, prev):
                 branch = pr.pop("branch")
         old = prev.get(key, {})
         changed_at = old.get("changed_at", time.time()) if old.get("digest") == digest else time.time()
-        status = a.get("agent_status", "gone" if not pane else "unknown")
+        status = a.get("agent_status") or ("gone" if not pane else w.get("status") or "unknown")
         question = any(q in tail for q in QUESTION_MARKERS) or status == "blocked"
         issue = json.loads(run(["gh", "api", f"repos/{org}/{repo}/issues/{num}", "--jq",
                                 "{state, labels: [.labels[].name]}"]) or "{}")
@@ -244,8 +246,9 @@ def agents(org, repos, prev):
                 json.dump(meta, fh, indent=1)
             os.replace(mf + ".tmp", mf)
         out[key] = {
-            "repo": repo, "number": num, "brief": brief, "workspace": w.get("label"),
-            "workspace_id": w["workspace_id"], "pane_id": pane,
+            "repo": repo, "number": num, "brief": brief, "workspace": w["name"],
+            "workspace_id": w["workspace_id"], "tab_id": w.get("tab_id"), "home": w.get("workspace") if w.get("layout") == "tab" else None,
+            "pane_id": pane,
             "status": status, "question_pending": question, "branch": branch, "pr": pr, "parked": parked,
             "merged": bool(pr and pr["state"] == "MERGED"), "likely_fixed": likely_fixed,
             "route": meta.get("route"), "design_ready": design_ready, "ux_gate": ux_gate,
@@ -714,7 +717,7 @@ def events(prev, cur):
             ev.append({"type": "qc_complete", "agent": k, "pr": a["pr"]["url"],
                        "label": sorted(new_pass)[0], "awaiting_ux_review": QC_DONE in labels and MERGE_READY not in labels})
         if a.get("design_ready") and not o.get("design_ready"):
-            ev.append({"type": "design_ready", "agent": k, "workspace_id": a["workspace_id"]})
+            ev.append({"type": "design_ready", "agent": k, "name": a["workspace"], "workspace_id": a["workspace_id"], "tab_id": a.get("tab_id")})
         if a["merged"] and not o.get("merged"):
             ev.append({"type": "pr_merged", "agent": k, "pr": a["pr"]["url"]})
         if a["stalled"] and not o.get("stalled"):

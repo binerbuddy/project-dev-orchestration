@@ -34,7 +34,7 @@ already holds the events: use them, and don't run a second snapshot.
 ## 2. Handle events
 
 Per event, act as `references/events.md` says. Summary: `urgent` → spawn now (step 3 bypass);
-`slot_freed` / `new_claude_work_this` → step 3; `design_ready` → close the design workspace and spawn
+`slot_freed` / `new_claude_work_this` → step 3; `design_ready` → close the design agent's tab and spawn
 the build; `pr_conflict` → nothing (step 2b); `pr_cap_reached` → report once; `qc_feedback` /
 `qc_complete` → resume the owning agent; `pr_merged` → check the issue and card; `stalled` → read the
 tail, nudge once or report; `agent_gone` → report; `usage_ceiling` → stop spawning, report;
@@ -148,7 +148,7 @@ ran still fire once, computed against the last saved snapshot.
 - **Name workspaces by label** to the human (e.g. `Acme-245 export sort order`), never a bare id like
   `w1Q` or `w1Q:p1`; an id may follow in parentheses only when needed for a command.
 - **Hibernation is automatic and token-free.** The watcher runs `pdo hibernate` for agents idle at
-  `ready for QC` for 5+ min with no question pending. Never close a parked agent's workspace yourself:
+  `ready for QC` for 5+ min with no question pending. Never close a parked agent's tab yourself:
   it skips the process cleanup and metadata. Hibernated agents show `hibernated`, stay under QC, hold
   no slot. Reach any parked agent with `pdo resume-agent`, never `herdr agent prompt`. Agents at
   `awaiting-ux-gate` aren't hibernated automatically (the human may want the live stack); when memory

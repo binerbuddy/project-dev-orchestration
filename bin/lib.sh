@@ -196,6 +196,11 @@ pdo_finalize() {
   if [[ -z "${MANAGER+x}" ]]; then
     if [[ -n "${PROJECT_NUMBER:-}" ]]; then MANAGER="Orchestrator ($PROJECT)"; else MANAGER=""; fi
   fi
+  # herdr layout: tabs = one workspace per manager (its home: the project's name, or a self-managed
+  # repo's), one tab per agent labelled with its name; workspaces = one workspace per agent (pre-0.12)
+  AGENT_LAYOUT="${AGENT_LAYOUT:-tabs}"
+  TEAM_HOME="${TEAM_HOME:-}"                      # override the standing agents' home (pdo_team_home)
+  export AGENT_LAYOUT
   # coordination: the claim label (managed-by:<slug>) and whether claim also self-assigns
   MANAGER_SLUG="$(pdo_slug "${MANAGER_SLUG:-${MANAGER:-$PROJECT}}")"
   MANAGER_SLUG="${MANAGER_SLUG:0:39}"             # GitHub label names stop at 50 characters
@@ -206,6 +211,75 @@ pdo_finalize() {
   AGENT_USAGE_WEIGHT="${AGENT_USAGE_WEIGHT:-}"    # override the profile's usage weight
   FLEET_ADVICE="${FLEET_ADVICE:-ignore}"          # honour | ignore (fleet-advice.json in queue/watch)
   export ORG PRIMARY_REPO
+}
+
+# pdo_home_of <repo>: the herdr workspace (its manager's "home") that holds a command agent for
+# <repo>: the repo's own name when it is self-managed (SELF_MANAGED_REPOS), else the project's name
+pdo_home_of() {
+  local r
+  for r in ${SELF_MANAGED_REPOS[@]+"${SELF_MANAGED_REPOS[@]}"}; do
+    [[ "$r" == "$1" ]] && { printf '%s' "$1"; return; }
+  done
+  printf '%s' "$PROJECT"
+}
+
+# pdo_team_home: the home of the project's standing agents (orchestrator, QC, QC Agent): TEAM_HOME if
+# set; the project's name while any repo is orchestrated; else (every repo self-managed) the primary
+# repo's home, so its QC tabs sit next to its Repo Manager
+pdo_team_home() {
+  [[ -n "$TEAM_HOME" ]] && { printf '%s' "$TEAM_HOME"; return; }
+  local r self
+  for r in "${!REPO_ROOT[@]}"; do
+    self="$(pdo_home_of "$r")"
+    [[ "$self" == "$PROJECT" ]] && { printf '%s' "$PROJECT"; return; }
+  done
+  pdo_home_of "${PRIMARY_REPO:-$(printf '%s\n' "${!REPO_ROOT[@]}" | sort | head -1)}"
+}
+
+# pdo_place <home> <name> <cwd>: open a herdr place for agent <name> (a tab in <home>, or its own
+# workspace under AGENT_LAYOUT=workspaces); sets PLACE_WS, PLACE_TAB and PLACE_PANE
+pdo_place() {
+  local out
+  out="$(AGENT_LAYOUT="$AGENT_LAYOUT" python3 "$PDO_HOME/bin/pdo_herdr.py" place "$1" "$2" "$3")" || return 1
+  PLACE_WS="$(jq -r '.workspace_id // empty' <<<"$out")"
+  PLACE_TAB="$(jq -r '.tab_id // empty' <<<"$out")"
+  PLACE_PANE="$(jq -r '.pane_id // empty' <<<"$out")"
+  [[ -n "$PLACE_PANE" ]]
+}
+
+# pdo_find <name>: the agent's slot as JSON (tab label first, then workspace label); exit 1 if none
+pdo_find() { python3 "$PDO_HOME/bin/pdo_herdr.py" find "$1"; }
+
+# pdo_standing <name> <home>: find a standing agent by name (a tab or an old-layout workspace), or open
+# its place: a tab in <home>, or its own workspace when <home> is empty (intake, the CEO). Sets
+# STAND_ALIVE (1 = a Claude runs there), STAND_STATUS, STAND_PANE (the agent's pane, or the empty pane
+# to launch into) and STAND_WHERE (for messages). A found place without a Claude is reused.
+pdo_standing() {
+  local slot ws tab
+  STAND_ALIVE=0 STAND_STATUS="" STAND_PANE="" STAND_WHERE=""
+  slot="$(pdo_find "$1" 2>/dev/null || true)"
+  if [[ -n "$slot" ]]; then
+    STAND_WHERE="$(jq -r 'if .layout == "tab" then "tab \"\(.name)\" in \"\(.workspace)\"" else "workspace \"\(.name)\"" end' <<<"$slot")"
+    if jq -e '.agent.agent == "claude"' >/dev/null <<<"$slot"; then
+      STAND_ALIVE=1 STAND_PANE="$(jq -r .pane_id <<<"$slot")" STAND_STATUS="$(jq -r '.agent.agent_status // .status' <<<"$slot")"
+      return 0
+    fi
+    STAND_PANE="$(jq -r '.pane_id // empty' <<<"$slot")"
+    if [[ -z "$STAND_PANE" ]]; then
+      ws="$(jq -r .workspace_id <<<"$slot")" tab="$(jq -r '.tab_id // empty' <<<"$slot")"
+      STAND_PANE="$(herdr pane list --workspace "$ws" | jq -r --arg t "$tab" \
+        '[.result.panes[] | select($t == "" or .tab_id == $t) | .pane_id][0] // empty')"
+    fi
+    [[ -n "$STAND_PANE" ]] && return 0
+  fi
+  if [[ -n "$2" ]]; then
+    pdo_place "$2" "$1" "$CONTROL_DIR" || return 1
+    STAND_WHERE="tab \"$1\" in \"$2\""
+  else
+    AGENT_LAYOUT=workspaces pdo_place "" "$1" "$CONTROL_DIR" || return 1
+    STAND_WHERE="workspace \"$1\""
+  fi
+  STAND_PANE="$PLACE_PANE"
 }
 
 # pdo_fill_agent_qc_notes: AGENT_QC_NOTES_BY_REPO[<repo>], a repo's own agent-QC notes (e.g. a headless
@@ -294,6 +368,7 @@ pdo_config_json() {
     --arg fixture_ext "$FIXTURE_EXT" --argjson fx_by_repo "$fx_by_repo" --arg fixture_branch "$FIXTURE_BRANCH" --arg agent_cli "$AGENT_CLI" \
     --arg qc_worktree "$QC_WORKTREE" --arg branch_prefix "$BRANCH_PREFIX" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_ports_shared "$QC_PORTS_SHARED" \
     --arg sm "$SYSTEM_MANAGER_WORKSPACE" --arg control "$CONTROL_DIR" \
+    --arg layout "${AGENT_LAYOUT:-tabs}" --arg team_home "$(pdo_team_home)" \
     --arg carry "$CARRY_LABELS" --arg shots "$SCREENSHOT_DIR" \
     --arg cwt "$CWT_STATUS" --arg queue_label "$QUEUE_LABEL" --arg plabels "$P_LABELS" --arg qc_ready "$LABEL_QC_READY" --arg qc_done "$LABEL_QC_DONE" \
     --arg merge_ready "$LABEL_MERGE_READY" --arg ux_skipped "$LABEL_UX_SKIPPED" --arg needs_ux "$LABEL_NEEDS_UX" --arg qc_escalated "$LABEL_QC_ESCALATED" \
@@ -319,7 +394,7 @@ pdo_config_json() {
       agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes,
       agent_qc_notes_by_repo: $aqc_notes_by_repo, agent_qc_skill: $aqc_skill,
       agent_qc_review_hook: $aqc_review_hook,
-      system_manager_workspace: $sm, control_dir: $control,
+      system_manager_workspace: $sm, control_dir: $control, agent_layout: $layout, team_home: $team_home,
       cwt_status: $cwt, queue_label: $queue_label, p_labels: ($plabels | split(" ") | map(select(length > 0))),
       label_qc_ready: $qc_ready, label_qc_done: $qc_done, label_merge_ready: $merge_ready,
       label_ux_skipped: $ux_skipped, label_needs_ux: $needs_ux, label_qc_escalated: $qc_escalated, skill_prefix: $prefix,

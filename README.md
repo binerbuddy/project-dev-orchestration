@@ -124,7 +124,7 @@ and what has drifted, and only fills gaps.
    │                   │      │ spawn                     ▲ events
    │                   │      ▼                           │
    │             command agent per issue ────────────► watch (token-free poller)
-   │             (own herdr workspace + worktree,         │ hibernate / close-out
+   │             (own herdr tab + worktree,               │ hibernate / close-out
    │              runs a lifecycle skill)                 │
    │                   │ PR labelled "ready for QC"       │
    ▼                   ▼                                  │

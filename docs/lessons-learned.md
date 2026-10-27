@@ -7,7 +7,11 @@ skill. When you hit a new one, add a line in its section.
 
 - **herdr reuses workspace ids after a workspace closes.** A stored id is only valid while that
   workspace's label is still the agent's name; a stale id once sent a hibernated agent's prompt into a
-  different agent's live session. Every script checks the label, and hibernation clears the ids.
+  different agent's live session. Every script finds an agent by its name (its tab label, else an old
+  workspace label, `bin/pdo_herdr.py`), never by a stored id, and hibernation clears the ids.
+- **`herdr workspace close` on a manager's home ends every agent in it** (engine 0.12+, one tab per agent).
+  Close an agent with `herdr tab close`: herdr drops a workspace with its last tab, so an old-layout
+  agent's own workspace still goes. A blocked tab marks its home blocked in herdr's sidebar.
 - **Never launch Claude with `-n <name>`.** The session name draws a labelled rule under question menus,
   and herdr's blocked detection then reports a pending question as idle/done. `--remote-control <name>`
   alone is fine. Diagnose with `herdr agent explain <pane>`.

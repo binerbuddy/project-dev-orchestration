@@ -25,18 +25,14 @@ pdo_resolve_project "$PROJECT"
 HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
 MODEL="${MODEL:-$DEFAULT_MODEL}"
 NAME="intake"
-WS_ID="$(herdr workspace list | jq -r --arg n "$NAME" '[.result.workspaces[] | select(.label == $n) | .workspace_id][0] // empty')"
-if [[ -n "$WS_ID" ]]; then
-  PANE_ID="$(herdr agent list | jq -r --arg w "$WS_ID" '[.result.agents[] | select(.workspace_id == $w and .agent == "claude") | .pane_id][0] // empty')"
-  if [[ -n "$PANE_ID" ]]; then
-    echo "intake agent already running in workspace \"$NAME\""
-    exit 0
-  fi
-else
-  WS_ID="$(herdr workspace create --cwd "$CONTROL_DIR" --label "$NAME" --no-focus | jq -r '[.. | objects | .workspace_id? // empty][0]')"
+# intake serves every project: its own workspace, not a tab in a project's home
+pdo_standing "$NAME" "" || die "could not open a herdr workspace for \"$NAME\""
+PANE_ID="$STAND_PANE"
+if (( STAND_ALIVE )); then
+  echo "intake agent already running in $STAND_WHERE"
+  exit 0
 fi
-PANE_ID="$(herdr pane list --workspace "$WS_ID" | jq -r '.result.panes[0].pane_id')"
 set +e; launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "$INTAKE_SKILL"; rc=$?; set -e
-[[ $rc -eq 0 ]] || die "intake agent did not start cleanly (rc=$rc); see workspace $WS_ID"
+[[ $rc -eq 0 ]] || die "intake agent did not start cleanly (rc=$rc); see $STAND_WHERE"
 herdr agent rename "$PANE_ID" intake >/dev/null 2>&1 || true
-echo "intake agent running in workspace \"$NAME\" (id $WS_ID)"
+echo "intake agent running in $STAND_WHERE"

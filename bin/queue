@@ -30,7 +30,7 @@ Excluded (listed with --all): assigned (human/interactive lock), managed-by:<slu
 manager's claim label; this project's own label shows as "claimed": already in progress), on-hold, likely-fixed, epic-phase (a phase is run by its
 parent Epic's build agent, never on its own), a spawn failure in the last 24h, needs-triage, blocked by
 an open issue (GitHub's native "blocked by": reason blocked-by:<ref>, the open blockers read in one
-batched GraphQL query per repo, only for issues whose dependency summary shows open blockers), already In Progress / In Review / Done on the board, an open herdr workspace
+batched GraphQL query per repo, only for issues whose dependency summary shows open blockers), already In Progress / In Review / Done on the board, an open herdr agent (tab or workspace)
 for the issue, Epics without a route:* label (containers, not work items), and
 orchestrator-system issues (work on the orchestrator itself; the System Manager owns those,
 named by SYSTEM_MANAGER_WORKSPACE).
@@ -46,6 +46,7 @@ import time
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
 CFG = {}  # the resolved project config, set by load_env()
@@ -119,11 +120,14 @@ def open_issues(org, repo):
 
 
 def herdr_workspaces():
+    """Every live agent's name: tab labels (agents in their manager's home) and workspace labels
+    (the old one-workspace-per-agent layout). Empty when herdr isn't running: no exclusion."""
     try:
-        r = subprocess.run(["herdr", "workspace", "list"], capture_output=True, text=True, timeout=10)
-        return [w["label"] for w in json.loads(r.stdout)["result"]["workspaces"]]
+        names = {x["name"] for x in pdo_herdr.slots() if x["name"]}
+        names |= {w.get("label") or "" for w in (pdo_herdr.call("workspace", "list") or {}).get("workspaces", [])}
+        return sorted(n for n in names if n)
     except Exception:
-        return []  # herdr not running: no workspace-based exclusion
+        return []
 
 
 FAIL_LOG = None  # $PDO_STATE_DIR/spawn-failures.jsonl, set in main() once the state dir is known

@@ -137,7 +137,7 @@ move on. Bound the effort: around an hour per PR; if you're still unsure after t
    pdo resume-agent <repo> <issue#> --project <p> --prompt "Agent QC findings (round N) on PR #<PR#>, posted at <comment url>: <the numbered list, one line each>. Fix each item, push, reply on the PR with what changed, then re-apply 'ready for QC'. Ask the human directly here if a finding looks wrong."
    ```
 
-   - **Exit 3** (a question is pending in its workspace): never type into it.
+   - **Exit 3** (a question is pending in its tab): never type into it.
      `pdo agent-qc mark delivery=pending comment=<url>`, keep the marker, and finish the tick
      (step 6, then 7). Step 0 retries next tick.
    - No agent metadata (someone else's PR): say so in your session; the comment stands.

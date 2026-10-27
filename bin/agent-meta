@@ -3,8 +3,9 @@
 before metadata existed): adopted sessions, pre-existing workspaces.
 
 Usage: agent-meta backfill [--project P]
-For every herdr workspace labelled "<Repo>-<n> <brief>", fills in (never overwrites) name,
-workspace/pane, Claude session id, cwd, branch and worktree.
+For every herdr agent labelled "<Repo>-<n> <brief>" (a tab in its manager's home, or an old-layout
+workspace), fills in (never overwrites) name, workspace/tab/pane, Claude session id, cwd, branch and
+worktree.
 """
 import json
 import os
@@ -15,12 +16,9 @@ import sys
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
-
-
-def herdr(*a):
-    return json.loads(subprocess.run(["herdr", *a], capture_output=True, text=True).stdout)["result"]
 
 
 def git(cwd, *a):
@@ -38,14 +36,13 @@ def main():
     cfg = pdo_config.load(project, "agent-meta")
     org, roots = cfg["org"], cfg["repo_root"]
     AGENTS = os.path.join(cfg["state_dir"], "agents")
-    panes = {a["workspace_id"]: a for a in herdr("agent", "list")["agents"] if a.get("agent") == "claude"}
     os.makedirs(AGENTS, exist_ok=True)
-    for w in herdr("workspace", "list")["workspaces"]:
-        m = re.match(r"^(\S+)-(\d+) (.+)$", w.get("label") or "")
+    for w in pdo_herdr.slots():
+        m = re.match(r"^(\S+)-(\d+) (.+)$", w["name"] or "")
         if not m or m.group(1) not in roots:
             continue
         repo, num = m.group(1), int(m.group(2))
-        a = panes.get(w["workspace_id"], {})
+        a = w["agent"] if (w.get("agent") or {}).get("agent") == "claude" else {}
         cwd = a.get("cwd") or ""
         branch = git(cwd, "branch", "--show-current") if cwd else ""
         worktree = cwd
@@ -65,7 +62,7 @@ def main():
                     worktree = blk.split("\n")[0].removeprefix("worktree ")
         f = os.path.join(AGENTS, f"{repo}-{num}.json")
         meta = json.load(open(f, encoding="utf-8")) if os.path.exists(f) else {}
-        found = {"repo": repo, "number": num, "name": w["label"], "workspace_id": w["workspace_id"],
+        found = {"repo": repo, "number": num, "name": w["name"], "workspace_id": w["workspace_id"], "tab_id": w.get("tab_id"),
                  "pane_id": a.get("pane_id"), "session_id": (a.get("agent_session") or {}).get("value"),
                  "cwd": cwd, "branch": branch, "worktree": worktree}
         for k, v in found.items():

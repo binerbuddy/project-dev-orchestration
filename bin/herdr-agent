@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# herdr-agent — find, place and close agents in either herdr layout (one tab per agent in its
+# manager's workspace, or one workspace per agent). Thin wrapper over bin/pdo_herdr.py.
+#
+# Usage: herdr-agent find <name>              the agent's slot as JSON (exit 1: not found)
+#        herdr-agent names                    every agent name (tab and workspace labels)
+#        herdr-agent slots                    every slot as JSON
+#        herdr-agent place <home> <name> <cwd> open a tab <name> in workspace <home>
+#        herdr-agent close <name>             close the agent's tab, never a manager's workspace
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+case "${1:-}" in -h|--help|"") sed -n '2,10p' "$0"; exit 0 ;; esac
+exec python3 "$HERE/pdo_herdr.py" "$@"
