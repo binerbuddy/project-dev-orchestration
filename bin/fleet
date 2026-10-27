@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fleet — read-only portfolio view of every project, with allocation advice (the portfolio manager's probe).
+"""fleet — read-only view of every project, with allocation advice (the CEO's probe).
 
 Usage: fleet [--json] [--project P] [--write-advice] [--no-queue]
        fleet deps add "<org/repo#n>" blocks "<org/repo#m>" [--note TEXT] [--as NAME]
@@ -39,7 +39,7 @@ posts the matching comment). The report lists native cross-repo dependencies too
 
 Coordination log: `note` posts a comment headed "**Coordination (<NAME>):**" on the issue, and
 appends it to $PDO_STATE_DIR/coordination-log.jsonl. NAME (--as, else $PDO_COORDINATOR, else
-"portfolio") is the manager or portfolio that agreed it. gh runs as the GH_USER of a project
+"CEO") is the manager or CEO that agreed it. gh runs as the GH_USER of a project
 whose ORG owns the repo (never a switch).
 
 --project P limits the per-project sections to P (the advice still weighs every project).
@@ -492,7 +492,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
 
 def advise(views, system):
     """Per project: {advice, reason, suggested_max_active}. Deterministic; documented in
-    docs/design.md (Portfolio manager). Hard constraints first (disk, usage, memory floor), then
+    docs/design.md (CEO). Hard constraints first (disk, usage, memory floor), then
     the spare memory is shared out to projects in PORTFOLIO_PRIORITY order, each new agent costing
     its profile's MB, so a heavy project can take fewer new agents than a light one."""
     mem = system["memory"]
@@ -639,7 +639,7 @@ def env_for(ref, envs):
 
 
 def coordinator(a_as):
-    return a_as or os.environ.get("PDO_COORDINATOR") or "portfolio"
+    return a_as or os.environ.get("PDO_COORDINATOR") or "CEO"
 
 
 def post_comment(ref, body, envs):
@@ -712,7 +712,7 @@ def deps_cmd(argv):
     ap.add_argument("action", choices=["add", "list", "done"])
     ap.add_argument("refs", nargs="*")
     ap.add_argument("--note", default="")
-    ap.add_argument("--as", dest="as_", default="", help="add/done: who agreed it (default $PDO_COORDINATOR or portfolio)")
+    ap.add_argument("--as", dest="as_", default="", help="add/done: who agreed it (default $PDO_COORDINATOR or CEO)")
     ap.add_argument("--all", action="store_true", help="list: include done dependencies")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
@@ -742,7 +742,7 @@ def deps_cmd(argv):
         else:
             body = (f"**Coordination ({who}):** Blocked by {blocker}" + (f": {a.note.rstrip('.')}." if a.note else ".")
                     + f" GitHub's native dependency couldn't be added ({info}), so this is tracked in the"
-                    " portfolio's dependency list instead.")
+                    " fleet's dependency list instead.")
             cid, url = post_comment(blocked, body, envs)
             d["fallback_comment_id"] = cid
             print(f"fleet deps: warning: native dependency not added ({info}); "

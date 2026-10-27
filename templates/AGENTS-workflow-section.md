@@ -73,7 +73,7 @@ once with `bin/install --bin` from a project-dev-orchestration checkout.
 this one. Reading another repo for context is fine; editing its files, creating branches, pushing, opening PRs or
 issues, commenting, labelling or closing anything there (a `Closes <org>/<other-repo>#<n>` line included: merging
 closes that issue) waits for their yes. When another project's manager owns that repo, your manager checks with the
-portfolio manager, which asks the owner.
+CEO, which asks the owner.
 
 **Intake rule.** Don't fix or file bugs and ideas you notice outside your task. Queue them for the intake agent:
 `pdo intake-submit "<your workspace name>" "<what, where, repro>"`. Each call queues one report: put items that share

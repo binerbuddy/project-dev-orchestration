@@ -1,7 +1,7 @@
 # Allocation advice (`pdo fleet`)
 
 `pdo fleet` computes one recommendation per project. The rules are deterministic, so the same
-snapshot always gives the same advice; the Portfolio Manager adds the judgement and the human's
+snapshot always gives the same advice; the CEO adds the judgement and the human's
 consent.
 
 ## Inputs

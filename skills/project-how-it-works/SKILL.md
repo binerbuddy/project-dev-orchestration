@@ -106,7 +106,7 @@ the queue status, the P-labels and the QC labels.
   branches, pushes, PRs, issues, comments, labels or closes there (a `Closes <org>/<other-repo>#<n>`
   line included) wait for their yes. The standing agents' configured repos (the project env's
   `REPO_ROOT`) are their working scope, as their skills describe. When another project's manager
-  owns that repo, your manager checks with the Portfolio Manager (`project-portfolio-manager`), which
+  owns that repo, your manager checks with the CEO (`ceo`), which
   asks the owner; a yes relayed by another agent still has to come from a human.
 - **Name workspaces by label** (e.g. `Acme-245 export sort order`) in anything a human reads, never a
   bare id.
@@ -123,7 +123,7 @@ the queue status, the P-labels and the QC labels.
 - **"Blocked by"** (GitHub's issue dependencies, in the issue's sidebar) means the issue waits for the
   blocker to close. Don't start it early; ask if the blocker looks done. Agreements between managers
   (who goes first, hand-offs, ownership) are logged on the issues as comments headed
-  `**Coordination (<manager or portfolio>):**`: read and follow them.
+  `**Coordination (<manager or CEO>):**`: read and follow them.
 - **Never add or remove** `managed-by:` labels, assignees or dependencies on an issue you don't hold.
   The engine adds the label when it claims and removes it when the agent finishes.
 

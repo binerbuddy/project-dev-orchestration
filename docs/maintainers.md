@@ -57,15 +57,15 @@ session, the **System Manager** (`/project-system-manager`), which starts and ch
 | QC agent | Serves a PR on your local QC ports and relays your feedback to the PR's agent. |
 | Intake | Turns bug reports and ideas, yours and every agent's, into proper issues. |
 
-Things to say to the System Manager: `status`, `fire up the dev team`, `what's waiting on me`, `work #123 now`,
-`pause new work`, `QC PR #264`. The full list, the labels, the spawn floor and the engine commands are in the
+Things to say to the CEO: `status`, `fire up <project>`, `what's waiting on me`, `work #123 now`,
+`pause <project>`, `QC PR #264`. The System Manager changes and repairs the system itself. The full list, the labels, the spawn floor and the engine commands are in the
 [user guide](user-guide.md); how the engine works is in [design.md](design.md).
 
 You still merge every PR by hand.
 
-## Several projects: the portfolio manager
+## Several projects: the CEO
 
-When one machine runs teams for several projects, the **portfolio manager** (`/project-portfolio-manager`) oversees
+When one machine runs teams for several projects, the **CEO** (`/ceo`) oversees
 all the project managers. Its skill describes what it watches and when to use it.
 
 ## Your collaborators

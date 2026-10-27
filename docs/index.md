@@ -38,7 +38,7 @@ It ships as one plugin with two parts:
 - **[For collaborators](collaborators.md)**: your agent works on a repo that uses this system. What to install,
   which commands to run and when, labels and routes, QC comments, and the rules your agent follows.
 - **[For maintainers](maintainers.md)**: setting a repo up with `/project-setup`, running a team, and the
-  portfolio manager.
+  CEO.
 - **[FAQ](faq.md)**.
 
 Each repo that uses the system also has its own human guide, `docs/agent-workflow.md`, with its labels, QC setup

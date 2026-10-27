@@ -103,7 +103,7 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling, or when every repo
   5. If spawn fails, **move on** to the next candidate in the same tick. Spawn logs the failure and the
      queue skips that issue for 24h. Try at most 5 candidates per tick; report each failure in one line.
 - Spawn at most `free_slots` agents per tick.
-- **Fleet advice.** When the project honours the portfolio advice (`FLEET_ADVICE=honour`), `queue`
+- **Fleet advice.** When the project honours the fleet advice (`FLEET_ADVICE=honour`), `queue`
   rows carry `fleet_hold: true` (and `auto_spawn: false`) while the advice is `hold`, and the
   snapshot's `max_active` / `free_slots` already include `suggested_max_active`. Don't spawn
   around it; the urgent bypass still wins. Add the advice (`fleet.advice`) to your status line
@@ -169,7 +169,7 @@ ran still fire once, computed against the last saved snapshot.
   agent with `question_pending`**: your text would answer its question.
 - **Other managers' claims.** A queue reason `managed-by:<slug>` is another manager's issue (the label's
   description and its claim comment name it). Never spawn, label or unassign it. If the human wants it
-  worked here, the hand-off goes through that manager (or the Portfolio Manager, which logs the agreement
+  worked here, the hand-off goes through that manager (or the CEO, which logs the agreement
   with `pdo fleet note`). `blocked-by:<ref>` waits for that issue to close; never remove a native
   dependency yourself.
 - **Token frugality.** Read agents only through the `herdr agent read` tail; don't explore product

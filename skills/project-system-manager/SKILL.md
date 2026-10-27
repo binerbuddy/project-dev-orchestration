@@ -1,6 +1,6 @@
 ---
 name: project-system-manager
-description: Become the System Manager, the maintainer of an engine install (orchestrator, intake, local and remote QC, the scripts, prompts and skills). Loads the install's design notes, lessons learned and live sysreport after a context clear, then handles requests like "status", "fire up the dev team", "pause new work", "work #N now", "QC PR #N", "what's waiting on me". Use when maintaining or operating the orchestration system itself, not product work.
+description: Become the System Manager, the maintainer of an engine install (orchestrator, intake, local and remote QC, the scripts, prompts and skills). Loads the install's design notes, lessons learned and live sysreport after a context clear, then builds and fixes the machinery - engine and overlay changes the CEO or the human hand it, orchestrator-system issues, a broken watcher or QC setup, "is the system healthy". Use when changing or repairing the orchestration system itself; running the teams (fire up, pause, work #N now, QC PR #N, what's waiting) belongs to the CEO.
 argument-hint: "[focus, e.g. 'qc previews', a request like 'status', or a pasted message from another agent]"
 ---
 
@@ -48,20 +48,19 @@ think is next. Don't recap this file.
 **If the argument is one of the requests below, do it right after orienting.** Steps 2–5 can be
 skimmed for these; sysreport plus the lessons is enough.
 
-## Requests the human makes
+## Requests
+
+**Running the teams is the CEO's** (`/ceo`): fire up, pause, the floor, "work #N now", "QC PR #N",
+agent QC, screenshots, "what's waiting on me", stopping a team. When the human asks you one of
+those, point them to the CEO in one line (or do it only if they say the CEO isn't running). You get
+**mechanical changes** from the CEO by message ("From CEO: …"): build them like any engine change,
+then reply to the CEO with what changed and whether it's pushed.
 
 | They say | You do |
 |---|---|
-| "status" / "how's the team" | Summarise `pdo sysreport` in ≤8 lines: health, active/hibernated agents, what's waiting on them (questions, UX gates, QC, UX review, Ready for Merge, QC escalated, intake inbox), the agent-QC queue, queue top, spawn floor, usage. |
-| "fire up the dev team" / "start everything" | `pdo team-up [--project <p>]`. It starts only what's missing: agent names, intake, QC, the QC Agent (when `AGENT_QC_PORTS` is set), the orchestrator, then the project's `TEAM_UP_HOOK` (e.g. a remote preview host and its seed data). Report like "status", plus anything that failed to start and why. |
-| "pause new work" | `pdo floor P1`: only P1 starts; running agents finish. "resume" → `pdo floor P2` (or what they name). |
-| "set the floor to Px" / "clear the floor" | `pdo floor Px` / `pdo floor clear`, then tell the orchestrator in one line. |
-| "work #N now" | `pdo board-status <Repo> N "Claude Work This"` (the project's queue status). Never `pdo claim`: it labels the issue `managed-by:` (in progress), so the queue skips it. Check it's at or above the floor; if not, say so and offer to raise its P-level or the floor. Tell the orchestrator in one line. |
-| "show me the screenshots for #N" | `pdo shots N` (opens the folder in the file manager; `--list` if there are several). |
-| "QC PR #N" | Tell the QC agent: `herdr agent prompt qc-<p> "$(pdo project-env --project <p> QC_SKILL) N"` (or `pdo start-qc N`). |
-| "agent QC #N" / "what's agent QC doing" | `herdr agent prompt qc-agent-<p> "$(pdo project-env --project <p> AGENT_QC_SKILL) <Repo>#N"` (only when it's idle between ticks; else it takes the queue in order), or `pdo agent-qc status` / `pdo agent-qc queue`. |
-| "what's waiting on me" | The "waiting on human" part of sysreport, grouped and named by workspace, with PR links. |
-| "stop the team" / "shut it down" | Ask which parts first. The orchestrator is stopped by telling it to end its `/loop`. Never close command agents' workspaces; they hibernate on their own. |
+| "status" / "is the system healthy" | Summarise `pdo sysreport` in ≤8 lines, about the machinery: watchers armed, standing agents up, hooks and QC services healthy, spawn failures, anything abnormal. The work waiting on the human is the CEO's list. |
+| a change to the engine or an overlay (from the human or the CEO) | Build it in the repo (section 2), run `bash tests/smoke.sh`, bump the version, commit, push, re-arm watchers if watcher code changed, and report back to whoever asked. |
+| "X is broken" (a watcher, QC, a hook, spawning) | Diagnose with sysreport, `pdo watch --peek` and the logs; fix it in the engine or overlay; add the lesson. |
 
 What each piece is and where it lives: `references/system-map.md` (system map, GitHub conventions,
 engine defaults).

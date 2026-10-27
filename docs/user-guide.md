@@ -8,33 +8,36 @@ The human's guide to an agent team run by project-dev-orchestration. You talk to
 
 0. First time on this machine: install the plugin, open your agent in the repo and run `/project-setup repo+team`.
    It installs the engine (`pdo`) from the plugin and registers the repo.
-1. Open an agent session in herdr, anywhere. Name its workspace after your `SYSTEM_MANAGER_WORKSPACE`
-   (e.g. "Acme-Ops").
-2. Type: `/project-system-manager give me the status and fire up the dev team`
-3. It reads the system's notes and checks every piece, starts anything that isn't running (intake, QC, the
-   orchestrator, and any extras your `TEAM_UP_HOOK` adds), then gives you a short status.
+1. Open an agent session in herdr, anywhere, named CEO (`claude -n CEO`, workspace "CEO").
+2. Type: `/ceo fire up acme`
+3. It checks every project, starts anything of acme's team that isn't running (intake, QC, the
+   orchestrator, and any extras your `TEAM_UP_HOOK` adds), then gives you one "waiting on you" list.
 
-Use the same command after `/clear`, or in a brand-new session, to get the System Manager back up to speed.
-(With the Claude Code plugin the skill may show as `/pdo:project-system-manager`.)
+Use the same command after `/clear`, or in a brand-new session, to get the CEO back up to speed.
+(With the Claude Code plugin the skill shows as `/pdo:ceo`.) The CEO runs the teams; the **System
+Manager** (`/project-system-manager`, workspace "System Manager") changes and repairs the system
+itself, and takes the CEO's hand-offs.
 
 ## Who's who
 
 | Agent | herdr workspace | What it does | You talk to it when… |
 |---|---|---|---|
-| **System Manager** | your choice | Builds and maintains the system itself; fixes the machinery. | You want to change how the team works, or something's wrong. |
+| **CEO** | CEO | Runs the teams: starts and pauses them on your direction, one "waiting on you" list across projects, brokers between projects. | Always first: tell it what to work on. |
+| **System Manager** | System Manager | Builds and maintains the system itself; fixes the machinery. Takes change requests from the CEO. | Something's broken, or you want to change how the system works. |
 | **Orchestrator** | Orchestrator (acme) | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its workspace. |
 | **Command agents** | `widget-<issue#> <brief>` | Each takes one issue from start to a PR labelled `ready for QC`, asks you its questions directly, then hibernates until QC. | They ask you something (Remote Control and herdr notify you). |
 | **QC agent** | QC (acme) | Serves a PR on your local QC ports for hands-on QC, and relays your feedback. | You're QC'ing on your own machine. |
 | **Intake** | intake | Turns bug reports and ideas into proper GitHub issues. Other agents queue reports in its inbox. | You have something to file, or the inbox needs a pass. |
 
-## Everyday things to say to the System Manager
+## Everyday things to say to the CEO
 
 | Say | What happens |
 |---|---|
 | `status` | Health, who's working or hibernated, what's waiting on you, queue top, spawn floor, usage. |
-| `fire up the dev team` | Starts whatever isn't running (safe to repeat), then gives the status. |
+| `fire up acme` / `work acme issues` | Starts whatever of acme's team isn't running (safe to repeat), then gives the status. |
+| `work acme and beta` | Starts those teams and pauses the others' new work (floor P1). |
 | `what's waiting on me` | Questions, UX sign-offs, PRs ready for QC, and the intake inbox, by workspace name. |
-| `pause new work` / `resume` | Sets the spawn floor to P1, or back. Running agents keep going. |
+| `pause acme` / `resume acme` | Sets acme's spawn floor to P1, or back. Running agents keep going. |
 | `set the floor to P2` / `clear the floor` | Changes which priorities may start automatically. |
 | `work #123 now` | Puts the issue on **Claude Work This**; the orchestrator starts it within about 5 minutes. |
 | `QC PR #264` | Has the QC agent serve that PR locally. |
@@ -151,10 +154,11 @@ start yourself (not dispatched) finds the engine through `pdo` on PATH, else thr
 | `fleet deps add\|list\|done …` | cross-project dependencies (also GitHub's native "blocked by") |
 | `fleet note <org/repo#n> "<text>" [--as NAME]` | log a cross-manager agreement as an issue comment |
 
-## Portfolio manager (several projects)
+## CEO (several projects)
 
-When one machine runs several projects, open one more session and type
-`/project-portfolio-manager`. It runs `pdo fleet` and gives you **one** "Waiting on you" list for
+When one machine runs several projects, open the CEO first (`claude -n CEO`) and type `/ceo`.
+Tell it what matters now ("work siter issues", "fire up siter to intake and work #412", "work
+dnd3yond and ti4"): it starts those teams (`pdo team-up`) and pauses the others (`pdo floor P1`). It runs `pdo fleet` and gives you **one** "Waiting on you" list for
 every project, ranked by impact (PRs ready to merge, questions, UX gates, then QC and the intake
 inbox), plus the constraint that binds most right now (memory, usage, disk, GitHub calls).
 

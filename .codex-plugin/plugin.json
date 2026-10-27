@@ -1,6 +1,6 @@
 {
   "name": "pdo",
-  "version": "0.10.4",
+  "version": "0.11.0",
   "description": "Issue-to-PR lifecycle skills and an orchestration engine for running a team of coding agents on any GitHub project.",
   "author": {
     "name": "binerbuddy",

@@ -4,8 +4,8 @@ Lifecycle skills and an orchestration engine for running a team of coding agents
 
 - **Skills** (`skills/`): tool-neutral Agent Skills for every step from repo setup to merged PR: repo
   setup, intake, feature design, feature build, small fix, PR review, review triage, QC review, status and worktree
-  clean-up, plus the System Manager (runs one project's team) and the **portfolio manager**
-  (`project-portfolio-manager`: oversees all project managers). Claude Code, Codex and Grok Build can all
+  clean-up, plus the System Manager (runs one project's team) and the **CEO**
+  (`ceo`: opened first; starts and pauses project teams on your direction and oversees all project managers). Claude Code, Codex and Grok Build can all
   load them. Each skill works on the git repo of the current directory, and reads that repo's
   `.agents/project-profile.md` for its build commands, dev servers, QC data and conventions.
 - **Engine** (`bin/`): optional bash and python scripts that run the team unattended. They rank the
@@ -76,7 +76,7 @@ agent in the repo the team will work, and run:
 It installs the engine from the plugin (`~/.local/bin/pdo`, a launcher that always runs the newest installed plugin
 version, so plugin updates need no re-install), checks the requirements below, registers the repo
 (`projects/<name>.env`, optionally a board), opens the repo-files PR, and tells you how to start the team
-(`/project-system-manager give me the status and fire up the dev team`, or `pdo team-up --project <name>`).
+(open a session named CEO and run `/ceo fire up <name>`, or `pdo team-up --project <name>`).
 
 To work on the engine itself, or pin a version, use a checkout instead: clone this repo and run `bin/install --bin`
 (a symlink to the checkout's `bin/pdo`; it replaces a plugin launcher). `PDO_HOME=<checkout> pdo …` runs a checkout

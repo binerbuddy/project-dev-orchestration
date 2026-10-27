@@ -192,7 +192,7 @@ pdo_finalize() {
   LABEL_QC_ESCALATED="${LABEL_QC_ESCALATED:-QC escalated}"          # agent QC failed AGENT_QC_MAX_ROUNDS times
   CARRY_LABELS="${CARRY_LABELS:-client-requested}"   # separate with commas when a name has spaces
   SCREENSHOT_DIR="${SCREENSHOT_DIR:-.omc/qa}"
-  # portfolio (bin/fleet): who manages this project, its rank and resource weight across projects
+  # fleet (bin/fleet): who manages this project, its rank and resource weight across projects
   if [[ -z "${MANAGER+x}" ]]; then
     if [[ -n "${PROJECT_NUMBER:-}" ]]; then MANAGER="Orchestrator ($PROJECT)"; else MANAGER=""; fi
   fi

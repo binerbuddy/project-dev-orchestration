@@ -20,10 +20,11 @@ Script names below are written `bin/<name>` (paths in this repo). Run them as `p
   project's QC servers for the human's hands-on QC, and relays feedback to the PR's command agent.
 - **Intake agent.** The standing `intake` workspace (`project-intake`). It turns reports into typed,
   prioritised issues. Other agents queue reports with `bin/intake-submit`; the human drains the queue.
-- **Portfolio Manager.** Optional, one level above the per-project managers (`project-portfolio-manager`
-  skill). It observes every project and the machine they share, gives the human one ranked "waiting on
-  you" list, brokers cross-project requests and dependencies, and advises how resources are split. It
-  never does project work. See [Portfolio manager](#portfolio-manager).
+- **CEO.** The first session the human opens, one level above the per-project managers (`ceo`
+  skill). It turns the human's direction ("work siter", "pause ti4") into team operations
+  (`team-up`, `floor`), observes every project and the machine they share, gives the human one ranked
+  "waiting on you" list, brokers cross-project requests and dependencies, and advises how resources
+  are split. It never does project work. See [CEO](#ceo).
 - **Human.** Answers questions directly in a command agent's workspace, does UX and QC review, and merges
   by hand.
 
@@ -101,7 +102,7 @@ without `--allow-phase`: the epic's build agent works every phase. Independent f
 - **Urgent bypass:** P1 AND on CWT starts even with no free slot and over the usage ceiling.
 - **Fleet advice (opt-in):** with `FLEET_ADVICE=honour` and a fresh `fleet-advice.json`, a `hold`
   makes everything but the urgent bypass `auto_spawn: false`, and `suggested_max_active` caps
-  `max_active` (see [Portfolio manager](#portfolio-manager)).
+  `max_active` (see [CEO](#ceo)).
 - **Priority inheritance:** an issue that blocks others runs at the best P-level (and CWT) among the
   issues it transitively holds up, when being blocked is their only exclusion. A P4 blocking a P2 runs
   as P2; otherwise it would deadlock behind `drain`.
@@ -449,11 +450,17 @@ in **`.agents/project-profile.md`** on the default branch; the skills cite its s
   [`templates/AGENTS-workflow-section.md`](https://github.com/binerbuddy/project-dev-orchestration/blob/main/templates/AGENTS-workflow-section.md); `CLAUDE.md` can be
   `@AGENTS.md` plus any Claude-only notes.
 
-## Portfolio manager
+## CEO
 
-One level above the per-project managers. "Observe and coordinate, observe the system's
-constraints, and prioritise the managers' allocations; not a strict slot queue, since projects need
-different amounts of resources." It never does project work.
+One level above the per-project managers, and the first session the human opens. "Observe and
+coordinate, observe the system's constraints, and prioritise the managers' allocations; not a strict
+slot queue, since projects need different amounts of resources." The human's current direction
+decides which teams run: the CEO starts them (`team-up`) and pauses the rest (`floor P1`); the advice
+below is the safety rail, not the plan. It never does project work.
+
+Standing sessions are named `<Role> (<scope>)`: `CEO`, `System Manager`, `intake`,
+`Orchestrator (<project>)` (the project's `MANAGER`), `QC (<project>)`, `QC Agent (<project>)`,
+`Repo Manager (<repo>)` (a self-managed repo's `REPO_MANAGER`); command agents are `<Repo>-<n> <slug>`.
 
 - **`bin/fleet`** (read-only) enumerates every project env along `PDO_CONFIG_DIRS` and reports, per
   project: its manager (`MANAGER`; `REPO_MANAGER` for `SELF_MANAGED_REPOS`) and how to reach it
@@ -473,7 +480,7 @@ different amounts of resources." It never does project work.
   half full, fewer than 600 GraphQL points); then the spare memory (available minus a 2 GB reserve)
   is shared out in priority order, each new agent costing its `RESOURCE_PROFILE` MB (light 400,
   medium 900, heavy 1800; usage weights 0.5 / 1 / 2). The full rules and thresholds are in
-  `skills/project-portfolio-manager/references/allocation.md`.
+  `skills/ceo/references/allocation.md`.
 - **Advice file.** Only `fleet --write-advice` writes `fleet-advice.json` (into each project's state
   dir). A project with `FLEET_ADVICE=honour` and advice under 2 h old: `queue` makes `hold` rows
   `auto_spawn: false` (`fleet_hold`) except the urgent bypass, and bounds `max_active` by
@@ -489,7 +496,7 @@ different amounts of resources." It never does project work.
 - **Degrades gracefully.** No herdr (metadata only), no board (queue depth unknown), a gh failure
   or no usage data: each is a warning in the report, never a crash and never "fine".
 - **Escalation.** The other-repos rule escalates through it: an agent asks its manager; when another
-  project's manager owns the repo, that manager asks the Portfolio Manager, which brokers with the
+  project's manager owns the repo, that manager asks the CEO, which brokers with the
   owner. Peers never grant approvals; holding a project needs the human's yes, and it asks a
   project's manager rather than hibernating that project's agents itself.
 
@@ -520,8 +527,8 @@ without the engine.
   coordination comment on B says so, and `deps add` warns; `deps done` posts the matching "no longer
   blocked" comment. The queue holds natively blocked issues (`blocked-by:<ref>`).
 - **Coordination log.** `pdo fleet note <org/repo#n> "<text>" [--as NAME]` posts a comment headed
-  `**Coordination (<NAME>):**` (NAME defaults to `$PDO_COORDINATOR`, else `portfolio`) and appends it to
-  `$PDO_STATE_DIR/coordination-log.jsonl`. The portfolio manager logs every cross-manager agreement
+  `**Coordination (<NAME>):**` (NAME defaults to `$PDO_COORDINATOR`, else `CEO`) and appends it to
+  `$PDO_STATE_DIR/coordination-log.jsonl`. The CEO logs every cross-manager agreement
   (ordering, hand-off, ownership) this way on each issue involved.
 
 gh calls for another org run as the `GH_USER` of a project whose `ORG` owns the repo (`gh auth token -u`;

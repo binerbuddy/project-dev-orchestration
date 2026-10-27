@@ -697,7 +697,7 @@ def snapshot(project, prev):
         "review_feedback": reviews, "review_since": review_since, "review_seen": review_seen,
         "polled_at": polled_at,  # the cursor time for event_since (bin/watch's own bookkeeping)
         "spawn_floor": floor,  # bin/floor; report it in the status line
-        "max_active": MAX_ACTIVE, "fleet": CFG.get("_fleet"),  # portfolio advice, when fresh
+        "max_active": MAX_ACTIVE, "fleet": CFG.get("_fleet"),  # fleet advice, when fresh
     }
 
 

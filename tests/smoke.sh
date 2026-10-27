@@ -636,9 +636,9 @@ eq "deps add (native)" "$("${F[@]}" "$BIN/fleet" deps add alpha/tool#5 blocks ga
 check "deps add: native blocked_by takes the blocker's numeric issue id" grep -q "api -X POST repos/gamma/lib/issues/7/dependencies/blocked_by -F issue_id=5005" "$SMOKE_LOG"
 err="$("${F[@]}" "$BIN/fleet" deps add alpha/tool#8 blocks gamma/lib#7 2>&1 >/dev/null)"
 has "deps add: a PR blocker falls back with a warning" "$err" "native dependency not added (alpha/tool#8 is a pull request"
-check "deps add: the fallback comments on the blocked issue" grep -q "api repos/gamma/lib/issues/7/comments -f body=\*\*Coordination (portfolio):\*\* Blocked by alpha/tool#8" "$SMOKE_LOG"
+check "deps add: the fallback comments on the blocked issue" grep -q "api repos/gamma/lib/issues/7/comments -f body=\*\*Coordination (CEO):\*\* Blocked by alpha/tool#8" "$SMOKE_LOG"
 eq "deps add: an existing native link counts as added" "$("${F[@]}" "$BIN/fleet" deps add gamma/lib#7 blocks alpha/tool#1 --as "Lib Lead" 2>/dev/null)" "added #3: gamma/lib#7 blocks alpha/tool#1 (native)"
-eq "deps: native flag recorded" "$("${F[@]}" "$BIN/fleet" deps list --json | jq -c 'map("\(.id):\(.native):\(.by)")')" '["1:true:portfolio","2:false:portfolio","3:true:Lib Lead"]'
+eq "deps: native flag recorded" "$("${F[@]}" "$BIN/fleet" deps list --json | jq -c 'map("\(.id):\(.native):\(.by)")')" '["1:true:CEO","2:false:CEO","3:true:Lib Lead"]'
 has "deps add duplicate" "$("${F[@]}" "$BIN/fleet" deps add alpha/tool#5 blocks gamma/lib#7)" "already recorded"
 "${F[@]}" "$BIN/fleet" deps add "tool#5" blocks gamma/lib#7 >/dev/null 2>&1; eq "deps add rejects a bare ref" "$?" 1
 has "deps list" "$("${F[@]}" "$BIN/fleet" deps list)" "#1 alpha/tool#5 blocks gamma/lib#7 [native]  - needs the API"
@@ -653,11 +653,11 @@ eq "deps list shows open only" "$("${F[@]}" "$BIN/fleet" deps list --json | jq -
 eq "deps list --all" "$("${F[@]}" "$BIN/fleet" deps list --all --json | jq -c 'map(.id)')" "[1,2,3]"
 "${F[@]}" "$BIN/fleet" deps done 2 >/dev/null 2>&1; eq "deps done twice fails" "$?" 1
 out="$("${F[@]}" "$BIN/fleet" note alpha/tool#1 "alpha ships the API first; gamma starts after" 2>&1)"
-has "fleet note posts and prints the link" "$out" "noted on alpha/tool#1 (portfolio): https://"
-check "fleet note heads the comment" grep -q "api repos/alpha/tool/issues/1/comments -f body=\*\*Coordination (portfolio):\*\* alpha ships the API first" "$SMOKE_LOG"
+has "fleet note posts and prints the link" "$out" "noted on alpha/tool#1 (CEO): https://"
+check "fleet note heads the comment" grep -q "api repos/alpha/tool/issues/1/comments -f body=\*\*Coordination (CEO):\*\* alpha ships the API first" "$SMOKE_LOG"
 "${F[@]}" "$BIN/fleet" note gamma/lib#7 "hand-off agreed" --as "Gamma Lead" >/dev/null 2>&1
 check "fleet note --as names the manager" grep -q "body=\*\*Coordination (Gamma Lead):\*\* hand-off agreed" "$SMOKE_LOG"
-eq "fleet note logs locally" "$(jq -sc 'map(select(.kind == "note") | .by)' "$FS/coordination-log.jsonl")" '["portfolio","Gamma Lead"]'
+eq "fleet note logs locally" "$(jq -sc 'map(select(.kind == "note") | .by)' "$FS/coordination-log.jsonl")" '["CEO","Gamma Lead"]'
 "${F[@]}" "$BIN/fleet" note "tool#1" "x" >/dev/null 2>&1; eq "fleet note rejects a bare ref" "$?" 1
 
 # the advice file, and queue / watch honouring it

@@ -103,7 +103,7 @@ FLEET_ADVICE_MAX_AGE_SEC = 2 * 3600
 
 
 def fleet_advice(cfg, now=None):
-    """The portfolio manager's advice for this project, from $PDO_STATE_DIR/fleet-advice.json
+    """The CEO's advice for this project, from $PDO_STATE_DIR/fleet-advice.json
     (written by `fleet --write-advice`), or None when absent, stale (2 h+) or unreadable.
     The dict carries advice (go|slow|hold), reason, suggested_max_active, age_min, and
     honoured: whether the project opted in with FLEET_ADVICE=honour."""

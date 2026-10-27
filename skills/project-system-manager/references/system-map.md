@@ -16,7 +16,7 @@ under `$PDO_STATE_DIR` (default `${XDG_STATE_HOME:-~/.local/state}/project-dev-o
 | Project extras (optional) | the profile's `## Project extras` (e.g. a hosted preview service, PR-comment commands); the env's `WATCH_EVENT_HOOK`, `TEAM_UP_HOOK`, `SYSREPORT_HOOK` | Project-specific QC tooling and conventions on top of the label/review handoff |
 | Intake | workspace and agent **`intake`**, `/project-intake`, `pdo intake-submit`, `pdo file-issue` | Bugs and ideas go to the inbox (`$PDO_INBOX`), then to filed issues |
 | PR priority | `pdo pr-priority` | A PR gets the best P-label of its issues; never downgrades |
-| Portfolio (optional) | its own session, `/project-portfolio-manager`, `pdo fleet` (read-only; `--write-advice`, `deps`) | Every project and the machine's constraints; one "waiting on you" list; go / slow / hold advice that projects with `FLEET_ADVICE=honour` follow |
+| CEO | its own session, opened first, `/ceo`, `pdo fleet` (read-only; `--write-advice`, `deps`) | Every project and the machine's constraints; one "waiting on you" list; go / slow / hold advice that projects with `FLEET_ADVICE=honour` follow |
 | Config | `PDO_CONFIG_DIRS` (first match wins): `projects/<p>.env`, `prompts/`, `hooks/` | Overlays prepend their own dir |
 | Global agent rules | your tool's global instructions file | Name workspaces by label; hand-offs go through intake-submit |
 

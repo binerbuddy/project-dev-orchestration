@@ -328,7 +328,7 @@ GH_USER="<login>"               # the gh login this project's agents use (gh and
 # AGENT_QC_RECYCLE=0                         # keep one QC Agent session (default: a fresh session after each verdict)
 # WATCH_EVENT_HOOK="hooks/<name>"  # only for project events of its own (e.g. §Project extras comment commands)
 # MANAGER="<workspace name>"    # who manages it; default "Orchestrator (<name>)" with a board
-# PORTFOLIO_PRIORITY=3          # portfolio manager (pdo fleet): 1 = highest
+# PORTFOLIO_PRIORITY=3          # CEO (pdo fleet): 1 = highest
 # RESOURCE_PROFILE=medium       # light | medium | heavy
 # FLEET_ADVICE=ignore           # honour = follow pdo fleet's go/slow/hold advice
 ```
@@ -455,5 +455,5 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
    - **Next steps:** merge the PR; point collaborators at the human guide, which links the general guide
      (https://binerbuddy.github.io/project-dev-orchestration/) for installing the plugin; in repo+team, install any
      missing requirements the engine install reported, write any hooks the project needs, then start the team: open
-     a herdr session and run `/project-system-manager give me the status and fire up the dev team` (or
+     a herdr session named CEO (`claude -n CEO`) and run `/ceo fire up <name>` (or
      `pdo team-up --project <name>`).
