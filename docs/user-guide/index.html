@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>pdo User Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!-- Source of truth: docs/user-guide/ in binerbuddy/project-dev-orchestration. The published copy
+     (GitHub Pages and the claude.ai artifact) is republished from this file; edit here, not there. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Public+Sans:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a field manual. A sticky contents rail on wide screens; one reading column of ~70ch.
+   Same token family as the workflow page: amber = something a person does, slate = agents, teal = GitHub. */
+:root{
+  color-scheme:light;
+  --paper:#f3f5f6; --surface:#ffffff; --ink:#18212b; --muted:#566371; --line:#d5dce2;
+  --agent:#3c5a78; --agent-soft:#e6edf4; --human:#b56b00; --human-soft:#fbefdb;
+  --store:#2b7a6b; --store-soft:#e1f1ed;
+  --display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --body:"Public Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#11171d; --surface:#18212a; --ink:#e6ebf0; --muted:#9aa8b5; --line:#2c3844;
+  --agent:#8fb3d6; --agent-soft:#1d2b39; --human:#f0a63a; --human-soft:#33260f;
+  --store:#62c2ad; --store-soft:#14302a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#11171d; --surface:#18212a; --ink:#e6ebf0; --muted:#9aa8b5; --line:#2c3844;
+  --agent:#8fb3d6; --agent-soft:#1d2b39; --human:#f0a63a; --human-soft:#33260f;
+  --store:#62c2ad; --store-soft:#14302a; color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--paper);color:var(--ink);font:16px/1.65 var(--body);margin:0}
+img{max-width:100%}
+.page{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px}
+@media (max-width:860px){.page{grid-template-columns:minmax(0,1fr);gap:0}}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;display:grid;gap:4px;font-size:14px}
+nav.toc .tl{font:600 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+nav.toc a{color:var(--ink);text-decoration:none;padding:4px 10px;border-left:2px solid var(--line)}
+nav.toc a:hover{border-color:var(--agent);color:var(--agent)}
+nav.toc a.role{border-color:var(--human)}
+@media (max-width:860px){nav.toc{display:none}}
+main{min-width:0;display:grid}
+h1,h2,h3{font-family:var(--display);line-height:1.05;text-wrap:balance;margin:0;letter-spacing:.01em}
+h1{font-size:clamp(46px,8vw,92px);font-weight:800;text-transform:uppercase}
+h2{font-size:clamp(30px,4.4vw,44px);font-weight:800;text-transform:uppercase}
+h3{font-size:23px;font-weight:600;letter-spacing:.02em}
+p{margin:0;max-width:70ch}
+a{color:var(--agent)}
+a:focus-visible{outline:2px solid var(--agent);outline-offset:2px}
+code{font-family:var(--mono);font-size:.84em;background:var(--agent-soft);padding:.06em .36em;border-radius:3px;overflow-wrap:anywhere}
+pre{margin:0;font:13.5px/1.6 var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal}
+.eyebrow{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+header{display:grid;gap:20px;padding-bottom:36px}
+.lede{font-size:clamp(18px,2.2vw,21px);line-height:1.5;max-width:62ch}
+section{display:grid;gap:18px;padding-block:40px;border-top:1px solid var(--line);scroll-margin-top:16px}
+section > *{min-width:0}
+.sub{display:grid;gap:12px;padding-top:10px}
+ul.plain,ol.plain{margin:0;padding-left:20px;display:grid;gap:6px;max-width:70ch}
+.roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.role-card{background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--human);border-radius:8px;padding:16px 18px;display:grid;gap:8px;align-content:start;text-decoration:none;color:var(--ink);min-width:0}
+.role-card:hover{border-color:var(--human)}
+.role-card .go{font:600 12px var(--mono);color:var(--human);letter-spacing:.06em;text-transform:uppercase}
+.role-card p{font-size:14.5px;color:var(--muted)}
+.flow{list-style:none;margin:0;padding:0;display:grid;gap:0;counter-reset:f}
+.flow li{display:grid;grid-template-columns:52px minmax(0,1fr);gap:14px;padding:12px 0;border-bottom:1px dashed var(--line)}
+.flow li:last-child{border-bottom:0}
+.flow li::before{counter-increment:f;content:counter(f);font:800 32px/1 var(--display);color:var(--agent)}
+.flow li.h::before{color:var(--human)}
+.flow li.b::before{counter-increment:none;content:counter(f) "b";font-size:24px;padding-left:10px}
+.flow b{display:block}
+.who{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.sw{display:inline-block;width:.75em;height:.75em;border-radius:50%;margin-right:4px;vertical-align:-.04em;box-shadow:0 0 0 1px var(--line)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:9px 14px;border-bottom:1px solid var(--line)}
+th{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--paper)}
+tr:last-child td{border-bottom:0}
+td:first-child{white-space:nowrap}
+.callout{background:var(--human-soft);border:1px solid var(--human);border-radius:8px;padding:14px 16px;display:grid;gap:6px;max-width:76ch}
+.callout b{color:var(--human)}
+.routes{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.route{background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--agent);border-radius:8px;padding:16px 18px;display:grid;gap:10px;align-content:start;min-width:0}
+.route .rl code{font-size:13px}
+.route dl{margin:0;display:grid;gap:8px;font-size:14.5px}
+.route dt{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.route dd{margin:0}
+.route .rnote{font-size:13.5px;color:var(--muted);border-top:1px dashed var(--line);padding-top:8px}
+.tree{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:grid;gap:10px;max-width:76ch}
+.tree .ws{display:grid;gap:4px}
+.tree .wl{font:600 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.tree ol{margin:0;padding-left:22px;display:grid;gap:2px;font-size:14.5px}
+.tree ol li::marker{font:600 12px var(--mono);color:var(--muted)}
+.tree .own{display:flex;flex-wrap:wrap;gap:8px}
+.tree .own span{font-size:14px;border:1px solid var(--line);border-radius:999px;padding:2px 10px}
+.never{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.never div{border-left:3px solid var(--human);padding:2px 0 2px 12px;font-size:14.5px}
+dl.gloss{display:grid;grid-template-columns:minmax(120px,190px) minmax(0,1fr);gap:10px 20px;margin:0}
+dl.gloss dt{font-weight:700}
+dl.gloss dd{margin:0}
+@media (max-width:520px){dl.gloss{grid-template-columns:minmax(0,1fr);gap:2px}dl.gloss dd{margin-bottom:10px}}
+details{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+details + details{margin-top:8px}
+summary{cursor:pointer;font-weight:600}
+summary:focus-visible{outline:2px solid var(--agent);outline-offset:2px}
+details p{margin-top:8px;font-size:15px}
+footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:var(--muted);display:grid;gap:6px}
+</style>
+</head>
+<body>
+<div class="page">
+<nav class="toc" aria-label="Contents">
+  <span class="tl">Contents</span>
+  <a href="#start">Start here</a>
+  <a href="#flow">How work moves</a>
+  <a href="#github">Tracked on GitHub</a>
+  <a class="role" href="workflow.html">Workflow deep dive &rarr;</a>
+  <a class="role" href="#owner">Running the team</a>
+  <a class="role" href="#reviewer">Reviewing PRs</a>
+  <a class="role" href="#collaborator">Working with your own agent</a>
+  <a href="#labels">Labels</a>
+  <a href="#glossary">Glossary</a>
+  <a href="#faq">FAQ</a>
+</nav>
+
+<main>
+<header id="start">
+  <span class="eyebrow">project-dev-orchestration &middot; for the people around the agents</span>
+  <h1>pdo User Guide</h1>
+  <p class="lede">pdo runs a team of coding agents on a GitHub project. Agents take issues, write the code, test it and open pull requests. People decide what gets built, answer questions, review what users will see, and merge. All of it is tracked and managed in GitHub issues, labels, the project board and pull requests. This guide covers the human side: what to do, where to do it, and what the labels mean.</p>
+  <div class="roles">
+    <a class="role-card" href="#owner"><span class="go">Run the team &rarr;</span><h3>Owner</h3><p>You run the teams on your machine through the CEO, set priorities, answer agents and merge.</p></a>
+    <a class="role-card" href="#reviewer"><span class="go">Review PRs &rarr;</span><h3>Reviewer</h3><p>You check finished work in a browser and give feedback on GitHub. No install needed.</p></a>
+    <a class="role-card" href="#collaborator"><span class="go">Bring your agent &rarr;</span><h3>Collaborator</h3><p>You work on the repo with your own Claude Code, Codex or Grok agent, without the engine.</p></a>
+  </div>
+</header>
+
+<section id="flow">
+  <span class="eyebrow">The whole thing in one list</span>
+  <h2>How work moves</h2>
+  <p>Every issue follows the same path. Amber numbers are steps where a person acts. For the full flowchart, every skill's steps and the sub-agents each one spawns, see the <a href="workflow.html">Workflow Deep Dive</a>.</p>
+  <ol class="flow">
+    <li class="h"><div><span class="who">Anyone &middot; intake agent</span><b>An idea or bug becomes an issue.</b>Intake drafts a typed issue with a priority and route, checks for duplicates, and files it only after a person says OK.</div></li>
+    <li class="h b"><div><span class="who">Intake &middot; owner</span><b>It gets a priority.</b>Usually set during intake: the draft suggests a P1&ndash;P4 label and the owner confirms it, or the owner adds one later. The labels order the queue, and the board's "Claude Work This" status jumps an issue to the front.</div></li>
+    <li><div><span class="who">Orchestrator</span><b>An agent is started.</b>When a slot is free, the orchestrator claims the issue with a <code>managed-by:</code> label and starts one command agent in its own copy of the code, as a new tab in the project's herdr workspace.</div></li>
+    <li class="h"><div><span class="who">Command agent &middot; owner</span><b>The agent builds it and asks when unsure.</b>It explores, plans, builds, has its work reviewed by a panel of reviewer subagents, and opens a PR. Questions go straight to the owner.</div></li>
+    <li><div><span class="who">Command agent</span><b>The PR is marked <code>ready for QC</code>.</b>It carries a QC checklist and links any test data. The agent then hibernates to free memory; it keeps its full context.</div></li>
+    <li><div><span class="who">QC Agent (if the project runs one)</span><b>An agent tests it first.</b>Failures go back to the same command agent, which fixes them. A pass decides whether a person needs to look.</div></li>
+    <li class="h"><div><span class="who">Reviewer or owner</span><b>A person reviews what users will see.</b>Feedback wakes the agent, which fixes and re-labels. A pass marks the PR <code>Ready for Merge</code>.</div></li>
+    <li class="h"><div><span class="who">Owner</span><b>A person merges.</b>Always. Agents never merge. The finished agent closes and releases its claim on its own.</div></li>
+  </ol>
+  <div class="sub" id="routes">
+    <h3>Three routes: small, design, build</h3>
+    <p>Step 3 starts the agent on one of three lifecycles, chosen by the issue's <code>route:</code> label. Intake suggests the route and the owner can change it. Most work is small. Big features take two trips: a design trip that produces a plan and no code, then a build trip that turns the plan into one PR.</p>
+    <div class="routes">
+      <article class="route">
+        <span class="rl"><code>route:small</code></span>
+        <h3>Small fix or feature</h3>
+        <dl>
+          <dt>For</dt><dd>Bugs, tasks and single features that fit one agent's working memory and have no open design questions.</dd>
+          <dt>Skill</dt><dd><code>/project-small-feature-or-bug-fix</code></dd>
+          <dt>Steps</dt><dd>Explore the code, ask what's ambiguous, plan, build in its own worktree, test, write the QC checklist and changelog, open the PR, one review-and-fix cycle.</dd>
+          <dt>You</dt><dd>Answer questions while it builds; QC and merge the PR.</dd>
+          <dt>Result</dt><dd>One PR at <code>ready for QC</code>.</dd>
+        </dl>
+        <p class="rnote">If it turns out to need a migration or a cross-cutting UX decision, the agent stops and asks to be re-routed to design.</p>
+      </article>
+      <article class="route">
+        <span class="rl"><code>route:design</code></span>
+        <h3>Design a big feature</h3>
+        <dl>
+          <dt>For</dt><dd>Epics, cross-cutting work, and anything with open UX or architecture choices (also anything labelled <code>needs-design</code>).</dd>
+          <dt>Skill</dt><dd><code>/project-feature-design</code></dd>
+          <dt>Steps</dt><dd>Survey the code, past issues and notes; write a proposal; a panel of reviewer agents challenges it; then one decisions gate with you.</dd>
+          <dt>You</dt><dd>Make the key decisions in one sitting, each with a recommended answer.</dd>
+          <dt>Result</dt><dd>A design doc committed to the repo, with a phased delivery plan and the UX checkpoints, plus a GitHub epic with one <code>epic-phase</code> sub-issue per phase. No product code.</dd>
+        </dl>
+        <p class="rnote">When the doc is marked READY, the orchestrator starts the build on its own.</p>
+      </article>
+      <article class="route">
+        <span class="rl"><code>route:build</code></span>
+        <h3>Build from the design</h3>
+        <dl>
+          <dt>For</dt><dd>An epic whose design doc is READY.</dd>
+          <dt>Skill</dt><dd><code>/project-feature-build</code></dd>
+          <dt>Steps</dt><dd>Works every phase in order inside one PR, one commit per phase. Each phase gets a compile check, a fresh-eyes review, headless QC and a verifier, and is recorded in a progress ledger and its phase issue.</dd>
+          <dt>You</dt><dd>Try working prototypes at the UX checkpoints the design set (<code>awaiting-ux-gate</code>; the agent frees its slot while it waits), then QC and merge.</dd>
+          <dt>Result</dt><dd>One PR for the whole epic at <code>ready for QC</code>.</dd>
+        </dl>
+        <p class="rnote">Phase issues are never started on their own; only the epic's build agent works them.</p>
+      </article>
+    </div>
+    <div class="callout"><b>You review prototypes, never design docs.</b><span>The design trip asks you only the decisions it can't make. Everything else you see is running software: prototypes at UX checkpoints, then the finished PR.</span></div>
+  </div>
+</section>
+
+<section id="github">
+  <span class="eyebrow">Where work is tracked</span>
+  <h2>Everything lives on GitHub</h2>
+  <p>pdo has no tracker of its own. Every issue, priority, claim, PR and QC verdict is on GitHub, so anyone with access to the repo can see where things stand without asking an agent or the owner. Agents read and write the same issues, labels and comments you do.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>On GitHub</th><th>What it holds</th><th>How you use it</th></tr></thead>
+    <tbody>
+      <tr><td>Issues</td><td>Every bug, feature, task and epic, typed and labelled. Big features are an epic with one sub-issue per phase.</td><td>Read, comment, file new ones (through intake). A "Claude, &hellip;" comment is passed to the agent.</td></tr>
+      <tr><td>Labels</td><td>Priority (P1&ndash;P4), route, claim (<code>managed-by:</code>), QC state, UX review.</td><td>The <a href="#labels">label reference</a> says what each one means and who sets it.</td></tr>
+      <tr><td>Project board</td><td>The queue. Its Status column shows Backlog, Claude Work This, In Progress, In Review and Done.</td><td>Move an issue to Claude Work This to have it started next. The orchestrator moves cards after that.</td></tr>
+      <tr><td>Assignee</td><td>A person holds the issue.</td><td>Assign yourself to keep agents off it.</td></tr>
+      <tr><td>"Blocked by" links</td><td>GitHub's native issue dependencies.</td><td>A blocked issue waits in the queue until its blocker closes.</td></tr>
+      <tr><td>Pull requests</td><td>The code, the QC checklist, review findings, QC feedback and the agent's replies.</td><td>QC, review and merge here. Reviews with Request changes go to the agent.</td></tr>
+      <tr><td><code>qc-fixtures</code> branch</td><td>Test data linked from QC checklists. Never merged.</td><td>Download what the checklist links.</td></tr>
+    </tbody></table></div>
+  <p>What stays off GitHub is machine-local: each agent's saved conversation, its working copy of the code, and the engine's own records. None of it is needed to follow the work.</p>
+</section>
+
+<section id="owner">
+  <span class="eyebrow">Role &middot; owner</span>
+  <h2>Running the team</h2>
+  <p>You run the engine on one machine. You talk to one session, the <b>CEO</b>. It starts each project's lead, the <b>Repo Manager</b>, and the Repo Manager runs that project's team. Changes to the engine itself go to a separate session, the <b>System Manager</b>.</p>
+  <div class="callout"><b>You need herdr to run the team.</b><span><a href="https://herdr.dev">herdr</a> is the terminal workspace manager the team lives in. Each project gets one herdr workspace, its <b>home</b>, and every agent of that project is a named tab in it. The engine uses herdr to start, watch, prompt and hibernate those agents, and herdr's status (working, idle, blocked) is how the orchestrator and you know who is waiting. Install it before setup, then open your CEO session inside herdr. You only need herdr to run the team: collaborators with their own agent don't need it.</span></div>
+
+  <div class="sub">
+    <h3>First-time setup</h3>
+    <p>The engine ships inside the plugin, so the plugin is the only thing you install.</p>
+    <ol class="plain">
+      <li>Install the plugin (the same commands as in <a href="#collaborator">Working with your own agent</a>).</li>
+      <li>Open your agent in the repo the team will work and run <code>/project-setup repo+team</code>. It installs the engine from the plugin as <code>pdo</code> (it always runs the newest plugin version, so updating the plugin updates the engine), checks the requirements (bash 4+, python 3.8+, git, jq, the GitHub CLI and herdr), registers the repo, and opens one PR with the files every agent reads (<code>AGENTS.md</code>, <code>.agents/project-profile.md</code>) and a human guide (<code>docs/agent-workflow.md</code>). Merge it.</li>
+      <li>Install anything the requirements check said was missing, then start the team (next section).</li>
+    </ol>
+    <p>Run <code>/project-setup repo+team</code> again in each further repo; it only fills gaps. To develop the engine itself or pin a version, clone <code>binerbuddy/project-dev-orchestration</code> and run <code>bin/install --bin</code> from the checkout instead.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Start the team</h3>
+    <p>In herdr, open a workspace named <b>CEO</b>, start Claude Code there with <code>claude -n CEO</code>, and type:</p>
+    <pre><code>/pdo:ceo fire up acme</code></pre>
+    <p>The CEO opens the <b>acme</b> workspace with <b>Repo Manager (acme)</b> in tab 1 (<code>pdo start-manager</code>) and asks it to start the team. The Repo Manager starts whatever is missing: intake, Human Review, the QC Agent (if configured), the orchestrator and any project extras, each as a tab. Then the CEO reports. Use the same command after <code>/clear</code> or in a new session; it never starts anything twice.</p>
+    <p>One machine, one CEO. With several projects it gives you a single "waiting on you" list across all of them, watches the shared limits (usage, memory, disk, GitHub calls), and pauses the projects you aren't working on.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Where everyone sits</h3>
+    <div class="tree" aria-label="herdr layout">
+      <div class="ws"><span class="wl">Workspace &ldquo;acme&rdquo; &middot; the project's home, one tab per agent</span>
+        <ol>
+          <li><b>Repo Manager (acme)</b>: the project's lead; runs its team on your and the CEO's direction</li>
+          <li><b>Orchestrator (acme)</b>: ranks the queue, starts command agents, routes events</li>
+          <li><b>Human Review (acme)</b>: serves a PR on your machine for your own review</li>
+          <li><b>QC Agent (acme)</b>: tests every <code>ready for QC</code> PR before you do</li>
+          <li><b>acme-245 export sort</b>, <b>acme-251 login timeout</b>, &hellip;: one command agent per issue</li>
+        </ol>
+      </div>
+      <div class="ws"><span class="wl">Their own workspaces</span>
+        <div class="own"><span><b>CEO</b>: you talk to it</span><span><b>intake</b>: serves every project</span><span><b>System Manager</b>: builds and repairs the engine</span></div>
+      </div>
+    </div>
+    <p>A repo that manages itself (a personal project with no orchestrator) gets a home of its own, labelled with the repo's name, with <b>Repo Manager (&lt;repo&gt;)</b> in tab 1. A blocked tab marks its whole home blocked in herdr's sidebar, so you can see at a glance which project waits on you.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Things to say to the CEO</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Say</th><th>What happens</th></tr></thead>
+      <tbody>
+        <tr><td><code>status</code></td><td>One ranked "waiting on you" list across projects, then the tightest limit right now (usage, memory, disk).</td></tr>
+        <tr><td><code>fire up acme</code></td><td>Starts Repo Manager (acme), which starts whatever of its team isn't running. Safe to repeat.</td></tr>
+        <tr><td><code>fire up acme to intake and work #123</code></td><td>As above, then intake works the inbox for acme and #123 goes first.</td></tr>
+        <tr><td><code>work acme and beta</code></td><td>Fires up both and pauses every other project (only P1 starts there; running agents finish).</td></tr>
+        <tr><td><code>work #123 now</code></td><td>The project's orchestrator puts it on Claude Work This; it starts within about 5 minutes.</td></tr>
+        <tr><td><code>pause acme</code> / <code>resume acme</code></td><td>Sets the spawn floor to P1, or clears it. Running agents carry on.</td></tr>
+        <tr><td><code>set the floor to P2 on acme</code></td><td>Only P2 and above start on their own.</td></tr>
+        <tr><td><code>QC PR #264</code></td><td>Human Review serves that PR on your machine.</td></tr>
+        <tr><td><code>agent QC #264</code></td><td>Where agent QC stands on it, or moves it up the QC Agent's queue.</td></tr>
+        <tr><td><code>show me the screenshots for #374</code></td><td>Opens that PR's screenshot folder.</td></tr>
+        <tr><td><code>stop acme</code></td><td>Asks which parts. For everything, it shows the <code>pdo shutdown</code> plan and runs it once you say yes.</td></tr>
+        <tr><td>An engine change (<code>make fleet show X</code>)</td><td>Handed to the System Manager with an acceptance check; the CEO relays its report.</td></tr>
+      </tbody></table></div>
+    <p>You can also talk to a Repo Manager directly in tab 1 of its home: it takes the same requests for its own project, plus <code>bring #123 back</code> to resume a hibernated or accidentally closed agent with its full context.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Stopping and restarting</h3>
+    <p><code>pdo shutdown --project acme</code> shows what it would stop (the orchestrator and its watcher, the command agents, Human Review and the QC Agent with their served apps, then the Repo Manager). Add <code>--apply</code> to do it; <code>--all</code> stops every project and intake too. Command agents are hibernated, not lost: their conversations, branches and claims stay, and each resumes where it stopped. It never touches the CEO, the System Manager or your own sessions, and skips any tab with a question waiting. Fire the project up again to restart.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Steering the work</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Control</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td>P1&ndash;P4 labels</td><td>Order the queue. Security issues and bugs go first within a level. An issue that blocks others runs at their priority.</td></tr>
+        <tr><td>Claude Work This</td><td>A board status that puts an issue first. P1 + Claude Work This starts even when every slot is full.</td></tr>
+        <tr><td>Spawn floor</td><td>Nothing below it starts on its own, not even Claude Work This. P4 never starts on its own anyway.</td></tr>
+        <tr><td>Slots</td><td>At most 3 agents working at once by default. Agents parked at QC or waiting on a sign-off don't count.</td></tr>
+        <tr><td>Usage ceiling</td><td>New work stops at 90% of the weekly allowance and pauses at 90% of the 5-hour window.</td></tr>
+        <tr><td>PR cap</td><td>When 10 PRs in one repo wait on people (the default), that repo starts nothing new until you catch up. Other repos carry on.</td></tr>
+        <tr><td>Assign an issue</td><td>An assigned issue belongs to a person. No orchestrator will start it.</td></tr>
+        <tr><td><code>on-hold</code></td><td>Parks an issue indefinitely.</td></tr>
+        <tr><td><code>needs UX review</code></td><td>Guarantees a person reviews the result, even if agent QC sees no visible change.</td></tr>
+        <tr><td>"Claude, &hellip;" issue comment</td><td>From an owner, member or collaborator, it is handed to the agent with the same weight as the issue itself.</td></tr>
+      </tbody></table></div>
+  </div>
+
+  <div class="sub">
+    <h3>Answering agents</h3>
+    <p>Agents ask in their own tab, named <code>&lt;Repo&gt;-&lt;issue#&gt; &lt;brief&gt;</code>, in the project's home. herdr marks a waiting agent as blocked, and Remote Control mirrors every session to claude.ai and the phone app, so you can answer from anywhere. A question about business rules that could change results is a blocking gate: the agent waits for your explicit approval.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Filing bugs and ideas</h3>
+    <ul class="plain">
+      <li><b>Your own:</b> in the <b>intake</b> workspace type <code>/project-intake &lt;what you saw or want&gt;</code>. It checks for duplicates, shows you a draft, and files after one OK. Say it's urgent and it can go straight to Claude Work This.</li>
+      <li><b>From agents:</b> agents never file on their own. They drop reports in the intake inbox. Run <code>/project-intake inbox</code> when you have time to triage the batch, or name a single report to work just that one.</li>
+      <li>One intake session and one inbox serve every project on the machine; each report records which agent sent it.</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>Human review on your machine</h3>
+    <p>In the <b>Human Review (&lt;project&gt;)</b> tab, run <code>/project-human-review &lt;PR#&gt;</code> (or ask the CEO to <code>QC PR #&lt;n&gt;</code>). It serves the PR on your reserved QC ports with its own database copy. Type what you find in plain words: it posts "QC feedback (round N)" on the PR and wakes the PR's agent. Say <code>pass</code> when it's good.</p>
+    <p>Where the project runs a <b>QC Agent</b>, it tests every <code>ready for QC</code> PR before you do, and only hands you the ones with visible changes. Two failed rounds add <code>QC escalated</code>, and the PR waits for your call.</p>
+  </div>
+
+  <div class="sub">
+    <h3>The System Manager</h3>
+    <p>The System Manager builds and repairs the engine: its scripts, skills and config. It doesn't run teams. You rarely open it yourself: ask the CEO for an engine change and it hands the work over. Open it directly (<code>claude -n "System Manager"</code>, then <code>/project-system-manager</code>) when the machinery itself is broken, such as a watcher that won't run or QC that won't serve.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Several GitHub accounts</h3>
+    <p>GitHub's CLI has one active account for the whole machine, so never run <code>gh auth switch</code> while agents are working: it breaks every other session. List which login works which owner in <code>~/.config/project-dev-orchestration/gh-identities</code> and run <code>pdo install --gh-identities</code>. From then on every <code>gh</code> and <code>git</code> call uses the right login automatically.</p>
+  </div>
+
+  <div class="sub">
+    <h3>When something looks wrong</h3>
+    <ul class="plain">
+      <li>Ask the CEO for <code>status</code>, then describe what you see.</li>
+      <li>An agent shown as "blocked" is waiting on you. Open its tab or use Remote Control.</li>
+      <li>Resuming an agent is always safe; it comes back with the same conversation.</li>
+      <li>If the engine itself misbehaves, tell the System Manager. Traps already found are written down in the engine's <code>docs/lessons-learned.md</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="reviewer">
+  <span class="eyebrow">Role &middot; reviewer</span>
+  <h2>Reviewing PRs</h2>
+  <p>You need a browser and access to the GitHub repo. Nothing to install.</p>
+
+  <div class="sub">
+    <h3>Find your work</h3>
+    <p>PRs waiting for you carry <code>QC complete - ready to review</code> (agent QC passed, your UX review is next) or <code>ready for QC</code> (where no QC Agent runs). Each has one comment headed <b>QC Checklist</b>: steps to try in the running app, using names you'll see on screen. When the seed data doesn't cover a case, the first item links a test file to import from the repo's <code>qc-fixtures</code> branch.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Give feedback or pass</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>You want to</th><th>Do this</th></tr></thead>
+      <tbody>
+        <tr><td>Report a problem or answer the agent</td><td>Submit a PR review with <b>Request changes</b>. The PR's agent wakes up, fixes, pushes, replies on the PR, and puts <code>ready for QC</code> back.</td></tr>
+        <tr><td>Pass QC</td><td>Add the <code>Ready for Merge</code> label and remove <code>QC complete - ready to review</code> / <code>ready for QC</code>.</td></tr>
+        <tr><td>Something isn't clear</td><td>Ask in the review. Agents answer on the PR, not only in their session.</td></tr>
+      </tbody></table></div>
+    <p>Only reviews from the repo's owners, members and collaborators count. GitHub won't let you request changes on a PR you opened yourself; in that case tell the agent in its session.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Project extras</h3>
+    <p>A project can add its own commands on top. The repo's <code>docs/agent-workflow.md</code> lists them. A project with a hosted preview, for example, might add PR comments like these:</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Example comment</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><code>Claude, spin up QC</code></td><td>A few minutes later, a reply with a preview link. Often already posted for you after agent QC passes.</td></tr>
+        <tr><td><code>QC: &lt;findings&gt;</code></td><td>Same as Request changes: goes to the PR's agent.</td></tr>
+        <tr><td><code>Claude, QC pass</code></td><td>Sets <code>Ready for Merge</code>.</td></tr>
+        <tr><td><code>Claude, tear down</code></td><td>Frees the preview.</td></tr>
+      </tbody></table></div>
+  </div>
+</section>
+
+<section id="collaborator">
+  <span class="eyebrow">Role &middot; collaborator</span>
+  <h2>Working with your own agent</h2>
+  <p>You work on a repo that uses pdo with your own agent on your own machine. You don't need the orchestrator, herdr, or any engine scripts. Read the repo's <code>docs/agent-workflow.md</code> too; where it and this guide disagree, the repo's guide wins.</p>
+
+  <div class="sub">
+    <h3>Install the plugin</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Tool</th><th>Install</th></tr></thead>
+      <tbody>
+        <tr><td>Claude Code</td><td><code>/plugin marketplace add binerbuddy/project-dev-orchestration</code> then <code>/plugin install pdo@project-dev-orchestration</code></td></tr>
+        <tr><td>Codex</td><td><code>codex plugin marketplace add binerbuddy/project-dev-orchestration</code> then <code>codex plugin add pdo@project-dev-orchestration</code></td></tr>
+        <tr><td>Grok Build</td><td><code>grok plugin install binerbuddy/project-dev-orchestration</code></td></tr>
+      </tbody></table></div>
+    <p>Install the whole plugin, not single skills; they share reference files. In Claude Code the skills appear as <code>/pdo:project-&lt;name&gt;</code>. After an update, start a new session (or run <code>/reload-plugins</code>) so the agent loads it.</p>
+  </div>
+
+  <div class="sub">
+    <h3>First time in a repo</h3>
+    <ol class="plain">
+      <li>Clone it and start your agent in the clone. It reads <code>AGENTS.md</code> and <code>.agents/project-profile.md</code> for you.</li>
+      <li>It asks once whether you've read the repo's guide and offers a 3-line summary. After you say yes it won't ask again unless the guide changes.</li>
+      <li>If the repo isn't set up yet, run <code>/project-setup repo-only</code>. It opens a setup PR for a maintainer to merge.</li>
+    </ol>
+  </div>
+
+  <div class="sub">
+    <h3>Commands and when to use them</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>When</th><th>Run</th></tr></thead>
+      <tbody>
+        <tr><td>A bug fix or small feature (<code>route:small</code>)</td><td><code>/project-small-feature-or-bug-fix #123</code></td></tr>
+        <tr><td>A big or cross-cutting feature (<code>route:design</code>)</td><td><code>/project-feature-design &lt;feature or issue&gt;</code></td></tr>
+        <tr><td>A design doc is ready (<code>route:build</code>)</td><td><code>/project-feature-build &lt;path to the doc&gt;</code></td></tr>
+        <tr><td>You're asked to review a PR</td><td><code>/project-pr-review &lt;PR#&gt;</code></td></tr>
+        <tr><td>Review comments on your PR need answering</td><td><code>/project-pr-triage &lt;PR#&gt;</code></td></tr>
+        <tr><td>You found a bug or have an idea</td><td><code>/project-intake &lt;what you saw&gt;</code></td></tr>
+        <tr><td>"Where are things?"</td><td><code>/project-status</code> (read-only)</td></tr>
+        <tr><td>You want the rules explained</td><td><code>/project-how-it-works</code></td></tr>
+        <tr><td>Merged branches and worktrees pile up</td><td><code>/project-cleanup-worktrees</code></td></tr>
+      </tbody></table></div>
+    <p>Only take issues a maintainer gave you, or ask first. Leave alone anything assigned to someone else, labelled <code>managed-by:&lt;manager&gt;</code> (ask that manager), or shown by GitHub as "blocked by" an open issue.</p>
+  </div>
+
+  <div class="sub">
+    <h3>The rules your agent follows</h3>
+    <ul class="plain">
+      <li>Works in its own branch and worktree, passes the repo's checks, opens a PR with <code>Closes #&lt;n&gt;</code>, and stops at <code>ready for QC</code>.</li>
+      <li>Stops its dev servers and browsers before handing off, and never uses the ports reserved for QC.</li>
+      <li>Files out-of-scope problems instead of fixing them in passing.</li>
+      <li>Puts QC test data on the <code>qc-fixtures</code> branch, never on the PR branch.</li>
+      <li>Asks you before writing anything in another repo. Reading is fine.</li>
+      <li>Never switches the machine's GitHub account; it pins a login per command.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="never">
+  <span class="eyebrow">For everyone</span>
+  <h2>Never do these</h2>
+  <div class="never">
+    <div><b>Let an agent merge.</b> People merge, always.</div>
+    <div><b>Pass QC without doing it.</b> <code>Ready for Merge</code> means QC really happened: a person checked, or the QC Agent tested the PR and found no visible change (it adds <code>UX testing skipped</code> to say so).</div>
+    <div><b>Set priorities you don't own.</b> File with <code>needs-triage</code>; maintainers prioritise.</div>
+    <div><b>Type into another person's agent.</b> Use PR comments and reviews, or ask its owner.</div>
+    <div><b>Start a claimed issue.</b> A <code>managed-by:</code> label or an assignee means someone has it.</div>
+    <div><b>Run <code>gh auth switch</code></b> on a machine where agents are running.</div>
+  </div>
+</section>
+
+<section id="labels">
+  <span class="eyebrow">Reference</span>
+  <h2>Labels you'll see</h2>
+  <p><b>Yellow means it's your move.</b> Only labels that wait on a person are yellow: <code>needs-triage</code>, <code>likely-fixed</code>, <code>QC complete - ready to review</code> and <code>QC escalated</code>, plus <code>awaiting-ux-gate</code> in a brighter lemon yellow because an agent is blocked on it. <code>Ready for Merge</code> also waits on you, but stays green. Filter GitHub by these to see your queue.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Label</th><th>Meaning</th><th>Who sets it</th></tr></thead>
+    <tbody>
+      <tr><td><i class="sw" style="background:#b60205"></i><i class="sw" style="background:#d93f0b"></i><i class="sw" style="background:#0969da"></i><i class="sw" style="background:#c2e0c6"></i><code>P1-urgent</code> &hellip; <code>P4-low</code></td><td>Priority. PRs copy the best one from the issues they close and are never downgraded.</td><td>Owner, intake</td></tr>
+      <tr><td><i class="sw" style="background:#fbca04"></i><code>needs-triage</code></td><td>Filed, not yet prioritised. Not started unless on Claude Work This.</td><td>Anyone filing</td></tr>
+      <tr><td><i class="sw" style="background:#0e8a16"></i><i class="sw" style="background:#5319e7"></i><i class="sw" style="background:#1d76db"></i><code>route:small</code> / <code>route:design</code> / <code>route:build</code></td><td>Which lifecycle an agent follows.</td><td>Intake, owner</td></tr>
+      <tr><td><i class="sw" style="background:#ee0701"></i><code>Security</code></td><td>Ranks first within its priority.</td><td>Intake, owner</td></tr>
+      <tr><td><code>managed-by:&lt;manager&gt;</code></td><td>Claimed by that manager's agents. Ask that manager before touching it.</td><td>Engine (added and removed)</td></tr>
+      <tr><td><i class="sw" style="background:#1b998b"></i><code>ready for QC</code></td><td>The agent is done; QC is next.</td><td>Command agent</td></tr>
+      <tr><td><i class="sw" style="background:#fbca04"></i><code>QC complete - ready to review</code></td><td>Agent QC passed; a person's UX review is next.</td><td>QC Agent</td></tr>
+      <tr><td><i class="sw" style="background:#0e8a16"></i><code>Ready for Merge</code></td><td>All QC passed; awaiting code review and merge.</td><td>QC Agent or a person</td></tr>
+      <tr><td><i class="sw" style="background:#c5def5"></i><code>UX testing skipped</code></td><td>Agent QC found no visible change, so no UX review.</td><td>QC Agent</td></tr>
+      <tr><td><i class="sw" style="background:#fbca04"></i><code>QC escalated</code></td><td>Agent QC failed twice; a person decides.</td><td>QC Agent</td></tr>
+      <tr><td><i class="sw" style="background:#d4c5f9"></i><code>needs UX review</code></td><td>Always gets a person's UX review. Copied from the issue to its PR.</td><td>Intake, owner</td></tr>
+      <tr><td><i class="sw" style="background:#ffe800"></i><code>awaiting-ux-gate</code></td><td>A build waits for your prototype sign-off. On the issue and its PR, in a brighter yellow: clear these first, since an agent is waiting to keep building.</td><td>Command agent</td></tr>
+      <tr><td><i class="sw" style="background:#fbca04"></i><code>likely-fixed</code></td><td>The agent thinks it's already done; a maintainer confirms and closes.</td><td>Command agent</td></tr>
+      <tr><td><i class="sw" style="background:#c5def5"></i><code>epic-phase</code></td><td>One phase of an epic; worked only by the epic's build agent.</td><td>Design agent</td></tr>
+      <tr><td><i class="sw" style="background:#6a737d"></i><code>on-hold</code></td><td>Parked; never started.</td><td>Owner</td></tr>
+      <tr><td><i class="sw" style="background:#0052cc"></i><code>client-requested</code></td><td>A client asked for it. Copied onto PRs.</td><td>Intake, owner</td></tr>
+      <tr><td><i class="sw" style="background:#5a5a5a"></i><code>orchestrator-system</code></td><td>Work on the system itself, for the System Manager.</td><td>Owner</td></tr>
+    </tbody></table></div>
+  <p class="note" style="font-size:14px;color:var(--muted)">Colours shown are the engine defaults. A project can rename the priority and QC labels, and keep its own colours for labels that don't wait on a person; its <code>docs/agent-workflow.md</code> lists the names it uses.</p>
+</section>
+
+<section id="glossary">
+  <span class="eyebrow">Reference</span>
+  <h2>Glossary</h2>
+  <dl class="gloss">
+    <dt>pdo</dt><dd>project-dev-orchestration: the skills (for any agent) plus the engine scripts (for whoever runs the team).</dd>
+    <dt>CEO</dt><dd>The first session the owner opens, one per machine. It starts, pauses and coordinates every project's team and keeps one "waiting on you" list. It never does project work.</dd>
+    <dt>Repo Manager</dt><dd>A project's lead, in tab 1 of its home: "Repo Manager (acme)". It runs that project's orchestrator, Human Review and QC Agent on the owner's and the CEO's direction.</dd>
+    <dt>Home</dt><dd>A project's herdr workspace, labelled with its name. Every agent of the project is a tab in it.</dd>
+    <dt>Command agent</dt><dd>The agent that owns one issue, from exploring to a PR ready for QC, then the wrap-up.</dd>
+    <dt>Orchestrator</dt><dd>The always-on agent that ranks the queue, starts command agents and routes events. It never writes product code.</dd>
+    <dt>Human Review</dt><dd>The tab that serves a PR on the owner's machine for a person's own QC or UX review (<code>/project-human-review</code>).</dd>
+    <dt>QC Agent</dt><dd>An agent that tests each PR before people do, on its own ports and data.</dd>
+    <dt>System Manager</dt><dd>The session that builds and repairs the engine: scripts, skills and config. It doesn't run teams.</dd>
+    <dt>Intake</dt><dd>The agent that turns reports into well-formed issues, after a person approves the draft. One serves every project.</dd>
+    <dt>Claim</dt><dd>The <code>managed-by:</code> label and comment that mark an issue as taken by one manager's agents.</dd>
+    <dt>Claude Work This</dt><dd>The board status that puts an issue at the front of the queue.</dd>
+    <dt>Spawn floor</dt><dd>The lowest priority allowed to start on its own.</dd>
+    <dt>Route</dt><dd>Which lifecycle an issue follows: small (one pass), design (a design doc first) or build (from a ready design).</dd>
+    <dt>Worktree</dt><dd>A separate copy of the repo on disk, one per agent, so agents never touch each other's files.</dd>
+    <dt>Hibernate</dt><dd>Closing an idle agent's tab to free memory while keeping its conversation, so it can be resumed later with full context.</dd>
+    <dt>Wrap-up</dt><dd>The agent's last pass after QC: final fixes, push and a closing comment. Then it closes on its own.</dd>
+    <dt>Fixture</dt><dd>Test data for QC, kept on the never-merged <code>qc-fixtures</code> branch and linked from the checklist.</dd>
+    <dt>herdr</dt><dd>The terminal workspace manager the agents run in: one workspace per project, one named tab per agent.</dd>
+    <dt>Remote Control</dt><dd>Claude Code's link that mirrors a session to claude.ai and the phone app.</dd>
+  </dl>
+</section>
+
+<section id="faq">
+  <span class="eyebrow">Reference</span>
+  <h2>FAQ</h2>
+  <div>
+    <details><summary>Do I need the engine to contribute?</summary><p>No. Install the plugin for your agent tool and follow the collaborator section. The engine is only for whoever runs the team.</p></details>
+    <details><summary>Which agent tools work?</summary><p>Claude Code, Codex and Grok Build all load the skills. The engine launches Claude Code today.</p></details>
+    <details><summary>Can an agent merge once QC passes?</summary><p>No. People merge, always.</p></details>
+    <details><summary>My agent found an unrelated bug. Should it fix it?</summary><p>No. It files it (a <code>needs-triage</code> issue, or a report to the intake inbox where the engine runs) and stays on task.</p></details>
+    <details><summary>Where does QC test data go?</summary><p>On the repo's never-merged <code>qc-fixtures</code> branch, linked from the PR's QC checklist. Never on the PR branch, or it would merge with the PR.</p></details>
+    <details><summary>My agent keeps asking whether I've read the guide.</summary><p>It should ask once per clone and record your answer in <code>.agents/local/guide-ack</code>. If it asks every time, check that the file exists and that nothing cleans <code>.agents/local/</code> away.</p></details>
+    <details><summary>An agent disappeared. Did I lose its work?</summary><p>No. Idle agents hibernate to save memory, and their work is on the branch and the PR. Ask the project's Repo Manager to bring it back; it resumes the same conversation.</p></details>
+    <details><summary>Do I talk to the CEO or the Repo Manager?</summary><p>The CEO for anything across projects or for starting and stopping a team; a Repo Manager for detail inside its own project. Both reach the same agents, so pick whichever is open.</p></details>
+    <details><summary>Two teams want the same issue. Who gets it?</summary><p>Whoever claimed it first. The other team's engine skips issues with someone else's <code>managed-by:</code> label; agree a hand-off between the managers if needed.</p></details>
+    <details><summary>Where do I ask something this guide doesn't answer?</summary><p>Where the repo's <code>docs/agent-workflow.md</code> says, or ask your agent to load <code>/project-how-it-works</code>.</p></details>
+  </div>
+</section>
+
+<footer>
+  <span>Written for project-dev-orchestration v0.16 (October 2026). Its source is <code>docs/user-guide/</code> in the engine repo, next to the full manual, design notes and lessons learned in <code>docs/</code>.</span>
+</footer>
+</main>
+</div>
+</body>
+</html>

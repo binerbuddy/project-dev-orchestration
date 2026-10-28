@@ -48,13 +48,15 @@ the project's GitHub login without switching the machine's account: `pdo with-gh
 (it pins gh's token and injects gh's credential helper for git over HTTPS).
 
 It needs bash 4+, python 3.8+, git 2.31+, jq, the GitHub CLI and [herdr](https://herdr.dev). Then you talk to one
-session, the **System Manager** (`/project-system-manager`), which starts and checks everything else:
+session, the **CEO** (`/pdo:ceo`), which starts each project's Repo Manager (tab 1 of the project's herdr
+workspace); the Repo Manager starts the rest of its team, each agent a tab:
 
 | Agent | Does |
 |---|---|
 | Orchestrator | Ranks the board (queue column first, then P1 to P4), starts a command agent per issue, watches them, hibernates idle ones, closes them out. Never edits code or merges. |
 | Command agents | One per issue, in its own worktree, from start to a PR labelled `ready for QC`. They ask you their questions directly. |
-| QC agent | Serves a PR on your local QC ports and relays your feedback to the PR's agent. |
+| Human Review | Serves a PR on your local QC ports for your own review and relays your feedback to the PR's agent. |
+| QC Agent | Tests every `ready for QC` PR before you do, where the project runs one. |
 | Intake | Turns bug reports and ideas, yours and every agent's, into proper issues. |
 
 Things to say to the CEO: `status`, `fire up <project>`, `what's waiting on me`, `work #123 now`,

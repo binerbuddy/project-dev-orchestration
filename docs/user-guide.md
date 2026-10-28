@@ -1,7 +1,8 @@
 # Running the dev team: user guide
 
 The human's guide to an agent team run by project-dev-orchestration. You talk to one session, the
-**System Manager**, and it runs everything else. Examples use a made-up project, `acme`, whose main repo is
+**CEO**; it starts each project's Repo Manager, which runs that project's team. The same guide, illustrated:
+[pdo User Guide](user-guide/). Examples use a made-up project, `acme`, whose main repo is
 `widget`.
 
 ## The 30-second version
@@ -232,7 +233,7 @@ GitHub accounts"; undo with `pdo install --gh-identities --uninstall`.
 
 ## When something looks wrong
 
-- Ask the System Manager: `status`, then describe what you see.
+- Ask the CEO: `status`, then describe what you see. If the engine itself misbehaves, tell the System Manager.
 - If an agent shows "blocked", it's waiting on you: open its tab, or use Remote Control.
-- If an agent was closed by accident, resuming it is safe; ask the System Manager to bring #N back.
+- If an agent was closed by accident, resuming it is safe; ask the project's Repo Manager to bring #N back.
 - Design: [design.md](design.md). Traps already found: [lessons-learned.md](lessons-learned.md).

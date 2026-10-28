@@ -46,6 +46,7 @@ and who to ask. Read that one too.
 
 ## More
 
+- [The illustrated pdo User Guide](user-guide/) and its [workflow deep dive](user-guide/workflow.html)
 - [The day-to-day guide for whoever runs the team](user-guide.md)
 - [How the engine works, and why](design.md)
 - [The per-repo project profile](profile.md)

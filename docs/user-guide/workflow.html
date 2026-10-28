@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>pdo Workflow Deep Dive</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!-- Source of truth: docs/user-guide/ in binerbuddy/project-dev-orchestration; edit here, then republish. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Public+Sans:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: an engineering drawing. One tall flowchart is the spine; stage sheets below zoom into each box.
+   Same tokens as the guide: amber = a person decides, slate = Claude agents, purple = scripts, teal = GitHub. */
+:root{
+  color-scheme:light;
+  --paper:#f3f5f6; --surface:#ffffff; --ink:#18212b; --muted:#566371; --line:#d5dce2;
+  --agent:#3c5a78; --agent-soft:#e6edf4; --human:#b56b00; --human-soft:#fbefdb;
+  --store:#2b7a6b; --store-soft:#e1f1ed; --script:#6b5b8a; --script-soft:#eeeaf5;
+  --display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --body:"Public Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#11171d; --surface:#18212a; --ink:#e6ebf0; --muted:#9aa8b5; --line:#2c3844;
+  --agent:#8fb3d6; --agent-soft:#1d2b39; --human:#f0a63a; --human-soft:#33260f;
+  --store:#62c2ad; --store-soft:#14302a; --script:#b7a6db; --script-soft:#272236; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#11171d; --surface:#18212a; --ink:#e6ebf0; --muted:#9aa8b5; --line:#2c3844;
+  --agent:#8fb3d6; --agent-soft:#1d2b39; --human:#f0a63a; --human-soft:#33260f;
+  --store:#62c2ad; --store-soft:#14302a; --script:#b7a6db; --script-soft:#272236; color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--paper);color:var(--ink);font:16px/1.65 var(--body);margin:0}
+img{max-width:100%}
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 80px}
+.back{font:600 12px var(--mono);letter-spacing:.08em;text-transform:uppercase}
+a{color:var(--agent)}
+a:focus-visible{outline:2px solid var(--agent);outline-offset:2px}
+h1,h2,h3{font-family:var(--display);line-height:1.05;text-wrap:balance;margin:0;letter-spacing:.01em}
+h1{font-size:clamp(44px,7.5vw,88px);font-weight:800;text-transform:uppercase}
+h2{font-size:clamp(30px,4.4vw,44px);font-weight:800;text-transform:uppercase}
+h3{font-size:23px;font-weight:600;letter-spacing:.02em}
+p{margin:0;max-width:70ch}
+code{font-family:var(--mono);font-size:.84em;background:var(--agent-soft);padding:.06em .36em;border-radius:3px;overflow-wrap:anywhere}
+.eyebrow{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+header{display:grid;gap:18px;padding-block:20px 36px}
+.lede{font-size:clamp(18px,2.2vw,21px);line-height:1.5;max-width:64ch}
+.key{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:14px;color:var(--muted)}
+.chipkey{display:inline-flex;align-items:center;gap:6px}
+.chipkey i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1.5px solid}
+.chipkey .h{background:var(--human-soft);border-color:var(--human)}
+.chipkey .a{background:var(--agent-soft);border-color:var(--agent)}
+.chipkey .s{background:var(--store-soft);border-color:var(--store)}
+.chipkey .x{background:var(--script-soft);border-color:var(--script)}
+section{display:grid;gap:18px;padding-block:40px;border-top:1px solid var(--line)}
+section > *{min-width:0}
+figure{margin:0;display:grid;gap:10px}
+.scroll{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
+figcaption{font-size:14px;color:var(--muted);max-width:80ch}
+.flow{display:block;width:100%;max-width:980px;min-width:760px;height:auto;margin:0 auto;color:var(--ink);font-family:var(--body)}
+.flow .n{stroke-width:1.5}
+.flow .ag{fill:var(--agent-soft);stroke:var(--agent)}
+.flow .hu{fill:var(--human-soft);stroke:var(--human);stroke-width:2}
+.flow .st{fill:var(--store-soft);stroke:var(--store)}
+.flow .sc{fill:var(--script-soft);stroke:var(--script)}
+.flow .t{font-size:13px;font-weight:700;fill:var(--ink)}
+.flow .d{font-size:11.5px;fill:var(--ink)}
+.flow .sa{font:600 10.5px var(--mono);fill:var(--agent)}
+.flow .e{fill:none;stroke:currentColor;stroke-width:1.4;opacity:.7}
+.flow .lp{fill:none;stroke:var(--human);stroke-width:1.5;stroke-dasharray:5 4}
+.flow .lq{fill:none;stroke:var(--agent);stroke-width:1.5;stroke-dasharray:5 4}
+.flow .ld{fill:none;stroke:var(--store);stroke-width:1.5;stroke-dasharray:5 4}
+.flow .el{font:600 10.5px var(--mono);fill:var(--muted)}
+.flow .elh{font:600 10.5px var(--mono);fill:var(--human)}
+.flow .elq{font:600 10.5px var(--mono);fill:var(--agent)}
+.flow .eld{font:600 10.5px var(--mono);fill:var(--store)}
+.flow .col{font:800 15px var(--display);letter-spacing:.06em;text-transform:uppercase;fill:var(--muted)}
+.stages{display:grid;gap:16px}
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px 22px;display:grid;gap:14px;scroll-margin-top:16px}
+.stage.human{border-color:var(--human)}
+.stage-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline}
+.stage-h .who{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.steps{margin:0;padding-left:22px;display:grid;gap:8px;max-width:78ch}
+.steps li::marker{font:600 13px var(--mono);color:var(--muted)}
+.subs{display:flex;flex-wrap:wrap;gap:8px}
+.sa{display:inline-flex;flex-direction:column;gap:2px;border:1.5px solid var(--agent);background:var(--agent-soft);border-radius:6px;padding:6px 10px;min-width:0;max-width:100%}
+.sa b{font-size:14px}
+.sa span{font:600 11px var(--mono);color:var(--muted);letter-spacing:.02em}
+.sa.par{border-style:solid;box-shadow:3px 3px 0 var(--agent-soft),3px 3px 0 1.5px var(--agent)}
+.gate{display:flex;gap:10px;align-items:flex-start;background:var(--human-soft);border:1px solid var(--human);border-radius:8px;padding:10px 14px;font-size:14.5px;max-width:78ch}
+.gate b{color:var(--human);white-space:nowrap}
+.none{font-size:14px;color:var(--muted)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:9px 14px;border-bottom:1px solid var(--line)}
+th{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--paper)}
+tr:last-child td{border-bottom:0}
+td.y{color:var(--agent);font-weight:700;text-align:center}
+td.c{text-align:center;color:var(--muted)}
+th.c{text-align:center}
+.jump{display:flex;flex-wrap:wrap;gap:8px}
+.jump a{font:600 12px var(--mono);text-decoration:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px}
+.jump a:hover{border-color:var(--agent)}
+footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:var(--muted);display:grid;gap:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="index.html">&larr; pdo User Guide</a>
+<header>
+  <span class="eyebrow">project-dev-orchestration &middot; page 2</span>
+  <h1>pdo Workflow Deep Dive</h1>
+  <p class="lede">How one item moves from a report to merged code: every decision point, which skill runs at each step, and which sub-agents that skill spawns. All sub-agents run on Claude Opus by default; a skill may step up to a larger model for unusually high-risk work.</p>
+  <div class="key" aria-label="Colour key">
+    <span class="chipkey"><i class="h"></i>A person decides</span>
+    <span class="chipkey"><i class="a"></i>Claude agent</span>
+    <span class="chipkey"><i class="x"></i>Script, no AI</span>
+    <span class="chipkey"><i class="s"></i>Recorded on GitHub</span>
+  </div>
+</header>
+
+<section id="chart">
+  <span class="eyebrow">The flowchart</span>
+  <h2>From report to merge</h2>
+  <p>Read top to bottom. The route diamond splits work three ways; small and build both end in a PR, while design ends in a plan that starts a build. Mono text inside a box names the sub-agents that step spawns.</p>
+  <figure>
+    <div class="scroll"><svg class="flow" viewBox="0 0 980 1560" role="img" aria-label="Flowchart: report, intake with one exploration sub-agent, approval gate, issue on the board, orchestrator claims and spawns, route decision into small, design and build columns. Small: plan consortium, implement, review and triage. Design: survey, consortium, decisions gate, epic, which starts the build. Build: phase loop, UX gates, finalize with review and triage. Small and build merge at PR ready for QC, then hibernate, QC Agent, pass decision with a findings loop, visible change decision leading to UX review or ready for merge, wrap-up, human merge, close-out.">
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--human)"/></marker>
+<marker id="aq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--agent)"/></marker>
+<marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--store)"/></marker>
+</defs>
+
+<!-- spine edges -->
+<path class="e" d="M480,56 L480,82" marker-end="url(#a)"/>
+<path class="e" d="M480,142 L480,162" marker-end="url(#a)"/>
+<path class="e" d="M480,228 L480,254" marker-end="url(#a)"/>
+<path class="e" d="M480,314 L480,340" marker-end="url(#a)"/>
+<path class="e" d="M480,400 L480,424" marker-end="url(#a)"/>
+<path class="e" d="M380,458 L170,458 L170,518" marker-end="url(#a)"/>
+<path class="e" d="M480,490 L480,518" marker-end="url(#a)"/>
+<path class="e" d="M580,458 L790,458 L790,518" marker-end="url(#a)"/>
+<text class="el" x="275" y="450" text-anchor="middle">route:small</text>
+<text class="el" x="488" y="508">route:design</text>
+<text class="el" x="685" y="450" text-anchor="middle">route:build</text>
+<path class="e" d="M580,196 L640,196" marker-end="url(#a)"/>
+<text class="el" x="648" y="192">no: adjust or drop</text>
+<text class="el" x="488" y="246">yes</text>
+<!-- column edges -->
+<path class="e" d="M170,578 L170,604" marker-end="url(#a)"/>
+<path class="e" d="M170,664 L170,690" marker-end="url(#a)"/>
+<path class="e" d="M480,578 L480,604" marker-end="url(#a)"/>
+<path class="e" d="M480,664 L480,690" marker-end="url(#a)"/>
+<path class="e" d="M480,750 L480,776" marker-end="url(#a)"/>
+<path class="e" d="M790,578 L790,604" marker-end="url(#a)"/>
+<path class="e" d="M790,664 L790,690" marker-end="url(#a)"/>
+<!-- merge into PR -->
+<path class="e" d="M170,750 L170,895 L358,895" marker-end="url(#a)"/>
+<path class="e" d="M790,750 L790,895 L602,895" marker-end="url(#a)"/>
+<!-- design_ready -->
+<path class="ld" d="M600,807 L944,807 L944,549 L912,549" marker-end="url(#ad)"/>
+<text class="eld" transform="rotate(-90 958 680)" x="958" y="680" text-anchor="middle">design_ready: build starts</text>
+<!-- QC spine -->
+<path class="e" d="M480,924 L480,950" marker-end="url(#a)"/>
+<path class="e" d="M480,1010 L480,1036" marker-end="url(#a)"/>
+<path class="e" d="M480,1096 L480,1122" marker-end="url(#a)"/>
+<path class="e" d="M380,1156 L292,1156" marker-end="url(#a)"/>
+<text class="el" x="336" y="1150" text-anchor="middle">fail</text>
+<path class="lq" d="M110,1127 L110,912 L358,912" marker-end="url(#aq)"/>
+<text class="elq" x="118" y="1032">pushes the fix,</text>
+<text class="elq" x="118" y="1048">re-labels ready for QC</text>
+<path class="e" d="M480,1188 L480,1216" marker-end="url(#a)"/>
+<text class="el" x="488" y="1208">pass</text>
+<path class="e" d="M580,1250 L668,1250" marker-end="url(#a)"/>
+<text class="el" x="624" y="1244" text-anchor="middle">yes</text>
+<path class="lp" d="M850,1221 L850,912 L602,912" marker-end="url(#ah)"/>
+<text class="elh" x="842" y="1032" text-anchor="end">feedback: the build</text>
+<text class="elh" x="842" y="1048" text-anchor="end">agent fixes, re-labels</text>
+<path class="e" d="M790,1279 L790,1340 L602,1340" marker-end="url(#a)"/>
+<text class="el" x="798" y="1300">pass</text>
+<path class="e" d="M480,1282 L480,1309" marker-end="url(#a)"/>
+<text class="el" x="488" y="1300">no</text>
+<path class="lq" d="M380,1250 L170,1250 L170,1309" marker-end="url(#aq)"/>
+<text class="elq" x="275" y="1244" text-anchor="middle">first pass</text>
+<path class="e" d="M480,1369 L480,1395" marker-end="url(#a)"/>
+<path class="e" d="M480,1455 L480,1481" marker-end="url(#a)"/>
+
+<!-- nodes: spine -->
+<rect class="n hu" x="400" y="16" width="160" height="40" rx="20"/>
+<text class="t" x="480" y="41" text-anchor="middle">Report a bug or idea</text>
+<rect class="n ag" x="360" y="84" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="104" text-anchor="middle">Intake drafts the issue</text>
+<text class="sa" x="480" y="122" text-anchor="middle">1 Explore sub-agent</text>
+<text class="d" x="480" y="136" text-anchor="middle">dupes, docs, code locations</text>
+<polygon class="n hu" points="480,164 580,196 480,228 380,196"/>
+<text class="t" x="480" y="200" text-anchor="middle">Approve draft?</text>
+<rect class="n st" x="360" y="256" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="280" text-anchor="middle">Issue on the board</text>
+<text class="d" x="480" y="297" text-anchor="middle">type, P-label, route, status</text>
+<rect class="n ag" x="360" y="342" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="366" text-anchor="middle">Orchestrator ranks &amp; claims</text>
+<text class="d" x="480" y="383" text-anchor="middle">starts one command agent</text>
+<polygon class="n ag" points="480,426 580,458 480,490 380,458"/>
+<text class="t" x="480" y="462" text-anchor="middle">Route?</text>
+
+
+<!-- small column -->
+<rect class="n ag" x="50" y="520" width="240" height="58" rx="6"/>
+<text class="t" x="170" y="539" text-anchor="middle">Explore, ask, plan</text>
+<text class="sa" x="170" y="556" text-anchor="middle">plan panel: Architect,</text>
+<text class="sa" x="170" y="570" text-anchor="middle">Security, Adversary (+extras)</text>
+<rect class="n ag" x="50" y="606" width="240" height="58" rx="6"/>
+<text class="t" x="170" y="626" text-anchor="middle">Build + automated QC</text>
+<text class="sa" x="170" y="643" text-anchor="middle">executor sub-agents</text>
+<text class="d" x="170" y="657" text-anchor="middle">fresh worktree, &#8804;3 QC cycles</text>
+<rect class="n ag" x="50" y="692" width="240" height="58" rx="6"/>
+<text class="t" x="170" y="711" text-anchor="middle">PR, review + triage</text>
+<text class="sa" x="170" y="728" text-anchor="middle">4+ reviewers, 3 judges,</text>
+<text class="sa" x="170" y="742" text-anchor="middle">verifiers, fixers, verifier</text>
+
+<!-- design column -->
+<rect class="n ag" x="360" y="520" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="539" text-anchor="middle">Survey + draft design doc</text>
+<text class="sa" x="480" y="556" text-anchor="middle">search sub-agents (parallel)</text>
+<text class="d" x="480" y="571" text-anchor="middle">code, notes, related issues</text>
+<rect class="n ag" x="360" y="606" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="625" text-anchor="middle">Panel challenges the plan</text>
+<text class="sa" x="480" y="642" text-anchor="middle">Architect, Security,</text>
+<text class="sa" x="480" y="656" text-anchor="middle">Adversary, UI/UX (+extras)</text>
+<rect class="n hu" x="360" y="692" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="716" text-anchor="middle">Decisions gate</text>
+<text class="d" x="480" y="733" text-anchor="middle">owner answers the open choices</text>
+<rect class="n st" x="360" y="778" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="802" text-anchor="middle">Design doc + epic</text>
+<text class="d" x="480" y="819" text-anchor="middle">one epic-phase issue per phase</text>
+
+<!-- build column -->
+<rect class="n ag" x="670" y="520" width="240" height="58" rx="6"/>
+<text class="t" x="790" y="539" text-anchor="middle">Phase loop, one per phase</text>
+<text class="sa" x="790" y="556" text-anchor="middle">executor, Code Review +</text>
+<text class="sa" x="790" y="570" text-anchor="middle">Adversary, verifier</text>
+<rect class="n hu" x="670" y="606" width="240" height="58" rx="6"/>
+<text class="t" x="790" y="630" text-anchor="middle">UX gates</text>
+<text class="d" x="790" y="647" text-anchor="middle">owner tries working prototypes</text>
+<rect class="n ag" x="670" y="692" width="240" height="58" rx="6"/>
+<text class="t" x="790" y="711" text-anchor="middle">Finalize, review + triage</text>
+<text class="sa" x="790" y="728" text-anchor="middle">same panel as small,</text>
+<text class="sa" x="790" y="742" text-anchor="middle">then a whole-doc verifier</text>
+
+<!-- QC spine -->
+<rect class="n st" x="360" y="866" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="890" text-anchor="middle">PR: ready for QC</text>
+<text class="d" x="480" y="907" text-anchor="middle">QC checklist + test data</text>
+<rect class="n sc" x="360" y="952" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="976" text-anchor="middle">Watcher hibernates agent</text>
+<text class="d" x="480" y="993" text-anchor="middle">after 5 idle minutes</text>
+<rect class="n ag" x="360" y="1038" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="1058" text-anchor="middle">QC Agent tests the PR</text>
+<text class="d" x="480" y="1075" text-anchor="middle">checklist, browser, API, 2 users</text>
+<text class="sa" x="480" y="1089" text-anchor="middle">no sub-agents; fresh session</text>
+<polygon class="n ag" points="480,1124 580,1156 480,1188 380,1156"/>
+<text class="t" x="480" y="1160" text-anchor="middle">Pass?</text>
+<rect class="n ag" x="50" y="1127" width="240" height="58" rx="6"/>
+<text class="t" x="170" y="1151" text-anchor="middle">Build agent fixes</text>
+<text class="d" x="170" y="1168" text-anchor="middle">findings (round N) wake it</text>
+<text class="el" x="170" y="1206" text-anchor="middle">2nd fail: QC escalated,</text>
+<text class="el" x="170" y="1220" text-anchor="middle">a person decides</text>
+<polygon class="n ag" points="480,1218 580,1250 480,1282 380,1250"/>
+<text class="t" x="480" y="1254" text-anchor="middle">Visible change?</text>
+<rect class="n hu" x="670" y="1221" width="240" height="58" rx="6"/>
+<text class="t" x="790" y="1245" text-anchor="middle">UX review</text>
+<text class="d" x="790" y="1262" text-anchor="middle">local QC or hosted preview</text>
+<rect class="n ag" x="50" y="1311" width="240" height="58" rx="6"/>
+<text class="t" x="170" y="1335" text-anchor="middle">Agent wraps up once</text>
+<text class="d" x="170" y="1352" text-anchor="middle">final fixes, push, comment</text>
+<rect class="n st" x="360" y="1311" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="1335" text-anchor="middle">Ready for Merge</text>
+<text class="d" x="480" y="1352" text-anchor="middle">(+ UX testing skipped if no)</text>
+<rect class="n hu" x="360" y="1397" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="1421" text-anchor="middle">Code review &amp; merge</text>
+<text class="d" x="480" y="1438" text-anchor="middle">always a person</text>
+<rect class="n sc" x="360" y="1483" width="240" height="58" rx="6"/>
+<text class="t" x="480" y="1507" text-anchor="middle">Close out</text>
+<text class="d" x="480" y="1524" text-anchor="middle">tab closed, claim released</text>
+</svg></div>
+    <figcaption>Dashed lines go back or sideways: the slate loops wake the same command agent (QC findings, and the one-time wrap-up at the first pass); the amber loop is a person's feedback; the teal line is the design hand-off. Scroll sideways on a phone.</figcaption>
+  </figure>
+  <nav class="jump" aria-label="Stages">
+    <a href="#s-intake">Intake</a><a href="#s-orch">Orchestrator</a><a href="#s-small">Small route</a><a href="#s-design">Design route</a><a href="#s-build">Build route</a><a href="#s-review">PR review</a><a href="#s-triage">Review triage</a><a href="#s-aqc">Agent QC</a><a href="#s-hqc">Human QC</a><a href="#s-close">Close-out</a>
+  </nav>
+</section>
+
+<section id="stages">
+  <span class="eyebrow">Stage by stage</span>
+  <h2>What each box does</h2>
+  <p>Each sheet lists the skill's steps in order, the sub-agents it spawns (a double-edged chip means several run in parallel), and the points where it stops for a person.</p>
+  <div class="stages">
+
+    <article class="stage" id="s-intake">
+      <div class="stage-h"><h3>Intake</h3><span class="who">intake workspace &middot; /project-intake</span></div>
+      <ol class="steps">
+        <li>Classify each item without tools: repo, type, route, a suggested priority, area labels, parent epic.</li>
+        <li>One bounded, fact-only look for the whole batch: duplicates, related notes and design docs, candidate code locations. No root causes or fixes.</li>
+        <li>At most one round of questions, only for what the issue can't do without.</li>
+        <li>Show the drafts as decision points only, then file through <code>pdo file-issue</code> (or comment on a duplicate).</li>
+        <li>Move worked inbox reports to <code>done/</code> and tell the reporting agent its issue number.</li>
+      </ol>
+      <div class="subs"><span class="sa"><b>Explore</b><span>1 &middot; read-only &middot; &le;15 tool calls</span></span></div>
+      <div class="gate"><b>Gate</b><span>File as drafted, adjust, or drop. Items that could change analysis results, permissions or saved data carry a blocking approval that is never waived.</span></div>
+    </article>
+
+    <article class="stage" id="s-orch">
+      <div class="stage-h"><h3>Orchestrator tick</h3><span class="who">Orchestrator (&lt;project&gt;) &middot; /project-orchestrate on a loop</span></div>
+      <ol class="steps">
+        <li>Read the watcher's snapshot: events, agents, free slots, usage, queue, conflicts.</li>
+        <li>Handle each event (table at the end of this page).</li>
+        <li>Wake agents whose PRs conflict with the base branch to rebase, two at a time.</li>
+        <li>Fill free slots from the queue: the urgent bypass first, then in rank order, skipping capped repos and anything under the spawn floor. <code>pdo spawn</code> makes the worktree, opens a tab in the project's home workspace, starts the agent and claims the issue.</li>
+        <li>Re-arm the watcher and report what changed and what waits on a person.</li>
+      </ol>
+      <p class="none">No sub-agents. It starts command agents as separate sessions (one per issue, 3 working at once by default) and never edits product code, merges, or answers agents' questions. The project's Repo Manager starts and stops it on the owner's or the CEO's direction.</p>
+    </article>
+
+    <article class="stage" id="s-small">
+      <div class="stage-h"><h3>Small route</h3><span class="who">command agent &middot; /project-small-feature-or-bug-fix</span></div>
+      <ol class="steps">
+        <li>Intake questions: behaviour, affected areas, repro.</li>
+        <li>Explore the code and project notes.</li>
+        <li>Ambiguity loop, only if needed: batched questions until the design is settled.</li>
+        <li>Consensus plan: a review panel judges the plan (agree / agree with changes / reject), up to 3 rounds.</li>
+        <li>Implement in a fresh worktree with checkpoint commits and the repo's compile gate.</li>
+        <li>Automated QC against the base branch: test, verify, fix, re-test, up to 3 cycles.</li>
+        <li>Write the QC checklist (and push test data to <code>qc-fixtures</code>).</li>
+        <li>Changelog, push, draft PR with <code>Closes #n</code>.</li>
+        <li>One background review cycle: PR review, then review triage with its gates waived.</li>
+        <li>Stop servers, mark the PR ready, label <code>ready for QC</code>; a final verifier checks plan against result.</li>
+      </ol>
+      <div class="subs">
+        <span class="sa par"><b>Architect &middot; Security &middot; Adversary</b><span>plan panel &middot; parallel &middot; + profile roles, UI/UX when there's UI</span></span>
+        <span class="sa par"><b>Executor</b><span>implementation &middot; where parallel work helps</span></span>
+        <span class="sa"><b>PR review session</b><span>background &middot; fans out its own panel</span></span>
+        <span class="sa"><b>Review triage session</b><span>background &middot; after the review</span></span>
+        <span class="sa"><b>Verifier</b><span>1 &middot; read-only &middot; final check</span></span>
+      </div>
+      <div class="gate"><b>Gates</b><span>Only steps 1&ndash;3 talk to you. From the plan on, it runs without approval stops. A small issue that turns out to need a migration or a cross-cutting UX call stops and asks to be re-routed.</span></div>
+    </article>
+
+    <article class="stage" id="s-design">
+      <div class="stage-h"><h3>Design route</h3><span class="who">command agent &middot; /project-feature-design</span></div>
+      <ol class="steps">
+        <li>Intake: what the feature must do, for whom, and what it must not do.</li>
+        <li>Design worktree on <code>docs/&lt;slug&gt;-design</code>.</li>
+        <li>Survey in parallel: the code today, project notes, and a sweep of related issues (umbrella, fixed-by, related, stale).</li>
+        <li>Draft the doc: phases with dependencies and acceptance criteria, UX gates (at most two, at most one blocking), decisions marked decided / provisional / open.</li>
+        <li>Panel review of the design, up to 3 rounds; unresolved points become provisional decisions.</li>
+        <li>Decisions gate with you.</li>
+        <li>Commit the doc, then create the epic and one <code>epic-phase</code> sub-issue per phase, chained by "blocked by".</li>
+        <li>Mark the epic <code>route:build</code>: the watcher fires <code>design_ready</code> and the orchestrator starts the build agent.</li>
+      </ol>
+      <div class="subs">
+        <span class="sa par"><b>Search sub-agents</b><span>code survey &middot; parallel</span></span>
+        <span class="sa par"><b>Architect &middot; Security &middot; Adversary &middot; UI/UX</b><span>design panel &middot; parallel &middot; + profile roles</span></span>
+      </div>
+      <div class="gate"><b>Gate</b><span>The only one: you decide the open choices, confirm the provisional ones and the UX gates, decide what happens to related issues, and approve any write to another repo. No product code is written on this route.</span></div>
+    </article>
+
+    <article class="stage" id="s-build">
+      <div class="stage-h"><h3>Build route</h3><span class="who">command agent &middot; /project-feature-build</span></div>
+      <ol class="steps">
+        <li>Load and validate the design doc; its decisions and non-goals are pinned into every sub-agent's brief.</li>
+        <li>Worktree <code>feat/&lt;epic#&gt;-&lt;slug&gt;</code> from the design branch; a committed progress ledger tracks every phase.</li>
+        <li>Phase loop in dependency order, each phase in its own background session: implement, compile gate, fresh-eyes review of the phase diff, phase QC (up to 3 cycles), verifier, ledger update. One commit per phase, pushed and noted on the phase issue.</li>
+        <li>At each UX gate: comment on the PR and label the PR and the issue <code>awaiting-ux-gate</code> (yellow: your move). The issue label frees the slot. Blocking gates stop; async gates let independent phases continue.</li>
+        <li>Finalize: full compile and smoke run, doc marked Implemented, a merged QC checklist, the same review and triage cycle as the small route, a verifier over the whole doc, then <code>ready for QC</code>.</li>
+      </ol>
+      <div class="subs">
+        <span class="sa"><b>Phase session</b><span>1 per phase &middot; background</span></span>
+        <span class="sa par"><b>Executor</b><span>inside each phase</span></span>
+        <span class="sa par"><b>Code Review &middot; Adversary</b><span>per phase &middot; parallel &middot; never told the reasoning</span></span>
+        <span class="sa"><b>Verifier</b><span>per phase, then once over the whole doc</span></span>
+        <span class="sa"><b>PR review + triage sessions</b><span>at the end &middot; as in the small route</span></span>
+      </div>
+      <div class="gate"><b>Gates</b><span>Confirm acceptance criteria if the doc lacks them; sign off prototypes at the UX gates the design declared; decide if a spike phase comes back no-go. Nothing else stops for approval.</span></div>
+    </article>
+
+    <article class="stage" id="s-review">
+      <div class="stage-h"><h3>PR review</h3><span class="who">background session &middot; /project-pr-review</span></div>
+      <ol class="steps">
+        <li>Check the PR out in a temporary detached worktree and save the diff.</li>
+        <li>Fan out the reviewers in one go; each writes findings with severity, location, failure scenario and fix.</li>
+        <li>Deduplicate. Findings several reviewers raised are kept; every other finding goes to three judges, who check it against the code. It survives with at least two of three votes.</li>
+        <li>Post one review comment, Critical to Low, then remove the worktree.</li>
+      </ol>
+      <div class="subs">
+        <span class="sa par"><b>Architect &middot; Code Review &middot; Security &middot; Adversary</b><span>always &middot; parallel</span></span>
+        <span class="sa"><b>Profile roles</b><span>e.g. UI designer, data/migration reviewer</span></span>
+        <span class="sa par"><b>Judge &times; 3</b><span>majority vote per finding</span></span>
+      </div>
+      <p class="none">No gate. A person reads the posted review like any other.</p>
+    </article>
+
+    <article class="stage" id="s-triage">
+      <div class="stage-h"><h3>Review triage</h3><span class="who">background session &middot; /project-pr-triage</span></div>
+      <ol class="steps">
+        <li>Gather every review, inline thread and comment into one list.</li>
+        <li>Rate each finding likely, plausible, unlikely or not-a-fix against the code, and draft a solution.</li>
+        <li>A panel checks the solutions (not the findings).</li>
+        <li>Pick fixes. Inside a lifecycle the likely and plausible ones the panel approved are taken automatically.</li>
+        <li>Implement one commit per fix, run the checks, then a completeness verifier.</li>
+        <li>Push and post one comment: fixed (with commits) and not fixed (with reasons). New QC steps are added under "Added after review triage".</li>
+      </ol>
+      <div class="subs">
+        <span class="sa"><b>Tracer</b><span>optional &middot; for unclear findings</span></span>
+        <span class="sa par"><b>Architect &middot; Security &middot; Adversary</b><span>solution panel &middot; parallel &middot; + profile roles</span></span>
+        <span class="sa par"><b>Executor</b><span>one per fix group &middot; parallel</span></span>
+        <span class="sa"><b>Verifier</b><span>1 &middot; read-only</span></span>
+      </div>
+      <div class="gate"><b>Gates</b><span>Run on its own, it stops twice: you pick the fixes, then you pass a QC checklist before the push. A lifecycle skill waives both, and its compile and headless QC stand in.</span></div>
+    </article>
+
+    <article class="stage" id="s-aqc">
+      <div class="stage-h"><h3>Agent QC</h3><span class="who">QC Agent (&lt;project&gt;) &middot; /project-agent-qc on a loop</span></div>
+      <ol class="steps">
+        <li>Take the highest-priority <code>ready for QC</code> PR and claim it.</li>
+        <li>Serve it on the QC Agent's own ports with a database cloned from the seed.</li>
+        <li>Test: the checklist; the touched screens and their neighbours in a browser; the API, including bad input and the wrong role; two users at once; earlier findings. A repo with no UI runs fixtures and parallel API calls instead.</li>
+        <li>Fail: post "Agent QC findings (round N)" and wake the PR's agent. The second failure adds <code>QC escalated</code> instead.</li>
+        <li>Pass: apply the visible-change rule (or the repo's own pass rule). Visible or <code>needs UX review</code>: <code>QC complete - ready to review</code>. Otherwise: <code>Ready for Merge</code> + <code>UX testing skipped</code>.</li>
+        <li>Tear down, release, and restart with a clean session before the next PR.</li>
+      </ol>
+      <p class="none">No sub-agents. One PR per tick, about an hour each, never on a person's ports or data.</p>
+    </article>
+
+    <article class="stage human" id="s-hqc">
+      <div class="stage-h"><h3>Human QC and UX review</h3><span class="who">Human Review (&lt;project&gt;) &middot; /project-human-review, or GitHub in a browser</span></div>
+      <ol class="steps">
+        <li><code>/project-human-review &lt;PR#&gt;</code> serves the PR on the reserved QC ports with its own data. With no argument it lists what's waiting.</li>
+        <li>Type findings in plain words: they're posted as "QC feedback (round N)" and the agent is woken. From a browser, a Request-changes review does the same.</li>
+        <li><code>pass</code> (or the <code>Ready for Merge</code> label) ends QC. If agent QC hadn't already triggered the wrap-up, the agent is told to wrap up now.</li>
+      </ol>
+      <p class="none">No sub-agents. Feedback removes the QC labels, so the fixed PR goes back through agent QC.</p>
+    </article>
+
+    <article class="stage" id="s-close">
+      <div class="stage-h"><h3>Wrap-up and close-out</h3><span class="who">command agent, then the watcher</span></div>
+      <ol class="steps">
+        <li>At the first QC pass the orchestrator wakes the agent once: last fixes, final push, closing comment, "wrap-up done". It never merges.</li>
+        <li>A person reviews the code and merges.</li>
+        <li>The watcher closes the agent's tab, removes the <code>managed-by:</code> claim, and later sweeps temp files. The orchestrator marks the card Done.</li>
+      </ol>
+    </article>
+  </div>
+</section>
+
+<section id="roster">
+  <span class="eyebrow">Who reviews what</span>
+  <h2>The reviewer roster</h2>
+  <p>The same written role prompts are reused everywhere, so a reviewer's focus doesn't change between a plan and a PR. Reviewers never see the author's reasoning, only the brief and the code or plan.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Role</th><th>Focus</th><th class="c">Small plan</th><th class="c">Design</th><th class="c">Build phase</th><th class="c">PR review</th><th class="c">Triage</th></tr></thead>
+    <tbody>
+      <tr><td>Architect</td><td>Boundaries, coupling, scalability, API surface</td><td class="y">&#10003;</td><td class="y">&#10003;</td><td class="c">&ndash;</td><td class="y">&#10003;</td><td class="y">&#10003;</td></tr>
+      <tr><td>Code Review</td><td>Logic errors, edge cases, error handling, naming</td><td class="c">&ndash;</td><td class="c">&ndash;</td><td class="y">&#10003;</td><td class="y">&#10003;</td><td class="c">&ndash;</td></tr>
+      <tr><td>Security</td><td>Injection, auth, secrets, input validation, OWASP Top 10</td><td class="y">&#10003;</td><td class="y">&#10003;</td><td class="c">&ndash;</td><td class="y">&#10003;</td><td class="y">&#10003;</td></tr>
+      <tr><td>Adversary</td><td>Tries to break it: concrete failing inputs, or the likeliest way a plan is wrong</td><td class="y">&#10003;</td><td class="y">&#10003;</td><td class="y">&#10003;</td><td class="y">&#10003;</td><td class="y">&#10003;</td></tr>
+      <tr><td>UI / UX</td><td>Layout, components, accessibility, interaction (the profile's own UI role when it has one)</td><td class="y">if UI</td><td class="y">&#10003;</td><td class="c">&ndash;</td><td class="y">if UI</td><td class="y">if UI</td></tr>
+      <tr><td>Profile roles</td><td>Whatever the repo's profile adds, e.g. a data/migration reviewer</td><td class="y">&#10003;</td><td class="y">&#10003;</td><td class="c">&ndash;</td><td class="y">&#10003;</td><td class="y">&#10003;</td></tr>
+      <tr><td>Judges &times; 3</td><td>Vote each disputed finding real or not; two of three keeps it</td><td class="c">&ndash;</td><td class="c">&ndash;</td><td class="c">&ndash;</td><td class="y">&#10003;</td><td class="c">&ndash;</td></tr>
+    </tbody></table></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Helper</th><th>Does</th><th>Used in</th></tr></thead>
+    <tbody>
+      <tr><td>Explore / search</td><td>Read-only searches that return locations and facts</td><td>Intake, small-route exploration, design survey</td></tr>
+      <tr><td>Executor</td><td>Writes code for one slice of the work</td><td>Small route, each build phase, triage fixes</td></tr>
+      <tr><td>Verifier</td><td>Read-only check that what was planned was done, with evidence</td><td>End of small route, each build phase and the whole build, after triage fixes</td></tr>
+      <tr><td>Tracer</td><td>Follows evidence when a review finding's cause is unclear</td><td>Triage, optional</td></tr>
+      <tr><td>Background session</td><td>A full sub-session that runs a whole skill and fans out its own sub-agents</td><td>PR review, triage, each build phase</td></tr>
+    </tbody></table></div>
+</section>
+
+<section id="events">
+  <span class="eyebrow">What moves work between agents</span>
+  <h2>Watcher events</h2>
+  <p>Agents don't call each other. A token-free script checks every agent, PR and label every 5 minutes, and the orchestrator acts on what changed. Each event fires once.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Event</th><th>When</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><code>new_claude_work_this</code></td><td>An issue moved to Claude Work This</td><td>Started at the next free slot, ahead of everything else</td></tr>
+      <tr><td><code>urgent</code></td><td>P1 and on Claude Work This</td><td>Started now, even with no free slot and over the usage ceiling</td></tr>
+      <tr><td><code>slot_freed</code></td><td>An agent parked or finished</td><td>The next queue item starts</td></tr>
+      <tr><td><code>design_ready</code></td><td>A design agent's epic gained <code>route:build</code></td><td>The design agent's tab closes and a build agent starts</td></tr>
+      <tr><td><code>qc_feedback</code></td><td>A trusted Request-changes review, or a project command such as a <code>QC:</code> comment</td><td>The PR's agent is woken with the feedback; the QC labels come off</td></tr>
+      <tr><td><code>qc_complete</code></td><td>The first QC pass label appears</td><td>The agent is woken once to wrap up</td></tr>
+      <tr><td><code>pr_conflict</code></td><td>A PR no longer merges cleanly</td><td>The agent is woken to rebase, two at a time</td></tr>
+      <tr><td><code>pr_cap_reached</code></td><td>10 PRs in one repo wait on people</td><td>That repo starts nothing new until the count drops</td></tr>
+      <tr><td><code>pr_merged</code></td><td>A person merged</td><td>Card to Done; worktree cleanup suggested</td></tr>
+      <tr><td><code>stalled</code></td><td>An agent stopped making progress</td><td>Nudged once, then reported to a person</td></tr>
+      <tr><td><code>usage_ceiling</code></td><td>Weekly or 5-hour usage limit reached</td><td>No new starts; reported</td></tr>
+      <tr><td><code>hibernated</code>, <code>closed_out</code>, <code>claim_released</code></td><td>The watcher's own housekeeping</td><td>Logged quietly; never wakes the orchestrator</td></tr>
+    </tbody></table></div>
+</section>
+
+<footer>
+  <span>Drawn from the project-dev-orchestration v0.16 skills (<code>skills/*/SKILL.md</code>) and design notes. Source: <code>docs/user-guide/workflow.html</code> in the engine repo.</span>
+  <span><a href="index.html">&larr; Back to the pdo User Guide</a></span>
+</footer>
+</div>
+</body>
+</html>
