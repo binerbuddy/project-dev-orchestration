@@ -37,5 +37,5 @@ Maintainers. You file with `needs-triage`; they add the P-label and route, or pu
 The active GitHub account is machine-wide, and switching it breaks other sessions. It pins an account per command
 instead.
 
-**Where do I ask something this site doesn't answer?**
+**Where do I ask something this guide doesn't answer?**
 Where your repo's `docs/agent-workflow.md` says, or ask your agent to load `/project-how-it-works`.

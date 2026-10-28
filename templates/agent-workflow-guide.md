@@ -16,8 +16,7 @@ comment; keep the guide-version line above as the file's first line.
 
 This repo is built by coding agents running the project-dev-orchestration skills, with humans deciding what gets
 built, doing QC, and merging. This page is the house rules for **you**, the person whose agent works here. The
-general guide, for any repo that uses the system, is at https://binerbuddy.github.io/project-dev-orchestration/
-(illustrated: [pdo User Guide](https://binerbuddy.github.io/project-dev-orchestration/user-guide/)).
+general guide, for any repo that uses the system, is the [pdo User Guide](https://claude.ai/artifact/VRfq3L15X4LTrgKwGHiCZM).
 
 - **Manager:** <manager> (<how to reach them>). They run the agent team, set priorities, and merge.
   <!-- profile §Identity "Manager"; the env's MANAGER, if set, names the managing agent, not this person -->

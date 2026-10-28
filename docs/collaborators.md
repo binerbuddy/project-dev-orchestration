@@ -32,7 +32,7 @@ namespaced, as `/pdo:project-<name>`; it's the same skill as `/project-<name>`.
 1. Clone it, and start your agent in the clone.
 2. Your agent reads `AGENTS.md` ("How work flows here") and `.agents/project-profile.md` (build commands, dev
    servers, QC data). You don't need to read them.
-3. **It asks you once** whether you've read the repo's human guide and this site, and offers a 3-line summary. When
+3. **It asks you once** whether you've read the repo's human guide and the [pdo User Guide](https://claude.ai/artifact/VRfq3L15X4LTrgKwGHiCZM), and offers a 3-line summary. When
    you say yes it writes `.agents/local/guide-ack` (per clone, gitignored) and won't ask again, unless the guide
    changes.
 4. **Repo not set up yet** (no `.agents/project-profile.md`, no "How work flows here" in `AGENTS.md`): run

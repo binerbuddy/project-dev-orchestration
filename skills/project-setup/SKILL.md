@@ -404,7 +404,7 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
   `## Local notes` or what's under it, and never drop text the human added elsewhere without showing it in the diff.
 - **README link:** if the product repo's `README.md` doesn't link the guide, offer one line (in its contributing
   section, else at the end), with `<guide path>` filled in: `Working on this repo with an agent? Read
-  [<guide path>](<guide path>) first (general guide: https://binerbuddy.github.io/project-dev-orchestration/).`
+  [<guide path>](<guide path>) first (general guide: https://claude.ai/artifact/VRfq3L15X4LTrgKwGHiCZM).`
   Add it only on the human's yes.
 - **`.gitignore`:** make sure it ignores `.agents/local/` (per-clone agent state, such as `guide-ack`). Missing:
   append `.agents/local/`, optionally preceded by one comment line (`# per-clone agent state
@@ -453,7 +453,7 @@ check it once per clone (`AGENTS.md`'s first-session rule), so it must exist and
    - **Drifted:** what was fixed on their yes, and what they chose to keep.
    - **Skipped:** declined items, labels that need a maintainer, `TODO(setup)` questions still open.
    - **Next steps:** merge the PR; point collaborators at the human guide, which links the general guide
-     (https://binerbuddy.github.io/project-dev-orchestration/) for installing the plugin; in repo+team, install any
+     (https://claude.ai/artifact/VRfq3L15X4LTrgKwGHiCZM) for installing the plugin; in repo+team, install any
      missing requirements the engine install reported, write any hooks the project needs, then start the team: open
      a herdr session named CEO (`claude -n CEO`) and run `/ceo fire up <name>` (or
      `pdo team-up --project <name>`).

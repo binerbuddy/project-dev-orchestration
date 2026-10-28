@@ -16,8 +16,8 @@ than started by a person: `PDO_DISPATCHED=1` is set in your environment, or your
 an orchestrator. Otherwise, BEFORE answering the first request of the session, whatever it is (a task, a question
 about this repo, or a question about these instructions), check `.agents/local/guide-ack` (per clone, gitignored).
 - **Missing, or its `guide:` differs from the guide's current version:** your FIRST reply must ask whether the human
-  has read both guides: `<guide path>` (this repo's labels, routes, QC and who to ask) and the general guide at
-  https://binerbuddy.github.io/project-dev-orchestration/. Offer a 3-line summary of `<guide path>`. Don't wait for
+  has read both guides: `<guide path>` (this repo's labels, routes, QC and who to ask) and the general guide, the pdo User Guide at
+  https://claude.ai/artifact/VRfq3L15X4LTrgKwGHiCZM. Offer a 3-line summary of `<guide path>`. Don't wait for
   implementation to start or for the human to ask about onboarding. You may carry on with their request in the same
   reply while you wait for the answer.
 - **Record it only on an explicit yes** ("I've read them"). Reading your summary doesn't count. Then write the file

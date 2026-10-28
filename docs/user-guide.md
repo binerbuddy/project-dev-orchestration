@@ -2,7 +2,7 @@
 
 The human's guide to an agent team run by project-dev-orchestration. You talk to one session, the
 **CEO**; it starts each project's Repo Manager, which runs that project's team. The same guide, illustrated:
-[pdo User Guide](user-guide/). Examples use a made-up project, `acme`, whose main repo is
+[pdo User Guide](https://claude.ai/artifact/VRfq3L15X4LTrgKwGHiCZM). Examples use a made-up project, `acme`, whose main repo is
 `widget`.
 
 ## The 30-second version
