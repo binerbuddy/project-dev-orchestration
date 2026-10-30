@@ -360,6 +360,11 @@ out="$(SMOKE_HERDR_SCREEN="$T/screen-draft" "$BIN/herdr-agent" draft --pane wX:p
 eq "draft: a person's unsent text is a draft" "$rc" 0
 eq "draft: the draft text" "$out" "draft: merge it after lunch"
 eq "draft: unknown agent" "$("$BIN/herdr-agent" draft "Nobody (x)" >/dev/null; echo $?)" 2
+echo '{"result":{"workspaces":[{"label":"acme","workspace_id":"wX"}]}}' >"$T/draft-ws.json"
+echo '{"result":{"tabs":[{"label":"Orchestrator (acme)","number":1,"workspace_id":"wX","tab_id":"wX:t1"}]}}' >"$T/draft-tabs.json"
+echo '{"result":{"agents":[{"agent":"claude","name":"orchestrator-acme","workspace_id":"wX","tab_id":"wX:t1","pane_id":"wX:p1","agent_status":"idle"}]}}' >"$T/draft-agents.json"
+out="$(SMOKE_HERDR_WS="$T/draft-ws.json" SMOKE_HERDR_TABS="$T/draft-tabs.json" SMOKE_HERDR_AGENTS="$T/draft-agents.json" SMOKE_HERDR_SCREEN="$T/screen-draft" "$BIN/herdr-agent" draft orchestrator-acme)"
+eq "draft: herdr's agent name works too" "$out" "draft: merge it after lunch"
 
 # --- floor ---
 eq "floor unset" "$("$BIN/floor")" none
@@ -456,6 +461,53 @@ check "release --unassign removes the login" grep -q 'remove-assignee me' "$SMOK
 out="$("$BIN/queue" --json 2>&1)"; eq "queue (empty board)" "$(jq -c .ranked <<<"$out" 2>/dev/null)" "[]"
 out="$(QUEUE_LABEL= "$BIN/queue" --project beta 2>&1)"; has "queue needs a board or a QUEUE_LABEL" "$out" "no PROJECT_NUMBER (board) and no QUEUE_LABEL"
 eq "QUEUE_LABEL default" "$("$BIN/project-env" --project beta QUEUE_LABEL)" "queue:work"
+
+# --- deps-link: node_modules from a lockfile-keyed cache ---
+D="$T/deps"; mkdir -p "$D" "$T/cfg-d/projects"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "$PWD" >>"$SMOKE_NPM_CALLS"; sleep 1; mkdir -p node_modules && echo built >node_modules/marker' >"$T/fakenpm"
+chmod +x "$T/fakenpm"; export SMOKE_NPM_CALLS="$T/npm-calls"; : >"$SMOKE_NPM_CALLS"
+git init -q -b main "$D/app" && (cd "$D/app" && mkdir web ws && echo '{"name":"app"}' >package.json && echo '{"lockfileVersion":3}' >package-lock.json \
+  && echo '{"name":"web"}' >web/package.json && echo '{"lockfileVersion":3,"web":1}' >web/package-lock.json \
+  && echo '{"name":"ws","workspaces":["a"]}' >ws/package.json && echo '{"lockfileVersion":3}' >ws/package-lock.json \
+  && git add -A && git -c user.email=s@x -c user.name=s commit -qm init)
+for w in 1 2 3 4 5; do git -C "$D/app" worktree add -q "$D/wt$w" -b "b$w"; done
+printf 'ORG="zeta"\ndeclare -A REPO_ROOT=([app]="%s")\nDEPS_CACHE_DIR="%s"\ndeclare -A DEPS_NPM_CMD=([app]="%s")\n' \
+  "$D/app" "$T/depcache" "$T/fakenpm" >"$T/cfg-d/projects/zeta.env"
+DL=(env PDO_CONFIG_DIRS="$T/cfg-d" "$BIN/deps-link")
+out="$("${DL[@]}" --json "$D/wt1")"
+eq "deps-link: builds once per dir and links" "$(jq -c '[.repo, (.dirs[] | "\(.dir):\(.action)")]' <<<"$out")" '["app",".:built-and-linked","web:built-and-linked","ws:skip"]'
+has "deps-link: a workspace root is skipped" "$(jq -r '.dirs[2].why' <<<"$out")" "workspace root"
+t="$(readlink "$D/wt1/web/node_modules")"
+has "deps-link: absolute link into the cache" "$t" "$T/depcache/zeta/app-web/"
+eq "deps-link: the entry holds the install" "$(cat "$D/wt1/web/node_modules/marker")" built
+out="$("${DL[@]}" --json "$D/wt2")"
+eq "deps-link: a second worktree reuses the entry" "$(jq -c '[.dirs[0:2][] | .action]' <<<"$out")" '["linked","linked"]'
+eq "deps-link: no second install" "$(grep -c . "$SMOKE_NPM_CALLS")" 2
+eq "deps-link: re-run is a no-op" "$("${DL[@]}" --json "$D/wt2" | jq -c '[.dirs[0:2][] | .action]')" '["ok","ok"]'
+# a lockfile change: concurrent spawns build the new entry once
+for w in 3 4; do echo '{"lockfileVersion":3,"web":2}' >"$D/wt$w/web/package-lock.json"; done
+"${DL[@]}" "$D/wt3" >/dev/null & "${DL[@]}" "$D/wt4" >/dev/null; wait
+eq "deps-link: concurrent spawns build a new lockfile once (flock)" "$(grep -c . "$SMOKE_NPM_CALLS")" 3
+eq "deps-link: both link the new entry" "$(readlink "$D/wt3/web/node_modules")" "$(readlink "$D/wt4/web/node_modules")"
+check "deps-link: the old entry is untouched" test "$(readlink "$D/wt1/web/node_modules")" != "$(readlink "$D/wt3/web/node_modules")"
+# an old symlink to another worktree's node_modules is migrated; a real dir is kept unless --replace-dir
+ln -s "$D/wt1/web/node_modules" "$D/wt5/web/node_modules"; mkdir "$D/wt5/node_modules"
+out="$("${DL[@]}" --json "$D/wt5")"
+eq "deps-link: migrates an old symlink, keeps a real dir" "$(jq -c '[.dirs[0:2][] | .action]' <<<"$out")" '["kept","linked"]'
+eq "deps-link: --replace-dir links over a real dir" "$("${DL[@]}" --json --replace-dir "$D/wt5" | jq -r '.dirs[0].action')" linked
+echo '{"lockfileVersion":3,"web":9}' >"$D/wt2/web/package-lock.json"
+eq "deps-link: --check builds nothing" "$("${DL[@]}" --check --json "$D/wt2" | jq -r '.dirs[1].action') $(grep -c . "$SMOKE_NPM_CALLS")" "would-build-and-link 3"
+# prune: unlinked and old goes, linked stays
+git -C "$D/app" worktree remove --force "$D/wt3"; git -C "$D/app" worktree remove --force "$D/wt4"
+old="$(dirname "$(readlink "$D/wt1/web/node_modules")")"
+gone="$(dirname "$(readlink "$D/wt5/web/node_modules")")"
+gone="$(for e in "$T"/depcache/zeta/app-web/*/; do e="${e%/}"; [[ "$e" != "$old" && "$e" != "$gone" ]] && echo "$e"; done | head -1)"
+touch -d '30 days ago' "$gone" "$old"
+out="$("${DL[@]}" --prune --project zeta --json)"
+eq "deps-link --prune: removes the unlinked old entry only" "$(jq -c '[.removed[].path]' <<<"$out")" "[\"$gone\"]"
+check "deps-link --prune: a linked entry stays, however old" test -d "$old/node_modules"
+check "spawn links deps for the new worktree" grep -q "pdo_deps_link_bg" "$BIN/spawn"
+check "resume-agent links deps (migrates old links)" grep -q "pdo_deps_link_bg" "$BIN/resume-agent"
 
 # --- board-less projects: the label queue, and claims without a board ---
 mkdir -p "$T/cfg-q/projects"

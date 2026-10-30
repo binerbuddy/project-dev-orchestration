@@ -52,6 +52,10 @@ skill. When you hit a new one, add a line in its section.
   the hour. Now the orchestrator is launched with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`
   (`ORCHESTRATOR_NO_REAP`, default on; it only works set at launch), and the orchestrate skill re-arms
   a reaped watcher on the next tick unless memory is below `FLEET_MEM_HOLD_MB`.
+- **Never share one worktree's `node_modules` by symlink.** When the lockfile changed, agents linked to the main
+  worktree's `node_modules` ran `npm install` there, outside their own worktree (an approval prompt each time) and
+  under every other linked agent mid-run. `bin/deps-link` keys a shared cache by lockfile instead: a change links a
+  new entry, and an entry is never modified.
 - **Text after ❯ in an idle pane is often Claude Code's prompt suggestion,** drawn dim (SGR 2), not a
   person's draft. `pdo herdr-agent draft <name>` tells them apart; never read ghost text as the human's.
 - **The orchestrator may edit its own scripts.** Re-read a file before patching it, and check `git status`

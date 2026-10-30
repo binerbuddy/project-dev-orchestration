@@ -78,12 +78,17 @@ From the base worktree, for every safely merged branch (including those with no 
 `git -C "$BASE_WT" branch -d <branch>`. Use `-d` only, never `-D`. A branch still checked out in a
 skipped (dirty) worktree can't be deleted: report it. Never delete remote branches.
 
+With the engine installed, then run `pdo deps-link --prune` (the project's shared `node_modules` cache:
+entries no remaining worktree links to and unused for `DEPS_CACHE_DAYS`). The worktrees just removed
+are what frees them.
+
 ## 6. Report
 
 - **Deleted:** worktrees removed and branches deleted (and `WT_PARENT` if it was left empty).
 - **Kept (not merged):** branches and worktrees whose commits aren't in the base.
 - **Skipped (dirty):** merged worktrees with uncommitted or untracked files, with the file list.
 - **Needs user decision:** squash-merge suspects from step 3.
+- **Shared node_modules:** the space `pdo deps-link --prune` freed, when it ran.
 
 If the sudo list is non-empty, end with one copy-pasteable command in a code block, for the user to
 run in a real terminal:

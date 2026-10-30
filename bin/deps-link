@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""deps-link — give a worktree its npm dependencies from a shared, lockfile-keyed cache.
+
+Usage: deps-link [--project P] [--repo R] [--dir D]... [--replace-dir] [--check] [--json] [<worktree>]
+       deps-link --prune [--project P] [--days N] [--dry-run] [--json]
+
+Every worktree of a repo used to need its own `npm ci` (hundreds of MB each) or a symlink to the
+main worktree's node_modules, which broke the day the lockfile changed: the next agent ran
+`npm install` in main, outside its own worktree, under every other agent linked to it. Instead, each
+npm package dir gets one cache entry per lockfile:
+
+  <DEPS_CACHE_DIR>/<project>/<repo>-<dir slug>/<key>/node_modules
+  key = sha256(package-lock.json + package.json + the install command + `node --version`), first 16
+
+and <worktree>/<dir>/node_modules is an absolute symlink to it. A missing entry is built once:
+`npm ci` in a temp dir next to it (a copy of package.json, package-lock.json and .npmrc), under an
+exclusive flock per key, then renamed into place, so concurrent spawns wait for one build instead of
+racing. An existing entry is never modified. (Never `npm install` into a linked dir: change the
+lockfile with `npm install <pkg> --package-lock-only`, then run deps-link again; it links the new
+entry.)
+
+Which dirs (project env):
+  DEPS_LINK_DIRS[<repo>]   space-separated dirs ("." = the repo root), or "none". Default: every
+                           tracked package-lock.json in the worktree.
+  DEPS_NPM_CMD[<repo>/<dir>] or DEPS_NPM_CMD[<repo>]
+                           the install command (default "npm ci --no-audit --no-fund"); words
+                           before "npm" (e.g. "mise exec node@22 --") also run `node --version`.
+  DEPS_CACHE_DIR           the cache root (default ~/.cache/pdo/node_modules)
+  DEPS_CACHE_DAYS          --prune's age limit (default 14)
+Skipped, with the reason: npm workspace roots (their node_modules link back into the worktree, so
+it can't be shared) and lockfiles with file: or link: dependencies.
+
+An existing node_modules symlink (e.g. to the main worktree's) is replaced. A real node_modules
+directory is the worktree's own install and is kept, unless --replace-dir (QC hooks use it).
+--dir limits it to those package dirs (a QC hook links only what it serves). --check reports what
+would change and builds nothing. Exit 1 when any dir failed.
+
+--prune removes entries no live worktree of the project's repos links to and that weren't linked
+for --days (DEPS_CACHE_DAYS), plus temp dirs older than a day, and reports the space freed.
+"""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+DEFAULT_CMD = "npm ci --no-audit --no-fund"
+
+
+def slug(s):
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "root"
+
+
+def git(wt, *args):
+    r = subprocess.run(["git", "-C", wt, *args], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def repo_of(cfg, wt):
+    """The project repo a worktree belongs to (its common git dir is the repo's)."""
+    common = os.path.realpath(os.path.join(wt, git(wt, "rev-parse", "--git-common-dir").strip() or "."))
+    for name, root in cfg["repo_root"].items():
+        r = os.path.realpath(root)
+        if common == r or common.startswith(r + os.sep) or common == os.path.join(r, ".git"):
+            return name
+    return None
+
+
+def dirs_for(cfg, repo, wt):
+    spec = (cfg.get("deps_link_dirs") or {}).get(repo)
+    if spec is not None:
+        return [] if spec.strip() == "none" else [d.strip("/") or "." for d in spec.split()]
+    files = git(wt, "ls-files", "package-lock.json", "*/package-lock.json").split()
+    return sorted({os.path.dirname(f) or "." for f in files if "node_modules/" not in f})
+
+
+def command_for(cfg, repo, d):
+    m = cfg.get("deps_npm_cmd") or {}
+    return (m.get(f"{repo}/{d}") or m.get(repo) or DEFAULT_CMD).split()
+
+
+def unshareable(pkg_dir):
+    try:
+        pkg = json.load(open(os.path.join(pkg_dir, "package.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return "no readable package.json"
+    if pkg.get("workspaces"):
+        return "an npm workspace root (its node_modules links back into the worktree)"
+    lock = open(os.path.join(pkg_dir, "package-lock.json"), encoding="utf-8").read()
+    if re.search(r'"(resolved|version)":\s*"(file|link):', lock) or '"link": true' in lock:
+        return "has file:/link: dependencies"
+    return None
+
+
+def key_for(pkg_dir, cmd):
+    h = hashlib.sha256()
+    for f in ("package-lock.json", "package.json"):
+        h.update(open(os.path.join(pkg_dir, f), "rb").read())
+    h.update(" ".join(cmd).encode())
+    i = cmd.index("npm") if "npm" in cmd else 0
+    r = subprocess.run([*cmd[:i], "node", "--version"], cwd=pkg_dir, capture_output=True, text=True)
+    h.update(r.stdout.strip().encode())
+    return h.hexdigest()[:16]
+
+
+def build(entry, pkg_dir, cmd, log):
+    """Build the cache entry once: npm ci in a temp dir beside it, then an atomic rename."""
+    parent = os.path.dirname(entry)
+    os.makedirs(parent, exist_ok=True)
+    with open(entry + ".lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)  # another spawn building the same key: wait for it
+        if os.path.isdir(os.path.join(entry, "node_modules")):
+            return None
+        tmp = tempfile.mkdtemp(prefix=f".tmp-{os.path.basename(entry)}-", dir=parent)
+        try:
+            for f in ("package.json", "package-lock.json", ".npmrc"):
+                if os.path.exists(os.path.join(pkg_dir, f)):
+                    shutil.copy2(os.path.join(pkg_dir, f), tmp)
+            with open(log, "w") as out:
+                r = subprocess.run(cmd, cwd=tmp, stdout=out, stderr=subprocess.STDOUT,
+                                   env=dict(os.environ, HUSKY="0", CI="true"))
+            if r.returncode != 0:
+                return f"`{' '.join(cmd)}` failed (exit {r.returncode}); see {log}"
+            os.rename(tmp, entry)
+            tmp = None
+        finally:
+            if tmp:
+                shutil.rmtree(tmp, ignore_errors=True)
+    return None
+
+
+def link_dir(cfg, repo, wt, d, a):
+    pkg_dir = os.path.join(wt, d) if d != "." else wt
+    row = {"dir": d}
+    if not os.path.exists(os.path.join(pkg_dir, "package-lock.json")):
+        return dict(row, action="skip", why="no package-lock.json")
+    why = unshareable(pkg_dir)
+    if why:
+        return dict(row, action="skip", why=why + ": run npm ci in the worktree")
+    cmd = command_for(cfg, repo, d)
+    key = key_for(pkg_dir, cmd)
+    entry = os.path.join(cfg["deps_cache_dir"], cfg["project"], f"{slug(repo)}-{slug(d if d != '.' else 'root')}", key)
+    target = os.path.join(entry, "node_modules")
+    nm = os.path.join(pkg_dir, "node_modules")
+    row.update(key=key, target=target)
+    if os.path.islink(nm) and os.readlink(nm) == target and os.path.isdir(target):
+        stamp(entry)
+        return dict(row, action="ok")
+    if os.path.isdir(nm) and not os.path.islink(nm) and not a.replace_dir:
+        return dict(row, action="kept", why="its own node_modules directory (--replace-dir to link instead)")
+    built = not os.path.isdir(target)
+    if a.check:
+        return dict(row, action="would-build-and-link" if built else "would-link")
+    if built:
+        err = build(entry, pkg_dir, cmd, os.path.join(os.path.dirname(entry), f"{key}.npm.log"))
+        if err:
+            return dict(row, action="failed", why=err)
+    if os.path.isdir(nm) and not os.path.islink(nm):
+        shutil.rmtree(nm)
+    tmp_link = f"{nm}.pdo-{os.getpid()}"
+    os.symlink(target, tmp_link)
+    os.replace(tmp_link, nm)  # atomic: a concurrent run (spawn's and the agent's) never sees no link
+    stamp(entry)
+    return dict(row, action="built-and-linked" if built else "linked")
+
+
+def stamp(entry):
+    try:
+        os.utime(entry)  # last linked: --prune's age clock
+    except OSError:
+        pass
+
+
+def size_mb(path):
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_size
+            except OSError:
+                pass
+    return total / 1048576
+
+
+def prune(cfg, a):
+    base = os.path.join(cfg["deps_cache_dir"], cfg["project"])
+    days = a.days if a.days is not None else cfg.get("deps_cache_days", 14)
+    live = set()
+    for repo, root in cfg["repo_root"].items():
+        for line in git(root, "worktree", "list", "--porcelain").splitlines():
+            if not line.startswith("worktree ") or not os.path.isdir(line[9:]):
+                continue
+            wt = line[9:]
+            for d in dirs_for(cfg, repo, wt):
+                nm = os.path.join(wt, d, "node_modules") if d != "." else os.path.join(wt, "node_modules")
+                if os.path.islink(nm):
+                    live.add(os.path.dirname(os.readlink(nm)))
+    now, removed, freed = time.time(), [], 0.0
+    if not os.path.isdir(base):
+        return {"freed_mb": 0, "removed": [], "live": 0}
+    for group in sorted(os.listdir(base)):
+        gdir = os.path.join(base, group)
+        if not os.path.isdir(gdir):
+            continue
+        for name in sorted(os.listdir(gdir)):
+            p = os.path.join(gdir, name)
+            age = now - os.lstat(p).st_mtime
+            if name.startswith(".tmp-"):
+                gone = age > 86400
+            elif name.endswith((".lock", ".npm.log")):
+                gone = not os.path.isdir(os.path.join(gdir, name.split(".")[0])) and age > 86400
+            else:
+                gone = os.path.isdir(p) and p not in live and age > days * 86400
+            if not gone:
+                continue
+            mb = size_mb(p) if os.path.isdir(p) else os.lstat(p).st_size / 1048576
+            if not a.dry_run:
+                shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
+            removed.append({"path": p, "mb": round(mb, 1)})
+            freed += mb
+    return {"freed_mb": round(freed, 1), "removed": removed, "live": len(live)}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("worktree", nargs="?")
+    ap.add_argument("--project")
+    ap.add_argument("--repo")
+    ap.add_argument("--dir", action="append", default=[])
+    ap.add_argument("--replace-dir", action="store_true")
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--prune", action="store_true")
+    ap.add_argument("--days", type=float)
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    wt = None
+    if not a.prune:
+        wt = git(a.worktree or os.getcwd(), "rev-parse", "--show-toplevel").strip()
+        if not wt:
+            sys.exit(f"deps-link: {a.worktree or os.getcwd()} is not in a git worktree")
+        if not a.project:
+            os.chdir(wt)  # the cwd decides the project
+    cfg = pdo_config.load(a.project, "deps-link")
+    if a.prune:
+        out = prune(cfg, a)
+        if a.json:
+            print(json.dumps(out))
+        else:
+            for r in out["removed"]:
+                print(f"{'would remove' if a.dry_run else 'removed'} {r['path']} ({r['mb']:.0f} MB)")
+            print(f"deps-link: {'would free' if a.dry_run else 'freed'} {out['freed_mb']:.0f} MB; {out['live']} entries linked")
+        return 0
+    repo = a.repo or repo_of(cfg, wt)
+    if not repo:
+        sys.exit(f"deps-link: {wt} is not a worktree of {cfg['project']}'s repos (--repo)")
+    dirs = [d.strip("/") or "." for d in a.dir] if a.dir else dirs_for(cfg, repo, wt)
+    rows = [link_dir(cfg, repo, wt, d, a) for d in dirs]
+    if a.json:
+        print(json.dumps({"worktree": wt, "repo": repo, "dirs": rows}))
+    else:
+        for r in rows:
+            print(f"{r['dir']}: {r['action']}" + (f" ({r['why']})" if r.get("why") else "")
+                  + (f" -> {r['target']}" if r.get("target") and r["action"] not in ("skip", "kept", "failed") else ""))
+        if not rows:
+            print("deps-link: no npm package dirs here")
+    return 1 if any(r["action"] == "failed" for r in rows) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -201,6 +201,9 @@ pdo_finalize() {
   # repo's), one tab per agent labelled with its name; workspaces = one workspace per agent (pre-0.12)
   AGENT_LAYOUT="${AGENT_LAYOUT:-tabs}"
   ORCHESTRATOR_NO_REAP="${ORCHESTRATOR_NO_REAP:-1}"
+  # shared node_modules (bin/deps-link): one npm ci per lockfile, linked into every worktree
+  DEPS_CACHE_DIR="${DEPS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pdo/node_modules}"
+  DEPS_CACHE_DAYS="${DEPS_CACHE_DAYS:-14}"         # an unlinked entry older than this is pruned
   TEAM_HOME="${TEAM_HOME:-}"                      # override the standing agents' home (pdo_team_home)
   export AGENT_LAYOUT
   # coordination: the claim label (managed-by:<slug>) and whether claim also self-assigns
@@ -361,7 +364,7 @@ pdo_slug() {
 
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
-  local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}" aqc_notes_by_repo="{}"
+  local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}" aqc_notes_by_repo="{}" deps_dirs="{}" deps_cmd="{}"
   if declare -p REPO_ROOT >/dev/null 2>&1; then
     for k in "${!REPO_ROOT[@]}"; do roots="$(jq -c --arg k "$k" --arg v "${REPO_ROOT[$k]}" '. + {($k): $v}' <<<"$roots")"; done
   fi
@@ -377,6 +380,12 @@ pdo_config_json() {
   fi
   if declare -p AGENT_QC_NOTES_BY_REPO >/dev/null 2>&1; then
     for k in "${!AGENT_QC_NOTES_BY_REPO[@]}"; do aqc_notes_by_repo="$(jq -c --arg k "$k" --arg v "${AGENT_QC_NOTES_BY_REPO[$k]}" '. + {($k): $v}' <<<"$aqc_notes_by_repo")"; done
+  fi
+  if declare -p DEPS_LINK_DIRS >/dev/null 2>&1; then
+    for k in "${!DEPS_LINK_DIRS[@]}"; do deps_dirs="$(jq -c --arg k "$k" --arg v "${DEPS_LINK_DIRS[$k]}" '. + {($k): $v}' <<<"$deps_dirs")"; done
+  fi
+  if declare -p DEPS_NPM_CMD >/dev/null 2>&1; then
+    for k in "${!DEPS_NPM_CMD[@]}"; do deps_cmd="$(jq -c --arg k "$k" --arg v "${DEPS_NPM_CMD[$k]}" '. + {($k): $v}' <<<"$deps_cmd")"; done
   fi
   if declare -p SELF_MANAGED_REPOS >/dev/null 2>&1; then
     managed="$(printf '%s\n' ${SELF_MANAGED_REPOS[@]+"${SELF_MANAGED_REPOS[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')"
@@ -402,6 +411,7 @@ pdo_config_json() {
     --arg manager "${MANAGER:-}" --arg manager_slug "${MANAGER_SLUG:-}" --arg claim_assigns "${CLAIM_ASSIGNS:-0}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
     --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
     --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
+    --arg deps_cache "${DEPS_CACHE_DIR:-}" --arg deps_days "${DEPS_CACHE_DAYS:-14}" --argjson deps_dirs "$deps_dirs" --argjson deps_cmd "$deps_cmd" \
     '{project: $project, env_file: $env_file, env_dir: $env_dir, engine_home: $home, state_dir: $state,
       inbox: $inbox, org: $org, project_number: $num, repo_root: $roots, worktree_parent: $wt_parents, route_skill: $routes,
       self_managed_repos: $managed, default_model: $model, brief_template: $brief, gh_user: $gh_user,
@@ -430,7 +440,8 @@ pdo_config_json() {
       claim_label: (if $manager_slug == "" then null else "managed-by:" + $manager_slug end), repo_manager: $repo_mgr, portfolio_priority: ($prio | tonumber? // 3),
       resource_profile: $profile, agent_mb: ($agent_mb | if . == "" then null else (tonumber? // null) end),
       agent_usage_weight: ($weight | if . == "" then null else (tonumber? // null) end),
-      fleet_advice: $fleet, usage_cache: $usage_cache}'
+      fleet_advice: $fleet, usage_cache: $usage_cache,
+      deps_cache_dir: $deps_cache, deps_cache_days: ($deps_days | tonumber? // 14), deps_link_dirs: $deps_dirs, deps_npm_cmd: $deps_cmd}'
 }
 
 # identity_wrapper <dir>: the command prefix that gives an agent working in <dir> its GitHub identity.
@@ -497,6 +508,15 @@ agent_command() {
   # shellcheck disable=SC2046
   printf -v cmd '%q ' env PDO_DISPATCHED=1 "${noreap[@]}" $(identity_wrapper "$dir") claude "$@" "${rc[@]}" --model "$model" "$prompt"
   printf '%s' "$cmd"
+}
+
+# pdo_deps_link_bg <repo> <worktree> <log tag>: link the worktree's node_modules from the shared
+# cache (bin/deps-link) in the background, so a cache-miss `npm ci` never holds up a launch. The
+# agent's own `pdo deps-link` waits on the same per-lockfile lock, so it never races the build.
+pdo_deps_link_bg() {
+  local log; log="$(pdo_state_dir)/deps-link/$3.log"
+  mkdir -p "$(dirname "$log")"
+  setsid -f nohup "$HERE/bin/deps-link" --project "$PROJECT" --repo "$1" "$2" >"$log" 2>&1 </dev/null || true
 }
 
 # write_meta <repo> <num> <json-fields>: merge fields into the agent's metadata file, which

@@ -105,6 +105,17 @@ One herdr workspace per manager, one tab per agent (`AGENT_LAYOUT=tabs`, the def
   chain stays in charge. An `IDENTITY_HOOK` wrapper runs inside it, so it should append the same way rather than
   set `GIT_CONFIG_COUNT` outright. A person-started session pins one call with
   `pdo with-gh-user --user <login> git push …`.
+- **Shared `node_modules`.** Right after the worktree is made (and on every `resume-agent` relaunch),
+  `bin/deps-link` runs in the background: each npm package dir's `node_modules` becomes an absolute symlink to
+  `$DEPS_CACHE_DIR/<project>/<repo>-<dir>/<key>/node_modules`, keyed by the lockfile, `package.json`, the install
+  command and `node --version`. A missing entry is built once (`npm ci` in a temp dir beside it, under an
+  exclusive flock per key, then renamed into place), and an existing entry is never changed. An agent that changes
+  the lockfile runs `pdo deps-link` again and gets a new entry; nobody installs into a shared dir, and the main
+  worktree is never touched. An old link to the main worktree's `node_modules` is replaced on the next relaunch; a
+  worktree's own real `node_modules` is kept unless `--replace-dir` (the QC hooks use it). npm workspace roots and
+  lockfiles with `file:`/`link:` dependencies are skipped (their `node_modules` point back into the worktree). The
+  watcher's hourly sweep and `/project-cleanup-worktrees` run `deps-link --prune`: entries no live worktree links to
+  and unused for `DEPS_CACHE_DAYS` go, and the freed space is reported (quiet event `deps_pruned`).
 - Every launch also sets `PDO_DISPATCHED=1` in the agent's environment (`agent_command` in `bin/lib.sh`),
   so the agent knows it was started by the engine and skips the collaborator's one-time guide check.
 - The dispatch brief is `BRIEF_TEMPLATE`, else the first `prompts/dispatch-brief.md` in the config dirs,
@@ -365,6 +376,10 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QUEUE_LABEL` | `queue:work` | board-less projects only: the issue label that puts an issue in the queue; empty = no queue |
 | `REPO_ROOT` | (required) | `declare -A`: repo name → local clone root |
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
+| `DEPS_CACHE_DIR` | `~/.cache/pdo/node_modules` | the shared `node_modules` cache (`bin/deps-link`): one `npm ci` per lockfile, linked into every worktree |
+| `DEPS_CACHE_DAYS` | `14` | `deps-link --prune` (hourly from the watcher, and from `/project-cleanup-worktrees`) removes an entry no worktree links to after this many days |
+| `DEPS_LINK_DIRS[<repo>]` | every tracked `package-lock.json` | the repo's npm package dirs (`.` = root), or `none`; npm workspace roots are always skipped |
+| `DEPS_NPM_CMD[<repo>/<dir>]`, `DEPS_NPM_CMD[<repo>]` | `npm ci --no-audit --no-fund` | the install command for a cache entry; words before `npm` (e.g. `mise exec node@22 --`) also pick the `node` the key records |
 | `ORCHESTRATOR_NO_REAP` | `1` | launch the orchestrator with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`, so Claude Code's low-memory reaper never stops its watcher (`0`: allow it) |
 | `AGENT_LAYOUT` | `tabs` | `tabs`: one herdr workspace per manager, one tab per agent; `workspaces`: one workspace per agent (pre-0.12) |
 | `REPO_MANAGER_SKILL` | `${PDO_SKILL_PREFIX}project-repo-manager` | the skill `start-manager` runs |

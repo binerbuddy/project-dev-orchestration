@@ -69,6 +69,9 @@ available.
   git worktree add --no-track -b feat/<epic#>-<slug> <worktree parent>/<dir> origin/docs/<slug>-design
   cd <worktree parent>/<dir> && git rebase origin/<base>
   ```
+  With the engine, `pdo deps-link` there gives it the shared, lockfile-keyed `node_modules`; after any
+  `package-lock.json` change (`npm install <pkg> --package-lock-only`), run it again. Never `npm install` into a
+  linked `node_modules` or into another worktree.
   `--no-track` keeps the branch from tracking the docs branch, so a bare `git push` never lands there. Make the
   first push (phase 1's checkpoint) `git push -u origin feat/<epic#>-<slug>`, which gives it its own upstream.
   (If no docs branch exists, or its design PR already merged and the branch is stale, branch from `origin/<base>`,

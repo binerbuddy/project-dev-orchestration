@@ -360,8 +360,17 @@ def tmp_sweep(project):
                            capture_output=True, text=True, timeout=600)
         freed = json.loads(r.stdout)["freed_mb"]
     except (subprocess.TimeoutExpired, ValueError, KeyError):
-        return []
-    return [{"type": "tmp_swept", "detail": f"freed {freed:.0f} MB in /tmp"}] if freed >= 100 else []
+        freed = 0
+    events = [{"type": "tmp_swept", "detail": f"freed {freed:.0f} MB in /tmp"}] if freed >= 100 else []
+    try:  # the shared node_modules cache: entries no live worktree links to, past DEPS_CACHE_DAYS
+        r = subprocess.run([os.path.join(HERE, "bin", "deps-link"), "--prune", "--project", project, "--json"],
+                           capture_output=True, text=True, timeout=600)
+        freed = json.loads(r.stdout)["freed_mb"]
+        if freed >= 100:
+            events.append({"type": "deps_pruned", "quiet": True, "detail": f"freed {freed:.0f} MB of unused node_modules"})
+    except (subprocess.TimeoutExpired, ValueError, KeyError):
+        pass
+    return events
 
 
 def release_finished_claims(project, repos):

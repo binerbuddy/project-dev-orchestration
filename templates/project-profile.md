@@ -58,7 +58,9 @@ branch prefixes in use.
 ## Build & checks
 
 The authoritative compile/typecheck/lint commands an agent must pass before handing off code, per part of the repo,
-with the directory each runs in. List the errors those commands report on a clean base branch (known noise) so agents
+with the directory each runs in. With the engine, npm package dirs get their `node_modules` from `pdo deps-link`
+(a shared cache keyed by lockfile): say so here, and that a lockfile change means `npm install <pkg>
+--package-lock-only` then `pdo deps-link`, never an install into a linked dir or another worktree. List the errors those commands report on a clean base branch (known noise) so agents
 ignore them rather than "fix" them, and any env vars a build needs.
 
 <!-- Example (Acme):

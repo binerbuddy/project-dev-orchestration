@@ -178,6 +178,7 @@ git -C "$ROOT" fetch -q origin "+refs/heads/${BASE#origin/}:refs/remotes/origin/
 mkdir -p "$(dirname "$WORKTREE")"
 git -C "$ROOT" worktree add -q "$WORKTREE" -b "$BRANCH" "$BASE"
 git -C "$WORKTREE" branch -q --unset-upstream 2>/dev/null || true
+pdo_deps_link_bg "$REPO" "$WORKTREE" "$REPO-$NUM"   # node_modules from the shared cache
 
 # --- dispatch brief ---
 mkdir -p "$BRIEF_DIR"

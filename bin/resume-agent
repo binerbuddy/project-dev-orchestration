@@ -80,6 +80,9 @@ if [[ ! -d "$CWD" ]]; then
   fi
 fi
 
+# node_modules from the shared cache (also migrates an old link to the main worktree's)
+pdo_deps_link_bg "$REPO" "$CWD" "$REPO-$NUM"
+
 # reopen it as a tab in its manager's home (an old-layout agent moves into the home here)
 HOME_WS="$(pdo_home_of "$REPO")"
 pdo_place "$HOME_WS" "$NAME" "$CWD" || die "could not open a herdr tab for $NAME in \"$HOME_WS\""

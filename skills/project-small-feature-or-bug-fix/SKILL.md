@@ -93,6 +93,9 @@ test work); the changelog update per §Changelog is part of the plan; respect §
    `git fetch origin <base> && git worktree add --no-track -b <branch> <worktree parent>/<slug> origin/<base>`
    (`--no-track`: a branch that tracks `origin/<base>` makes a bare `git push` or `git pull` target the base branch;
    the first push sets the branch's own upstream, step 8)
+   With the engine, give the worktree its npm dependencies with `pdo deps-link` (run in the worktree): shared,
+   lockfile-keyed `node_modules`. If you change `package-lock.json` (`npm install <pkg> --package-lock-only`), run
+   it again; never `npm install` into a linked `node_modules` or into another worktree.
 2. Implement per the plan, using implementation sub-agents where parallelism helps (OMC, if available:
    `oh-my-claudecode:executor`). Each gets the plan section, the worktree path, and the conventions: LF line endings
    ONLY; match surrounding style; no drive-by refactors; §Conventions.

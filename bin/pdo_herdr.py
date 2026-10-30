@@ -20,7 +20,7 @@ CLI (bin/herdr-agent wraps it):
                                  agent as tab 1, if missing); AGENT_LAYOUT=workspaces opens a
                                  workspace <name> instead. Prints {workspace_id, tab_id, pane_id, home}
   close <name>                   close that agent's tab (exit 1: not found)
-  draft <name> | --pane <id>     what sits in the agent's input box: "draft: <text>" for text a person
+  draft <name> | --pane <id>     (name: the tab label or herdr's agent name) what sits in the agent's input box: "draft: <text>" for text a person
                                  typed and hasn't sent, "suggestion: <text>" for Claude Code's dim
                                  prompt suggestion (ghost text, never anyone's). Exit 0: a real draft
                                  is there (don't type into this pane); 1: none; 2: not found
@@ -273,7 +273,9 @@ def main(argv):
     elif cmd == "draft" and len(rest) in (1, 2):
         pane = rest[1] if rest[0] == "--pane" and len(rest) == 2 else None
         if pane is None:
-            s = find(rest[0]) if len(rest) == 1 else None
+            snap = slots() if len(rest) == 1 else []
+            # the tab label, else herdr's agent name (e.g. orchestrator-acme, review-acme)
+            s = find(rest[0], snap) or next((x for x in snap if (x.get("agent") or {}).get("name") == rest[0]), None)
             if not s:
                 return 2
             pane = s.get("pane_id")
