@@ -53,7 +53,7 @@ classify from its verdict.
 - **LIKELY**: reachable in normal production use, or guaranteed by the code path.
 - **PLAUSIBLE**: needs a race, an edge input, or an unusual-but-real deployment condition.
 - **UNLIKELY**: contrived precondition, mitigated elsewhere, or cosmetic-only impact.
-- **NOT-A-FIX**: pre-existing or out of scope, design-accepted, or better as a follow-up issue;
+- **NOT-A-FIX**: pre-existing or out of scope, design-accepted, or better as a follow-up (the PR body's "Follow-ups (not filed)" list);
   recommend NOT fixing in this PR (still reported in the final comment).
 
 For everything except NOT-A-FIX, draft a concrete solution: approach, files touched, blast radius.
@@ -157,6 +157,7 @@ human may already have ticked.
 
 Throughout: keep human-facing updates high-level; the detail lives in the PR comment and commits.
 
-**Follow-ups you notice** that are out of scope: don't file them yourself. Queue them for intake
-(`pdo intake-submit "<your workspace name>" "<report>"`), or, with no engine installed, list them
-in your final report so a human can file them with `needs-triage`.
+**Follow-ups you notice** that are out of scope: don't file them yourself. Add them to the PR body's "Follow-ups (not
+filed)" list. Only what clears the reporting bar (AGENTS.md) also goes to intake, in the run's one report:
+`pdo intake-submit --checked <#n|none> "<your workspace name>" "<report>"` (with no engine installed, a
+`needs-triage` issue). When the list isn't empty, add the `has-follow-ups` label to the PR (`gh pr edit <n> --add-label has-follow-ups`).

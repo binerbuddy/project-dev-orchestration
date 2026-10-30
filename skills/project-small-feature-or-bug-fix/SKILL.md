@@ -118,7 +118,7 @@ feature worktree:
    - TEST: drive the feature headlessly: happy path AND the failure/edge paths the Adversary flagged in planning.
      Capture console errors and failed network requests.
    - VERIFY: for each issue found, confirm it is caused by this change (check against `<base>` / pre-existing
-     behaviour) before touching code. Don't "fix" pre-existing bugs here; record those for the final report instead.
+     behaviour) before touching code. Don't "fix" pre-existing bugs here; add them to the PR body's "Follow-ups (not filed)" list instead.
    - FIX confirmed issues, checkpoint-commit.
    - RE-TEST the full affected path set, not just the step that failed.
 3. Cap at 3 cycles. If issues survive cycle 3, stop fixing: record them as known issues for the final report and flag
@@ -210,8 +210,10 @@ Report to the user: PR link; what was built (brief); automated-QC results; revie
 findings); triage results (fixed with commits / deliberately not fixed with reasons); the URL of the UX QC checklist
 PR comment (the canonical, tick-off copy; note whether triage updated it; do NOT restate the checklist in full);
 confirmation that the `ready for QC` label is on the PR, with a reminder that after ticking the checklist the human
-swaps it for `QC complete - ready to review`; follow-up items worth ticketing; and the worktree path (left in place
+swaps it for `QC complete - ready to review`; the follow-ups list and any intake report; and the worktree path (left in place
 for the user's dev server; do not remove it).
 
-Out-of-scope bugs or ideas noticed on the way: don't fix them here. If the project uses the intake queue (see
-`AGENTS.md`), queue them with `pdo intake-submit`; otherwise list them as follow-ups in the report.
+Out-of-scope bugs or ideas noticed on the way: don't fix them here. Every one goes in the PR body's "Follow-ups (not
+filed)" list. Only what clears the reporting bar (AGENTS.md) also goes to intake, in one report at wrap-up: `pdo
+intake-submit --checked <#n|none> "<your workspace name>" "<report>"` where the project uses the intake queue, else a
+`needs-triage` issue. When the list isn't empty, add the `has-follow-ups` label to the PR (`gh pr edit <n> --add-label has-follow-ups`).

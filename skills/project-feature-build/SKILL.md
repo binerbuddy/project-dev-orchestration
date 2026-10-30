@@ -171,7 +171,7 @@ Once every phase is done and every gate approved:
    item linking its `download:` URL (a file download, not the Raw view) and giving the import steps. End with the QC handoff block (plus any §Project extras QC commands). Record the comment id (from the URL
    the command returned) in the ledger and the resumability note.
 4. **PR**: keep it a **draft** (draft CI skips the heavy jobs while review/triage pushes land), write the final body: what/why, phase table with commit ranges, QC evidence,
-   divergences, follow-ups, then the close list: `Closes #<epic>` and one `Closes #<n>` line per phase issue and per
+   divergences, "Follow-ups (not filed)", then the close list: `Closes #<epic>` and one `Closes #<n>` line per phase issue and per
    fixed-by issue from the doc's §Tracking (cross-repo: `Closes <org>/<other-repo>#<n>`, only where the design's decisions
    gate or the human approved that write; otherwise ask first), and the attribution line
    your tool or session prescribes, if any. Merging closes them.
@@ -193,13 +193,14 @@ Once every phase is done and every gate approved:
    only the comments endpoint will tell you a posted review does not exist.
 6. Verifier pass (read-only; OMC: `oh-my-claudecode:verifier`) over the whole doc: every phase's criteria met or
    explicitly dropped, QC claims evidenced. Fix small gaps (compile, commit, push).
-7. **Follow-ups → GitHub**: one issue per §Follow-ups item, labels `needs-triage` + a best-guess P label + area, type
-   Bug/Feature/Task (or the type labels §Identity names), body with `file:line` and "Follow-up from #<epic> / PR
-   #<n>", added to the Project (Status Backlog). Comment on the epic with the PR link and the phase summary. Leave the epic open
+7. **Follow-ups**: never file GitHub issues for them, and never guess a P label. The PR body's "Follow-ups (not
+   filed)" list carries every §Follow-ups item (deferred scope, hardening, cleanup, test gaps), with `file:line`. Only
+   items that clear the reporting bar (AGENTS.md) also go to intake, in one report at wrap-up: `pdo intake-submit
+   --checked <#n|none> "<your workspace name>" "<report>"`. When the list isn't empty, add the `has-follow-ups` label to the PR (`gh pr edit <n> --add-label has-follow-ups`). Comment on the epic with the PR link and the phase summary. Leave the epic open
    and In Progress; closing it is the human's call after merge (the `Closes #<epic>` line does it on merge unless
    removed).
 8. Project-memory note `<slug>-build` (if your tool has project memory): PR, head, worktree, dev-server state, design
-   pins, gotchas found, follow-up ids. Add its line to the memory index.
+   pins, gotchas found, follow-ups. Add its line to the memory index.
 
 ## Verifying a write
 
@@ -230,5 +231,5 @@ atomic, or pick an operation that does not need the gap to be empty.
 
 PR link; phases delivered with commits; gates and their outcomes; automated-QC results; review outcome and triage
 results; checklist comment URL (don't restate it); `ready for QC` label confirmation and the reminder that the human
-swaps it for `QC complete - ready to review`; epic link; follow-up issue numbers; worktree path (left in place with dev
+swaps it for `QC complete - ready to review`; epic link; the follow-ups list and any intake report; worktree path (left in place with dev
 servers if the user will QC now).

@@ -245,7 +245,7 @@ P4-low`); `LABEL_QC_READY` and `LABEL_QC_DONE` (default `ready for QC`, `QC comp
 `LABEL_MERGE_READY`, `LABEL_UX_SKIPPED`, `LABEL_NEEDS_UX`, `LABEL_QC_ESCALATED` (default `Ready for Merge`,
 `UX testing skipped`, `needs UX review`, `QC escalated`); the
 `CARRY_LABELS` (default `client-requested`); and `needs-triage`, `epic-phase`, `awaiting-ux-gate`, `likely-fixed`,
-`blocked-by-pr`, `on-hold`, `needs-design`, `Security`, `small-win`, `orchestrator-system`. Also check (never
+`has-follow-ups`, `blocked-by-pr`, `on-hold`, `needs-design`, `Security`, `small-win`, `orchestrator-system`. Also check (never
 create) the repo-specific labels the profile, the workflow section or CI name, such as the changeset skip label.
 Colors, descriptions, what relies on each, and the check-then-create loop: `references/labels.md`. On a user-owned
 repo (no issue types), also create the type labels the human names, and record them in §Identity.

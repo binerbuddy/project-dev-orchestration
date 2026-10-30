@@ -104,8 +104,10 @@ outputs) and replace the browser parts below.
 
 A finding is a real defect this PR causes or fails to fix: steps, expected, actual, evidence (the
 API response, the console error, the stored row). Behaviour that is identical on the base branch is
-not this PR's finding: queue it for intake (`pdo intake-submit "QC Agent (<p>)" "<report>"`) and
-move on. Bound the effort: around an hour per PR; if you're still unsure after that, it's a finding
+not this PR's finding. Queue it for intake only when it is major or above (a user-visible break, a
+security flaw) or has data/correctness impact, as the reporting bar asks (`pdo intake-submit --checked <#n|none>
+"QC Agent (<p>)" "<report>"`, one report per PR, each defect under its own `## <title> [severity]` heading);
+anything lesser gets one line under "Pre-existing (not filed)" in your verdict comment. Then move on. Bound the effort: around an hour per PR; if you're still unsure after that, it's a finding
 ("couldn't verify X because Y") rather than a silent pass.
 
 ## 5. Verdict

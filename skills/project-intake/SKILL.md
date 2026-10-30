@@ -1,7 +1,7 @@
 ---
 name: project-intake
-description: Turn bug reports and feature ideas into typed, prioritised, routed GitHub issues for the current project (with a bounded, fact-only "Starting points" section) ready for the orchestrator. A bare invocation only reports how many agent reports wait in the intake inbox; the `inbox` argument works them. Use when asked to file a bug or idea, run intake, or triage the intake inbox.
-argument-hint: "[inbox | <bug report(s) or idea(s), free text; screenshots/paths welcome>]"
+description: Turn bug reports and feature ideas into typed, prioritised, routed GitHub issues for the current project (with a bounded, fact-only "Starting points" section) ready for the orchestrator. A bare invocation only reports how many agent reports wait in the intake inbox; the `inbox` argument works them; `follow-ups [repo]` lists the "Follow-ups (not filed)" items on PRs labelled has-follow-ups so the human can promote any to issues. Use when asked to file a bug or idea, run intake, or triage the intake inbox.
+argument-hint: "[inbox | follow-ups [repo] | <bug report(s) or idea(s), free text; screenshots/paths welcome>]"
 ---
 
 # Intake
@@ -26,17 +26,37 @@ locations) and `## Conventions` (its list of business-critical areas, if any).
   (`/project-intake inbox` to work them).", and wait. **Never start on the inbox unasked.** A bare
   start (a launcher script, a team start-up) must only report the count.
 - **`inbox`:** work the inbox (below). Only this argument does.
+- **`follow-ups [repo]`:** harvest the PRs' follow-up lists (below). Files nothing unasked.
 - **Anything else:** the human's own items. Handle them on their own; don't pull pending inbox reports
   into that batch. If reports are waiting, mention the count in one line at the end.
 - **Legacy format:** a direct `/project-intake From <workspace name>: …` prompt is handled like an
   inbox report from that workspace.
 
+## Follow-ups harvest
+
+Agents list what falls below the reporting bar (hardening ideas, nits, cleanup, test gaps, refactors,
+feature ideas) in their PR body's "Follow-ups (not filed)" section and label the PR `has-follow-ups`.
+With `follow-ups [repo]` (default: every repo in `REPO_ROOT`):
+
+1. `gh pr list -R <org>/<repo> --label has-follow-ups --state all --limit 100 --json number,title,state,mergedAt,body`.
+2. From each body take the items under the "Follow-ups (not filed)" heading (to the next heading).
+   Skip items an open or closed issue already covers (a quick title search, as in the duplicate look);
+   mark them "already #n".
+3. Show one numbered list grouped by repo, newest PR first: `<repo>#<PR> (merged|open) — <item>`.
+   No diagnosis, no drafting yet.
+4. The human picks items to promote; each picked item then goes through the normal flow (classify,
+   bounded look, draft, confirm, file) with "Follow-up from PR #<n>" in the body. Unpicked items stay
+   where they are; never relabel or edit the PRs.
+
 ## The intake inbox
 
 Agents don't prompt intake; they queue reports with
 `pdo intake-submit "<workspace name>" "<report>"` (or the report on stdin). Each report is one
-Markdown file with `from:` and `submitted:` frontmatter in the inbox dir: `$PDO_INBOX` (default
-`$PDO_STATE_DIR/intake-inbox`; `INTAKE_INBOX` is still honoured).
+Markdown file with `from:`, `submitted:` and `checked:` frontmatter in the inbox dir: `$PDO_INBOX` (default
+`$PDO_STATE_DIR/intake-inbox`; `INTAKE_INBOX` is still honoured). `checked:` says whether the sender
+searched open issues (`#n`, `none`, `auto`, or `unknown`: run the duplicate look for that one). Reports
+should clear the agents' reporting bar (AGENTS.md); one that plainly doesn't (a nit, a refactor, a
+feature idea from an agent) is proposed as "drop: below the bar" in the batch.
 
 With `inbox`: list the files at the top level only (ignore `done/` and dotfiles). None: say you're
 ready and wait. Otherwise read every file and treat each report as one item in a single batch. Tell

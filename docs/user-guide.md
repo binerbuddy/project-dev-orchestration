@@ -126,6 +126,7 @@ the command that checks each; you QC by running them or by reading the evidence 
 | `needs UX review` | Always gets a human UX review. Intake sets it on issues; it's carried onto their PRs. |
 | `awaiting-ux-gate` | On an issue and its PR: the agent is waiting for your prototype sign-off. |
 | `likely-fixed` | The agent thinks it's already done; you confirm and close. |
+| `has-follow-ups` | The PR body lists follow-ups the agent didn't file; `/project-intake follow-ups` lists them to promote. |
 | `on-hold` | Parked by you; never started. |
 | `needs-triage` | Filed but not yet triaged; not started unless on Claude Work This. |
 | `epic-phase` | Part of an epic; worked by the epic's build agent. |
@@ -154,7 +155,7 @@ start yourself (not dispatched) finds the engine through `pdo` on PATH, else thr
 | `watch --peek` | the watcher's snapshot, without consuming events |
 | `qc start <pr#>` / `qc stop` / `qc status` | local QC servers |
 | `qc-fixture-push <pr#> <file>` | publish QC test data |
-| `intake-submit "<ws>" "<report>"` | queue a report for intake |
+| `intake-submit [--checked <#n\|none>] "<ws>" "<report>"` | queue a defect report for intake (only what clears the reporting bar) |
 | `file-issue`, `claim`, `board-status` | board and issue helpers |
 | `claim --release <repo> <n> [--unassign]` | take a claim's `managed-by:` label off by hand (finished agents release on their own) |
 | `pr-agent <pr#>`, `pr-priority`, `shots <pr#>`, `agent-meta backfill` | PR helpers |

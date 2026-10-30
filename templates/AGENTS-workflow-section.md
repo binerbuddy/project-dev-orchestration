@@ -75,11 +75,16 @@ issues, commenting, labelling or closing anything there (a `Closes <org>/<other-
 closes that issue) waits for their yes. When another project's manager owns that repo, your manager checks with the
 CEO, which asks the owner.
 
-**Intake rule.** Don't fix or file bugs and ideas you notice outside your task. Queue them for the intake agent:
-`pdo intake-submit "<your workspace name>" "<what, where, repro>"`. Each call queues one report: put items that share
-a cause or a fix in one report, and unrelated items in separate calls. The human triages the queue with
-`/project-intake inbox`. Without an engine install, open an issue with the `needs-triage` label instead (see the
-`project-how-it-works` skill).
+**Reporting bar.** Don't fix or file what you notice outside your task. Submit to intake only (a) a reproduced defect
+(steps, expected, actual) that breaks something users see, gives wrong data or results, or is a security flaw, or an
+edge case you can reproduce; or (b) a suspected data, correctness or security risk, marked "unverified". Hardening
+ideas, nits, cleanup, test gaps, refactors and feature ideas go in your PR body's "Follow-ups (not filed)" list
+instead, and the PR gets the `has-follow-ups` label. Send one report per run, at wrap-up, facts only (no root-cause guesses or fix options): each defect under its
+own `## <title> [severity]` heading (user-visible, data, security, edge-case or unverified), about 3 at most, ranked.
+Search open issues first and say what you found: `pdo intake-submit --checked <#n|none> "<your workspace name>"
+"<report>"` (`--append` adds to your pending report). Don't prompt the intake agent directly. The human triages the
+queue with `/project-intake inbox`. Without an engine install, open an issue with the `needs-triage` label instead,
+only for what clears the bar (see the `project-how-it-works` skill).
 
 **QC Checklist rule.** Every PR that changes user-visible behaviour gets one PR comment starting
 `<!-- ux-qc-checklist -->` and headed `## QC Checklist`: a GitHub task list of concrete steps in the running app. Name

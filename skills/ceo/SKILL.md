@@ -231,7 +231,7 @@ With the argument `loop` (e.g. under `/loop` hourly):
 - **Claims are other managers' locks.** Never add or remove `managed-by:` labels, assignees or native
   dependencies on another manager's issues yourself; ask that manager, then log the result
   (`pdo fleet note`).
-- **Bugs and ideas** you notice go to intake: `pdo intake-submit "CEO" "<report>"`. Engine bugs go
+- **Defects** you notice that clear the reporting bar (AGENTS.md) go to intake: `pdo intake-submit --checked <#n|none> "CEO" "<report>"`. Engine bugs go
   there too; the System Manager fixes them.
 
 References: `references/allocation.md` (the advice rules, profiles and env keys).

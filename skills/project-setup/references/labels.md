@@ -28,6 +28,7 @@ difference; never rename it.
 | `epic-phase` | | `c5def5` | A phase of an epic; worked only by the epic's build agent | queue, spawn, feature-design |
 | `awaiting-ux-gate` | | `ffe800` | An agent waits for a human's prototype sign-off (on the issue and its PR) | hibernate, watch, feature-build, dispatch brief |
 | `likely-fixed` | | `fbca04` | An agent thinks the default branch already does this; a human confirms | queue, watch, hibernate, dispatch brief |
+| `has-follow-ups` | | `bfd4f2` | The PR body has a "Follow-ups (not filed)" list; `/project-intake follow-ups` harvests them | lifecycle skills, pr-triage, intake |
 | `blocked-by-pr` | | `e99695` | The PR can't merge until another PR lands | small-fix, feature-build |
 | `on-hold` | | `6a737d` | Parked by a human; never started | queue, watch, intake |
 | `needs-design` | | `d4c5f9` | Needs a design doc before work | spawn (routes to design), intake |

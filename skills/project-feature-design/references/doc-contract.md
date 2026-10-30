@@ -15,7 +15,8 @@ Sections, in order:
 7. **Security summary**.
 8. **Delivery phases**: table or list; each phase has `depends-on`, acceptance criteria, `ux-gate` with reason, and a
    spike time-box/go-no-go where applicable. Gates: ≤2, ≤1 blocking.
-9. **Follow-ups**: tickets to file with the PR (pre-existing bugs, deferred scope).
+9. **Follow-ups**: pre-existing bugs and deferred scope. The build lists them in the PR body's "Follow-ups (not
+   filed)"; only items that clear the reporting bar go to intake.
 10. **Decisions**: numbered, each `decided (date)` / `provisional` / `open`; open must be empty when Status is Ready.
 11. **Tracking**: dispositions table, then (after the epic is filed) epic number and phase → issue table.
 12. **Revision log**: rev, date, what changed and why (consortium round, user decision, build divergence).

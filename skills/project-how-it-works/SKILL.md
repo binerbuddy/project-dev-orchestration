@@ -75,14 +75,22 @@ the queue status, the P-labels and the QC labels.
 
 ## What you must do
 
-- **File bugs and ideas through intake, never fix out-of-scope things in passing.**
-  - With an engine install: `pdo intake-submit "<your workspace name>" "<what, where, repro>"`
-    (each call queues one report: items that share a cause or a fix go in one report, unrelated items
-    in separate calls; stdin works for long reports). Don't prompt the intake
-    agent directly; a human triages the queue with `/project-intake inbox`.
-  - Without one: open an issue in the right repo with the `needs-triage` label and no P-label (unless
-    a maintainer gave one), using the intake template (`../project-intake/references/issue-template.md`:
-    Summary / Details / Starting points (unverified)), and say who reported it.
+- **Report only what clears the bar; never fix out-of-scope things in passing.**
+  - **Reporting bar.** Don't fix or file what you notice outside your task. Submit to intake only
+    (a) a reproduced defect (steps, expected, actual) that breaks something users see, gives wrong
+    data or results, or is a security flaw, or an edge case you can reproduce; or (b) a suspected
+    data, correctness or security risk, marked "unverified". Hardening ideas, nits, cleanup, test
+    gaps, refactors and feature ideas go in your PR body's "Follow-ups (not filed)" list instead, and the PR gets the `has-follow-ups` label.
+    Send one report per run, at wrap-up, facts only (no root-cause guesses or fix options): each
+    defect under its own `## <title> [severity]` heading (user-visible, data, security, edge-case or
+    unverified), about 3 at most, ranked. Search open issues first and say what you found: `pdo
+    intake-submit --checked <#n|none> "<your workspace name>" "<report>"` (`--append` adds to your
+    pending report). Don't prompt the intake agent directly. A human triages the queue with
+    `/project-intake inbox`.
+  - Without an engine install: open an issue in the right repo with the `needs-triage` label and no P-label (unless
+    a maintainer gave one), only for what clears the bar, using the intake template
+    (`../project-intake/references/issue-template.md`: Summary / Details / Starting points (unverified)), and say who
+    reported it.
 - **QC Checklist.** One PR comment starting `<!-- ux-qc-checklist -->` then exactly `## QC Checklist`,
   task-list steps, and the **project-name rule**: no localhost or host URLs, ports or ids; name data
   the way the app names it, plus the UI path. In a headless repo (no UI), the steps are QC cases:

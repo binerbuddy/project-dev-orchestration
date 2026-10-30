@@ -97,7 +97,7 @@ case "$*" in
   "api graphql"*"query fleet"*)
     if [[ "$*" == *"r=tool"* ]]; then cat "$SMOKE_DIR/fleet-tool.json"
     else echo '{"data":{"repository":{"pullRequests":{"totalCount":0,"nodes":[]},"gates":{"nodes":[]}}}}'; fi ;;
-  "api repos/acme/"*"/issues?state=open"*) ;;
+  "api repos/acme/"*"/issues?state=open"*) [[ -z "${SMOKE_OPEN_ISSUES:-}" ]] || cat "$SMOKE_OPEN_ISSUES" ;;
   "api repos/delta/tool/issues?state=open"*) cat "$SMOKE_DIR/delta-issues.jsonl" ;;
   "api repos/delta/tool/issues/24/dependencies/blocking"*) echo "tool 25" ;;
   "api graphql"*"open: pullRequests"*)
@@ -327,6 +327,22 @@ check "intake report written" grep -q "from: Acme-12 smoke" "$f"
 out="$(INTAKE_INBOX="$T/legacy-inbox" "$BIN/intake-submit" ws "r2")"; has "INTAKE_INBOX honoured" "$out" "$T/legacy-inbox/"
 out="$(INTAKE_INBOX="$T/legacy-inbox" PDO_INBOX="$T/new-inbox" "$BIN/intake-submit" ws "r3")"; has "PDO_INBOX beats INTAKE_INBOX" "$out" "$T/new-inbox/"
 echo "" | "$BIN/intake-submit" ws >/dev/null 2>&1; eq "empty report refused" "$?" 1
+# the reporting bar: dedup, one report per run, the soft cap
+printf 'widget#41\tExport sort ignores facility name casing\n' >"$T/open-issues"
+err="$(SMOKE_OPEN_ISSUES="$T/open-issues" PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --project acme "Acme-50 a" "## Export sort ignores facility casing [user-visible]" 2>&1 >/dev/null)"
+has "intake-submit: warns on a likely duplicate issue" "$err" "possible duplicate of open issue widget#41"
+check "intake-submit: records the auto search" grep -q "^checked: auto" "$T"/bar-inbox/*acme-50-a*.md
+err="$(PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --checked none "Acme-51 b" "## Export sort ignores facility casing [data]" 2>&1 >/dev/null)"
+has "intake-submit: warns on a matching pending report" "$err" "a pending report already covers"
+check "intake-submit: records --checked" grep -q "^checked: none" "$T"/bar-inbox/*acme-51-b*.md
+err="$(PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --checked '#9' --append "Acme-51 b" $'## one [data]\n## two\n## three [security]\n## four [edge-case]' 2>&1)"
+has "intake-submit: --append adds to the pending report" "$err" "appended to your pending report"
+has "intake-submit: soft cap warns past 3" "$err" "4 defects"
+has "intake-submit: untagged defect warned" "$err" "no [severity] tag"
+eq "intake-submit: --append made no new file" "$(ls "$T/bar-inbox" | grep -c acme-51-b)" 1
+err="$(PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --checked none "Acme-51 b" "## x [data]" 2>&1 >/dev/null)"
+has "intake-submit: a second report hints --append" "$err" "use --append"
+PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --checked 'maybe' ws "r" >/dev/null 2>&1; eq "intake-submit: bad --checked refused" "$?" 1
 
 # --- floor ---
 eq "floor unset" "$("$BIN/floor")" none

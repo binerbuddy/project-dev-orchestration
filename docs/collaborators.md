@@ -117,7 +117,10 @@ your yes, and so does a `Closes <org>/<other-repo>#<n>` line, since merging clos
 
 ## 7. Filing bugs and ideas
 
-Open an issue in the right repo with the `needs-triage` label and no priority, and say who reported it.
+Report only a reproduced defect (something users see break, wrong data or results, a security flaw, or an edge case
+you can reproduce) or a suspected data, correctness or security risk marked "unverified". Ideas, nits and cleanup go
+in your PR body's "Follow-ups (not filed)" list. Open the issue in the right repo with the `needs-triage` label and no
+priority, and say who reported it.
 `/project-intake <what you saw>` writes it for you: it checks for duplicates, drafts a Summary / Details / Starting
 points issue, and files after your OK. Don't fix out-of-scope things in passing. (Where the team runs the engine,
 agents queue reports for an intake agent instead; a maintainer triages that queue.)

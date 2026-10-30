@@ -1,11 +1,29 @@
 #!/usr/bin/env bash
-# intake-submit — queue a bug/idea report for the intake agent instead of prompting it directly.
+# intake-submit — queue a defect report for the intake agent instead of prompting it directly.
 # Reports land in the intake inbox ($PDO_INBOX, default $PDO_STATE_DIR/intake-inbox) as one
 # markdown file each; the human runs the intake skill's "inbox" mode in the intake session to
 # triage the queue as a single batch.
 #
-# Usage: intake-submit "<your workspace name>" "<report>"
-#        intake-submit "<your workspace name>" < report.md
+# Usage: intake-submit [--checked <#n|none>] [--project P] [--append] "<your workspace name>" "<report>"
+#        intake-submit [options] "<your workspace name>" < report.md
+#
+# The bar (the same wording as the AGENTS section and the dispatch brief): submit only
+#   (a) a reproduced defect (steps / expected / actual) at user-visible-break, data/correctness or
+#       security severity, or edge-case severity with a repro;
+#   (b) a suspected data/correctness/security risk, marked "unverified".
+# Hardening ideas, nits, cleanup, test gaps, refactors and feature ideas go in the PR body's
+# "Follow-ups (not filed)" list instead.
+#
+# One report per agent run, sent at wrap-up: each defect its own "## <title> [severity]" heading,
+# severity one of user-visible, data, security, edge-case, unverified. About 3 defects at most; past
+# that, rank them and move the rest to the PR's follow-ups (a warning, not a refusal).
+#   --checked #n|none  you searched open issues yourself: #n is the related issue you found, none
+#                      means nothing matched. Without it, open issue titles in the project's repos
+#                      are searched and likely duplicates are warned about.
+#   --project P        the project whose repos to search (default: the cwd's project).
+#   --append           add to your own pending report (same workspace name) instead of a new one.
+# The pending inbox is always checked for a matching report from another agent. Warnings go to
+# stderr; the report is queued either way, with a "checked:" line recording what was searched.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -13,19 +31,118 @@ HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 source "$HERE/bin/lib.sh"
 INBOX="$(pdo_inbox)"
 die() { echo "intake-submit: $*" >&2; exit 1; }
+USAGE='usage: intake-submit [--checked <#n|none>] [--project P] [--append] "<workspace name>" "<report>" (or report on stdin)'
 
-[[ $# -ge 1 && -n "$1" ]] || die 'usage: intake-submit "<workspace name>" "<report>" (or report on stdin)'
+CHECKED="" PROJECT="" APPEND=0 ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --checked) [[ $# -ge 2 ]] || die "$USAGE"; CHECKED="$2"; shift 2 ;;
+    --project) [[ $# -ge 2 ]] || die "$USAGE"; PROJECT="$2"; shift 2 ;;
+    --append) APPEND=1; shift ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    --) shift; ARGS+=("$@"); break ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+[[ $# -ge 1 && -n "$1" ]] || die "$USAGE"
+[[ -z "$CHECKED" || "$CHECKED" == none || "$CHECKED" =~ ^([A-Za-z0-9._-]+)?#[0-9]+$ ]] \
+  || die "--checked takes #<n>, <repo>#<n> or none (got '$CHECKED')"
 FROM="$1"
 if [[ $# -ge 2 ]]; then REPORT="$2"; else REPORT="$(cat)"; fi
 [[ -n "${REPORT//[[:space:]]/}" ]] || die "empty report"
 
 mkdir -p "$INBOX"
-STAMP="$(date +%Y%m%d-%H%M%S)"
 SLUG="$(printf '%s' "$FROM" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//' | cut -c1-40)"
+OWN=""  # this sender's newest pending report
+for f in "$INBOX"/*.md; do
+  [[ -f "$f" ]] && grep -qxF "from: $FROM" "$f" && OWN="$f"
+done
+
+# Issue titles to check against: the project's repos, unless --checked says the agent searched.
+TITLES="" CHECK_NOTE="$CHECKED"
+if [[ -z "$CHECKED" ]]; then
+  CHECK_NOTE="unknown (open issues not searched)"
+  if cfg="$("$HERE/bin/pdo-config" --json ${PROJECT:+--project "$PROJECT"} 2>/dev/null)"; then
+    org="$(jq -r '.org // empty' <<<"$cfg")"
+    TITLES="$(mktemp)"; trap 'rm -f "$TITLES"' EXIT
+    ok=1
+    while read -r repo; do
+      [[ -n "$org" && -n "$repo" ]] || continue
+      gh api "repos/$org/$repo/issues?state=open&per_page=100" --paginate \
+        --jq ".[] | select(.pull_request | not) | \"$repo#\\(.number)\t\\(.title)\"" >>"$TITLES" 2>/dev/null || ok=0
+    done < <(jq -r '.repo_root | keys[]' <<<"$cfg")
+    (( ok )) && CHECK_NOTE="auto (open issues searched)"
+  fi
+  [[ "$CHECK_NOTE" == unknown* ]] \
+    && echo "intake-submit: couldn't search open issues; search them yourself and pass --checked <#n|none>" >&2
+fi
+
+# Warnings: severity tags, the soft cap, likely duplicates (open issues and other agents' pending reports).
+python3 - "$INBOX" "$FROM" "${TITLES:-}" "$APPEND" "$OWN" <<'PY' 3<<<"$REPORT" >&2 || true
+import os, re, sys
+inbox, sender, titles_file, append, own = sys.argv[1:6]
+report = os.fdopen(3).read()
+STOP = set("""a an and are as at be but by for from has have in into is it its not of on or that the
+this to was were when where which while with without after before does doesn't dont don't should
+shows shown show only also than then them they there these those page user users""".split())
+SEV = ("user-visible", "data", "security", "edge-case", "unverified")
+
+def words(text):
+    return {w for w in re.findall(r"[a-z0-9][a-z0-9_-]{3,}", text.lower()) if w not in STOP and w not in SEV}
+
+def heads(text):
+    body = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    h = [l[3:].strip() for l in body.splitlines() if l.startswith("## ")]
+    return h or [next((l.strip() for l in body.splitlines() if l.strip()), "")]
+
+defects = heads(report)
+if len(defects) > 3:
+    print(f"intake-submit: {len(defects)} defects in one report; the soft cap is about 3. Rank them "
+          "(security, data/correctness, user-visible break, edge case) and move the rest to the PR's "
+          "\"Follow-ups (not filed)\" list.")
+untagged = [d for d in defects if not re.search(r"\[(%s)\]" % "|".join(SEV), d)]
+if any(l.startswith("## ") for l in report.splitlines()) and untagged:
+    print("intake-submit: no [severity] tag (user-visible, data, security, edge-case, unverified) on: "
+          + "; ".join(d[:70] for d in untagged))
+
+def similar(a, b):
+    wa, wb = words(a), words(b)
+    shared = wa & wb
+    return len(shared) >= 3 or (len(shared) >= 2 and len(shared) >= 0.6 * min(len(wa), len(wb)))
+
+if titles_file and os.path.exists(titles_file):
+    for line in open(titles_file, encoding="utf-8"):
+        ref, _, title = line.rstrip("\n").partition("\t")
+        for d in defects:
+            if similar(d, title):
+                print(f"intake-submit: possible duplicate of open issue {ref} \"{title}\" (for \"{d[:60]}\"): "
+                      f"if it is one, comment there instead; otherwise resubmit with --checked {ref} (related) or none")
+for name in sorted(os.listdir(inbox)):
+    p = os.path.join(inbox, name)
+    if not name.endswith(".md") or not os.path.isfile(p) or (append == "1" and p == own):
+        continue
+    text = open(p, encoding="utf-8", errors="replace").read()
+    if re.search(r"^from: %s$" % re.escape(sender), text, re.M):
+        continue
+    for d in defects:
+        for h in heads(text):
+            if similar(d, h):
+                print(f"intake-submit: a pending report already covers \"{h[:60]}\" ({name}); "
+                      "intake will merge them, but check it isn't the same defect")
+PY
+
+if (( APPEND )) && [[ -n "$OWN" ]]; then
+  { printf '\n<!-- appended %s; checked: %s -->\n\n' "$(date -Iseconds)" "$CHECK_NOTE"; printf '%s\n' "$REPORT"; } >>"$OWN"
+  echo "appended to your pending report: $OWN"
+  exit 0
+fi
+[[ -n "$OWN" ]] && echo "intake-submit: you already have a pending report ($OWN); one report per run: use --append to add to it" >&2
+STAMP="$(date +%Y%m%d-%H%M%S)"
 FILE="$INBOX/$STAMP-${SLUG:-report}-$$.md"
 TMP="$(mktemp "$INBOX/.tmp.XXXXXX")"
 {
-  printf -- '---\nfrom: %s\nsubmitted: %s\n---\n\n' "$FROM" "$(date -Iseconds)"
+  printf -- '---\nfrom: %s\nsubmitted: %s\nchecked: %s\n---\n\n' "$FROM" "$(date -Iseconds)" "$CHECK_NOTE"
   printf '%s\n' "$REPORT"
 } > "$TMP"
 mv "$TMP" "$FILE"
