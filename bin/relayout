@@ -58,6 +58,8 @@ def idle_reason(slot):
         return f"it is {status}"
     if status == "blocked" or question_on_screen(slot.get("pane_id")):
         return "a question is pending"
+    if pdo_herdr.draft_pending(slot):
+        return "a person's unsent draft is in its input box"
     return None
 
 

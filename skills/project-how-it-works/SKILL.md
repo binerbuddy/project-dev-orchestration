@@ -145,7 +145,8 @@ the queue status, the P-labels and the QC labels.
   terminal). Reach agents through intake, PR comments, or the engine's own scripts
   (`pdo resume-agent`, which refuses while a question is pending). Typing into a pane with a
   question pending answers that question with your text. Text in another pane's input box may be a
-  suggested prompt, not a human's draft: never submit it.
+  suggested prompt, not a human's draft: never submit it. `pdo herdr-agent draft <name>` tells the two apart: it prints `draft: …` for a person's unsent text (exit 0:
+  don't type) and `suggestion: …` for Claude Code's dim prompt suggestion, which is never anyone's draft.
 - Don't spawn work for `epic-phase` issues on their own, or for issues labelled `on-hold`,
   `needs-triage` or `orchestrator-system`, or held by another manager (`managed-by:`).
 - Don't downgrade a PR's P-label, and don't hand-pick one (`pdo pr-priority` sets it).

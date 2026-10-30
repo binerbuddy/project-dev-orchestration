@@ -55,6 +55,9 @@ if [[ -n "$WS_ID" && -n "$PANE_ID" ]]; then
   if [[ "$STATUS" == blocked ]] || grep -qE "Enter to select|Do you want to proceed" <<<"$SCREEN"; then
     die "$REPO#$NUM has a question pending in \"$(m name)\"; answer it first" 3
   fi
+  if DRAFT="$("$HERE/bin/herdr-agent" draft --pane "$PANE_ID")"; then  # a person's unsent text, not Claude Code's dim suggestion
+    die "$REPO#$NUM has unsent text in its input box in \"$(m name)\" (${DRAFT#draft: }); send or clear it first" 3
+  fi
   herdr agent prompt "$PANE_ID" "$PROMPT" >/dev/null
   jq -cn --arg name "$(m name)" --arg ws "$WS_ID" --arg pane "$PANE_ID" '{action: "prompted", workspace: $name, workspace_id: $ws, pane_id: $pane}'
   exit 0

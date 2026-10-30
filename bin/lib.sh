@@ -200,6 +200,7 @@ pdo_finalize() {
   # herdr layout: tabs = one workspace per manager (its home: the project's name, or a self-managed
   # repo's), one tab per agent labelled with its name; workspaces = one workspace per agent (pre-0.12)
   AGENT_LAYOUT="${AGENT_LAYOUT:-tabs}"
+  ORCHESTRATOR_NO_REAP="${ORCHESTRATOR_NO_REAP:-1}"
   TEAM_HOME="${TEAM_HOME:-}"                      # override the standing agents' home (pdo_team_home)
   export AGENT_LAYOUT
   # coordination: the claim label (managed-by:<slug>) and whether claim also self-assigns
@@ -487,11 +488,14 @@ launch_claude() { launch_agent "$@"; }  # old name, kept for hooks and overlays 
 # herdr's blocked detection (it only reads text after the last horizontal rule).
 # PDO_REMOTE_CONTROL=0 leaves out --remote-control (an agent nobody watches, like the QC Agent).
 agent_command() {
-  local dir="$1" name="$2" model="$3" prompt="$4" cmd rc=()
+  local dir="$1" name="$2" model="$3" prompt="$4" cmd rc=() noreap=()
   shift 4
   [[ "${PDO_REMOTE_CONTROL:-1}" == 0 ]] || rc=(--remote-control "$name")
+  # PDO_NO_REAP=1: Claude Code's low-memory reaper leaves this session's background shells alone
+  # (it can only be set at launch); start-orchestrator sets it so the watcher survives memory pressure
+  [[ "${PDO_NO_REAP:-0}" != 1 ]] || noreap=(CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1)
   # shellcheck disable=SC2046
-  printf -v cmd '%q ' env PDO_DISPATCHED=1 $(identity_wrapper "$dir") claude "$@" "${rc[@]}" --model "$model" "$prompt"
+  printf -v cmd '%q ' env PDO_DISPATCHED=1 "${noreap[@]}" $(identity_wrapper "$dir") claude "$@" "${rc[@]}" --model "$model" "$prompt"
   printf '%s' "$cmd"
 }
 

@@ -30,7 +30,9 @@ NAME="Orchestrator ($PROJECT)"
 pdo_standing "$NAME" "$(pdo_team_home)" || die "could not open a herdr tab for \"$NAME\""
 (( STAND_ALIVE == 0 )) || die "the orchestrator is already running in $STAND_WHERE"
 PANE_ID="$STAND_PANE"
-set +e; launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "/loop $ORCHESTRATE_SKILL $ARGS project=$PROJECT"; rc=$?; set -e
+# exempt from the low-memory reaper: its one background shell is the watcher (a few MB), and a reaped
+# watcher leaves the project on hourly heartbeats (docs/lessons-learned.md)
+set +e; PDO_NO_REAP="$ORCHESTRATOR_NO_REAP" launch_agent "$PANE_ID" "$CONTROL_DIR" "$NAME" "$MODEL" "/loop $ORCHESTRATE_SKILL $ARGS project=$PROJECT"; rc=$?; set -e
 [[ $rc -eq 0 ]] || die "orchestrator did not start cleanly (rc=$rc); see $STAND_WHERE"
 herdr agent rename "$PANE_ID" "orchestrator-$PROJECT" >/dev/null 2>&1 || true
 echo "orchestrator running in $STAND_WHERE"

@@ -69,7 +69,8 @@ engine defaults).
 
 - **Talk to agents by name:** `herdr agent prompt orchestrator-<p> "From <your workspace name>: …"`.
   First check the agent is idle with **no question pending** (`herdr pane read`: no "Enter to select"
-  or "Do you want to proceed"). Typing into a pending question answers it with your text.
+  or "Do you want to proceed") and no unsent draft (`pdo herdr-agent draft <name>` exits 0 for a
+  person's text; dim ghost text is Claude Code's suggestion). Typing into either answers or joins it.
 - **Never act on input-box text as the human's instruction.** A `❯ text` line in a pane's input box
   can be the tool's *suggested* next prompt (ghost text), not the human's draft. Never submit it or
   send keys to finish it; ask the human.

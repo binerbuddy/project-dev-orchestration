@@ -20,9 +20,14 @@ CLI (bin/herdr-agent wraps it):
                                  agent as tab 1, if missing); AGENT_LAYOUT=workspaces opens a
                                  workspace <name> instead. Prints {workspace_id, tab_id, pane_id, home}
   close <name>                   close that agent's tab (exit 1: not found)
+  draft <name> | --pane <id>     what sits in the agent's input box: "draft: <text>" for text a person
+                                 typed and hasn't sent, "suggestion: <text>" for Claude Code's dim
+                                 prompt suggestion (ghost text, never anyone's). Exit 0: a real draft
+                                 is there (don't type into this pane); 1: none; 2: not found
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -142,10 +147,70 @@ def place(home, name, cwd, layout=None):
 
 
 QUESTION_MARKERS = ("Enter to select", "Do you want to proceed")
+PROMPT = "\u276f"  # the ❯ at the start of Claude Code's input box
+SGR = re.compile(r"\x1b\[([0-9;]*)m")
+CSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _split_dim(line):
+    """(plain, dim) text of one ANSI line: SGR 2 starts dim, 0 / 22 / an empty SGR ends it."""
+    plain, dim, faint, pos = [], [], False, 0
+    for m in SGR.finditer(line):
+        (dim if faint else plain).append(CSI.sub("", line[pos:m.start()]))
+        codes = m.group(1).split(";") if m.group(1) else ["0"]
+        i = 0
+        while i < len(codes):
+            c = codes[i]
+            if c in ("38", "48", "58"):  # extended colour: 5;n or 2;r;g;b, not attributes
+                i += 3 if i + 1 < len(codes) and codes[i + 1] == "5" else 5
+                continue
+            if c == "2":
+                faint = True
+            elif c in ("0", "22", ""):
+                faint = False
+            i += 1
+        pos = m.end()
+    (dim if faint else plain).append(CSI.sub("", line[pos:]))
+    return "".join(plain), "".join(dim)
+
+
+def read_input(pane):
+    """{"draft": text, "suggestion": text} in a Claude Code pane's input box, from the last ❯ line
+    (earlier ❯ lines are sent messages in the scrollback) to the box's bottom rule. Dim text is
+    Claude Code's prompt suggestion; anything else is a person's unsent draft."""
+    if not pane:
+        return {"draft": "", "suggestion": ""}
+    try:
+        r = subprocess.run(["herdr", "pane", "read", pane, "--format", "ansi"], capture_output=True,
+                           text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"draft": "", "suggestion": ""}
+    lines = r.stdout.replace("\r", "").splitlines()[-60:]
+    start = next((i for i in range(len(lines) - 1, -1, -1)
+                  if CSI.sub("", lines[i]).lstrip().startswith(PROMPT)), None)
+    if start is None:
+        return {"draft": "", "suggestion": ""}
+    plain, dim = [], []
+    for i, line in enumerate(lines[start:]):
+        p, d = _split_dim(line)
+        text = p.replace("\xa0", " ")
+        if i == 0:
+            text = text.lstrip()[len(PROMPT):]
+        elif set(text.strip()) <= set("\u2500\u2501\u2550-") and text.strip():
+            break  # the input box's bottom rule
+        plain.append(text.strip())
+        dim.append(d.replace("\xa0", " ").strip())
+    return {"draft": "\n".join(x for x in plain if x).strip(), "suggestion": " ".join(x for x in dim if x).strip()}
+
+
+def draft_pending(slot):
+    """A person's unsent text sits in the agent's input box (Claude Code's dim suggestion doesn't count)."""
+    return bool(slot and read_input(slot.get("pane_id"))["draft"])
 
 
 def question_pending(slot):
-    """A question or menu waits on the agent's screen (or herdr reports it blocked)."""
+    """A question or menu waits on the agent's screen (or herdr reports it blocked), or a person's
+    unsent draft sits in its input box: typing into the pane would answer or mangle either."""
     if not slot:
         return False
     if slot.get("status") == "blocked":
@@ -158,7 +223,7 @@ def question_pending(slot):
     except (OSError, subprocess.TimeoutExpired):
         return False
     tail = "\n".join(r.stdout.splitlines()[-40:])
-    return any(q in tail for q in QUESTION_MARKERS)
+    return any(q in tail for q in QUESTION_MARKERS) or draft_pending(slot)
 
 
 def exit_agent(pane, wait=30):
@@ -205,6 +270,19 @@ def main(argv):
             print("herdr-agent: could not open a place for the agent", file=sys.stderr)
             return 1
         print(json.dumps(p))
+    elif cmd == "draft" and len(rest) in (1, 2):
+        pane = rest[1] if rest[0] == "--pane" and len(rest) == 2 else None
+        if pane is None:
+            s = find(rest[0]) if len(rest) == 1 else None
+            if not s:
+                return 2
+            pane = s.get("pane_id")
+        got = read_input(pane)
+        if got["draft"]:
+            print("draft: " + got["draft"])
+        if got["suggestion"]:
+            print("suggestion: " + got["suggestion"])
+        return 0 if got["draft"] else 1
     elif cmd == "close" and len(rest) == 1:
         return 0 if close(find(rest[0])) else 1
     else:

@@ -120,6 +120,7 @@ case "$1 ${2:-}" in
   "pane run") if [[ -n "${SMOKE_HERDR_EXIT:-}" && -f "$SMOKE_HERDR_AGENTS.saved" ]]; then mv "$SMOKE_HERDR_AGENTS.saved" "$SMOKE_HERDR_AGENTS"; fi
               echo '{"result":{}}' ;;
   "pane list") echo "{\"result\":{\"panes\":[{\"pane_id\":\"${SMOKE_HERDR_PANE:-}\"}]}}" ;;
+  "pane read") [[ -n "${SMOKE_HERDR_SCREEN:-}" ]] && cat "$SMOKE_HERDR_SCREEN"; true ;;  # an ANSI screen
   "tab list") if [[ -n "${SMOKE_HERDR_TABS:-}" ]]; then cat "$SMOKE_HERDR_TABS"; else echo '{"result":{"tabs":[]}}'; fi ;;
   # a new place: SMOKE_HERDR_NEW names the new workspace (or, for a tab, the home's) id
   "tab create") w="${SMOKE_HERDR_NEW:-wH}"; echo "{\"result\":{\"tab\":{\"tab_id\":\"$w:t9\"},\"root_pane\":{\"pane_id\":\"$w:p9\"}}}" ;;
@@ -286,6 +287,10 @@ w="$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"
 eq "identity: GH_USER pin + hook word" "$w" "$BIN/with-gh-user --user octo extra-identity"
 c="$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; GH_USER=octo; pdo_finalize; agent_command '$T/repos/widget.git' 'Acme-12 x' opus 'do it' --resume s1")"
 has "launch command marks the agent dispatched" "$c" "env PDO_DISPATCHED=1 $BIN/with-gh-user --user octo claude --resume s1 --remote-control"
+c2="$(cd "$T" && bash -c "source '$BIN/lib.sh'; pdo_resolve_project acme; HERE=\"\$PDO_ENV_DIR\" source \"\$PDO_ENV_FILE\"; pdo_finalize; PDO_NO_REAP=1 agent_command '$T/repos/widget.git' 'Orchestrator (acme)' opus 'loop'")"
+has "PDO_NO_REAP=1 launches exempt from the memory reaper" "$c2" "env PDO_DISPATCHED=1 CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1 "
+check "agents launch reapable by default" bash -c "! grep -q DISABLE_BG_SHELL_PRESSURE_REAP <<<'$c'"
+check "start-orchestrator launches exempt (ORCHESTRATOR_NO_REAP)" grep -q 'PDO_NO_REAP="$ORCHESTRATOR_NO_REAP" launch_agent' "$BIN/start-orchestrator"
 eq "with-gh-user without a login just runs" "$("$BIN/with-gh-user" printenv GH_TOKEN || echo unset)" unset
 eq "with-gh-user --user pins GH_TOKEN" "$("$BIN/with-gh-user" --user octo printenv GH_TOKEN)" token-for-octo
 cred() { printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 "$@" git credential fill 2>/dev/null | sed -n 's/^password=//p'; }
@@ -343,6 +348,18 @@ eq "intake-submit: --append made no new file" "$(ls "$T/bar-inbox" | grep -c acm
 err="$(PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --checked none "Acme-51 b" "## x [data]" 2>&1 >/dev/null)"
 has "intake-submit: a second report hints --append" "$err" "use --append"
 PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --checked 'maybe' ws "r" >/dev/null 2>&1; eq "intake-submit: bad --checked refused" "$?" 1
+
+# --- herdr-agent draft: a person's unsent text vs Claude Code's dim suggestion ---
+R=$'\e[0m' DIM=$'\e[2m' GREY=$'\e[38;2;136;136;136m' RULE="────────────"
+printf '%s\n' "${R}${GREY}❯ /reload-plugins${R}" "${R}${GREY}${RULE}${R}" $'❯ '"${R}${DIM}go with your recommendations${R}" "${R}${GREY}${RULE}${R}" "  ${DIM}branch: main${R}" >"$T/screen-ghost"
+printf '%s\n' "${R}${GREY}${RULE}${R}" $'❯ '"merge it after lunch${R}" "${R}${GREY}${RULE}${R}" "  ${DIM}branch: main${R}" >"$T/screen-draft"
+out="$(SMOKE_HERDR_SCREEN="$T/screen-ghost" "$BIN/herdr-agent" draft --pane wX:p1)"; rc=$?
+eq "draft: Claude Code's dim suggestion is not a draft" "$rc" 1
+eq "draft: the suggestion is reported as one" "$out" "suggestion: go with your recommendations"
+out="$(SMOKE_HERDR_SCREEN="$T/screen-draft" "$BIN/herdr-agent" draft --pane wX:p1)"; rc=$?
+eq "draft: a person's unsent text is a draft" "$rc" 0
+eq "draft: the draft text" "$out" "draft: merge it after lunch"
+eq "draft: unknown agent" "$("$BIN/herdr-agent" draft "Nobody (x)" >/dev/null; echo $?)" 2
 
 # --- floor ---
 eq "floor unset" "$("$BIN/floor")" none

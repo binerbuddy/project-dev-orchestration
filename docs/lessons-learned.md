@@ -47,6 +47,13 @@ skill. When you hit a new one, add a line in its section.
   --arm-status`), and tell the orchestrator first ("exit 143 is expected; re-arm").
 - **Low-memory reapers kill background shells, including the watcher,** under swap pressure. The hourly
   scheduled wakeup is the fallback; hibernation exists to prevent this.
+  Update: Claude Code's reap notice tells the session not to restart the shell until asked, so an
+  orchestrator left its watcher down for two days on hourly heartbeats, with memory recovered within
+  the hour. Now the orchestrator is launched with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`
+  (`ORCHESTRATOR_NO_REAP`, default on; it only works set at launch), and the orchestrate skill re-arms
+  a reaped watcher on the next tick unless memory is below `FLEET_MEM_HOLD_MB`.
+- **Text after ❯ in an idle pane is often Claude Code's prompt suggestion,** drawn dim (SGR 2), not a
+  person's draft. `pdo herdr-agent draft <name>` tells them apart; never read ghost text as the human's.
 - **The orchestrator may edit its own scripts.** Re-read a file before patching it, and check `git status`
   before committing: `git add -A` sweeps up other sessions' uncommitted edits.
 - **Don't double-wake.** The watcher's `--max` is 6 h; the hourly heartbeat comes from the scheduled

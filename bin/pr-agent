@@ -64,7 +64,8 @@ def main():
         if pane:
             status = pane.get("agent_status")
             tail = "\n".join(run("herdr", "pane", "read", pane["pane_id"]).splitlines()[-40:])
-            question = status == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed"))
+            question = (status == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed"))
+                        or pdo_herdr.draft_pending(slot))  # a person's unsent draft counts: typing would mangle it
     print(json.dumps({
         "pr": {"number": pr["number"], "url": pr["url"], "title": pr["title"], "branch": pr["headRefName"],
                "sha": pr["headRefOid"], "state": pr["state"], "labels": [l["name"] for l in pr["labels"]]},

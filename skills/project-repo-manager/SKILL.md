@@ -47,7 +47,9 @@ the CEO.
 ## Rules
 
 - Never type into a tab with a question pending (`herdr pane read`: "Enter to select", "Do you want
-  to proceed"): typing answers it with the wrong text. Ask the human instead.
+  to proceed") or a person's unsent draft (`pdo herdr-agent draft <name>` exits 0; dim text after ❯
+  is Claude Code's suggestion, not a draft): typing answers the question or joins the draft. Ask
+  the human instead.
 - Never close a manager's home (`herdr workspace close`): close an agent's tab
   (`pdo herdr-agent close "<name>"`) and only when its own lifecycle says so.
 - Refer to agents by name (`Orchestrator (<p>)`, `widget-245 export sort`-style labels), never

@@ -116,6 +116,16 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling, or when every repo
    Code: `run_in_background: true`); when it exits you're re-invoked with its events. `--arm-status`
    also kills a watcher orphaned by a previous orchestrator session; that's why only the orchestrator
    runs it. Never use `pgrep` to decide this; an orphan would look healthy.
+   **A watcher Claude Code stopped for low memory is re-armed on this tick, without asking.** Claude
+   Code's notice says to restart it only when asked: this step is that standing ask. Check memory
+   first (`awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo`, in MB). At or above the fleet's
+   memory floor (`FLEET_MEM_HOLD_MB`, default 3072): re-arm now. Below it: don't re-arm this tick;
+   ask the project's Repo Manager (or, without one, the human) to hibernate parked agents, and
+   re-arm on the next tick that finds memory back above the floor. The hourly heartbeat covers the
+   gap. Log every re-arm and hold: `watcher re-armed after memory reap (avail N MB)` or `watcher held:
+   avail N MB < floor; asked <manager> to hibernate parked agents`. (Started by `pdo
+   start-orchestrator`, the orchestrator is exempt from the reaper, `ORCHESTRATOR_NO_REAP=1`, so this
+   should be rare.)
 2. **Schedule the fallback.** Under Claude Code `/loop` dynamic mode, call ScheduleWakeup with
    `delaySeconds: 3600` (the hourly heartbeat; the watcher's `--max` is 6h so the two don't both wake
    you hourly), the same prompt, and `noop: true` when nothing changed this tick.
@@ -166,7 +176,9 @@ ran still fire once, computed against the last saved snapshot.
   every phase. If a design finished and its epic carries `route:build` with no build agent, spawn the
   epic.
 - **One writer per issue.** Never spawn for an issue the queue excluded, and **never type into an
-  agent with `question_pending`**: your text would answer its question.
+  agent with `question_pending`**: your text would answer its question. Before any `herdr agent
+  prompt` of your own, also run `pdo herdr-agent draft <name>`: exit 0 means a person's unsent text
+  is in the box (skip it this tick); dim suggestion text doesn't count.
 - **Other managers' claims.** A queue reason `managed-by:<slug>` is another manager's issue (the label's
   description and its claim comment name it). Never spawn, label or unassign it. If the human wants it
   worked here, the hand-off goes through that manager (or the CEO, which logs the agreement

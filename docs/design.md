@@ -365,6 +365,7 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QUEUE_LABEL` | `queue:work` | board-less projects only: the issue label that puts an issue in the queue; empty = no queue |
 | `REPO_ROOT` | (required) | `declare -A`: repo name → local clone root |
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
+| `ORCHESTRATOR_NO_REAP` | `1` | launch the orchestrator with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1`, so Claude Code's low-memory reaper never stops its watcher (`0`: allow it) |
 | `AGENT_LAYOUT` | `tabs` | `tabs`: one herdr workspace per manager, one tab per agent; `workspaces`: one workspace per agent (pre-0.12) |
 | `REPO_MANAGER_SKILL` | `${PDO_SKILL_PREFIX}project-repo-manager` | the skill `start-manager` runs |
 | `TEAM_HOME` | | the standing agents' home workspace (default: the project's name, or the primary repo's when every repo is self-managed) |

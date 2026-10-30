@@ -73,7 +73,7 @@ def plan(cfg, snapshot):
         if not slot:
             return
         if pdo_herdr.question_pending(slot):
-            steps.append({"kind": kind, "name": name, "action": "refuse", "why": "a question or menu is pending: answer it, then run shutdown again"})
+            steps.append({"kind": kind, "name": name, "action": "refuse", "why": "a question, menu or unsent draft is pending: answer, send or clear it, then run shutdown again"})
             return
         steps.append(dict({"kind": kind, "name": name, "action": "stop", "slot": slot, "status": slot["status"]}, **extra))
 
@@ -179,7 +179,7 @@ def main():
         slot = pdo_herdr.find("intake", snapshot)
         if slot:
             shared.append({"kind": "intake", "name": "intake", "action": "refuse" if pdo_herdr.question_pending(slot) else "stop",
-                           "why": "a question or menu is pending: answer it, then run shutdown again",
+                           "why": "a question, menu or unsent draft is pending: answer, send or clear it, then run shutdown again",
                            "slot": slot, "status": slot["status"]})
         jobs.append((dict(cfgs[0], project="(shared)"), shared))
     for cfg, steps in jobs:

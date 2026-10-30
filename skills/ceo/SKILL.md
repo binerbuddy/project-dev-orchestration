@@ -125,8 +125,10 @@ for a self-managed repo) in everything the human reads:
 1. **herdr, for engine-launched agents:** `herdr agent prompt <agent name> "From CEO: …"`.
    `pdo fleet` prints the agent name in its `reach:` line (e.g. `orchestrator-acme`). First check
    the pane: idle, **no question pending** (`herdr pane read`; no "Enter to select" or "Do you want
-   to proceed"). **Never type into a pane with a question pending**: your text would answer it.
-   Tell the human instead.
+   to proceed"), and **no unsent draft** (`pdo herdr-agent draft <agent name>` exits 0 when a person's
+   text sits in the input box; dim ghost text after ❯ is Claude Code's suggestion and doesn't count).
+   **Never type into a pane with a question or draft pending**: your text would answer the question
+   or join the draft. Tell the human instead.
 2. **The tool's peer messaging**, for a session the human opened with a name that matches its
    workspace label (Claude Code: `ListAgents` shows it under that name, then `SendMessage`). Sign
    every message `From CEO:`.
