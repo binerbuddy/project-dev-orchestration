@@ -11,7 +11,8 @@
 #                                            command instead of copying ids that can go stale.
 # Maps print one line per entry: REPO_ROOT[<repo>]=<path>, WORKTREE_PARENT[<repo>]=<dir>, ROUTE_SKILL[<route>]=<skill>,
 # REPO_MANAGER[<repo>]=<manager>, FIXTURE_EXT_BY_REPO[<repo>]=<ext>,
-# AGENT_QC_NOTES_BY_REPO[<repo>]=<file>.
+# AGENT_QC_NOTES_BY_REPO[<repo>]=<file>, SPEC_REPO[<repo>]=<spec repo>, SPEC_SCOPE[<repo>]=<text>.
+# GH_REVIEW_GUARD prints its entries space-separated.
 # `project-env REPO_ROOT` prints "<repo>=<path>" lines; `project-env 'REPO_ROOT[x]'` one value.
 # Project: --project, else $PDO_PROJECT, else the project whose REPO_ROOT holds the cwd's repo.
 set -euo pipefail
@@ -48,6 +49,7 @@ map_lines() {  # map_lines <name> <prefix-style>: style "full" = NAME[k]=v, "sho
   done
 }
 managed() { declare -p SELF_MANAGED_REPOS >/dev/null 2>&1 && echo "${SELF_MANAGED_REPOS[*]}" || echo ""; }
+guard() { declare -p GH_REVIEW_GUARD >/dev/null 2>&1 && echo "${GH_REVIEW_GUARD[*]}" || echo ""; }
 
 if [[ "$KEY" == --board ]]; then
   [[ -n "${PROJECT_NUMBER:-}" ]] || pdo_die "project '$PROJECT' has no PROJECT_NUMBER (no board)"
@@ -68,17 +70,19 @@ fi
 if [[ -z "$KEY" ]]; then
   for k in "${SCALARS[@]}"; do printf '%s=%s\n' "$k" "${!k:-}"; done
   printf 'SELF_MANAGED_REPOS=%s\n' "$(managed)"
+  printf 'GH_REVIEW_GUARD=%s\n' "$(guard)"
   map_lines REPO_ROOT full; map_lines WORKTREE_PARENT full; map_lines ROUTE_SKILL full; map_lines REPO_MANAGER full; map_lines FIXTURE_EXT_BY_REPO full
-  map_lines AGENT_QC_NOTES_BY_REPO full
+  map_lines AGENT_QC_NOTES_BY_REPO full; map_lines SPEC_REPO full; map_lines SPEC_SCOPE full
   exit 0
 fi
 case "$KEY" in
-  REPO_ROOT|WORKTREE_PARENT|ROUTE_SKILL|REPO_MANAGER|FIXTURE_EXT_BY_REPO|AGENT_QC_NOTES_BY_REPO) map_lines "$KEY" short ;;
-  REPO_ROOT\[*\]|WORKTREE_PARENT\[*\]|ROUTE_SKILL\[*\]|REPO_MANAGER\[*\]|FIXTURE_EXT_BY_REPO\[*\]|AGENT_QC_NOTES_BY_REPO\[*\])
+  REPO_ROOT|WORKTREE_PARENT|ROUTE_SKILL|REPO_MANAGER|FIXTURE_EXT_BY_REPO|AGENT_QC_NOTES_BY_REPO|SPEC_REPO|SPEC_SCOPE) map_lines "$KEY" short ;;
+  REPO_ROOT\[*\]|WORKTREE_PARENT\[*\]|ROUTE_SKILL\[*\]|REPO_MANAGER\[*\]|FIXTURE_EXT_BY_REPO\[*\]|AGENT_QC_NOTES_BY_REPO\[*\]|SPEC_REPO\[*\]|SPEC_SCOPE\[*\])
     n="${KEY%%[*}" k="${KEY#*[}"; k="${k%]}"
     declare -p "$n" >/dev/null 2>&1 || { echo; exit 1; }
     declare -n mm="$n"; [[ -n "${mm[$k]+x}" ]] || { echo; exit 1; }; echo "${mm[$k]}" ;;
   SELF_MANAGED_REPOS) managed ;;
+  GH_REVIEW_GUARD) guard ;;
   *)
     [[ "$KEY" =~ ^[A-Z_][A-Z0-9_]*$ ]] || pdo_die "bad key: $KEY"
     if [[ -n "${!KEY+x}" ]]; then echo "${!KEY}"; else echo; exit 1; fi ;;

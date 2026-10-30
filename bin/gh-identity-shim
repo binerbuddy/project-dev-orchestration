@@ -14,6 +14,9 @@
 #     github.com URL in the arguments; the current directory's `origin` remote.
 #   - The owner maps to a login (map lines `<owner> <login> [<email>] [<name>]`, case-insensitive
 #     owner); no match uses the `default <login>` line; no default leaves the active account.
+#   - In an agent session, a PR review write (gh pr review, the reviews and review-comments API, the
+#     GraphQL review mutations) on a repo the review guard lists is refused (exit 5) when it would run
+#     as the guarded login (GH_REVIEW_GUARD; see the review guard section below).
 #   - `gh auth switch`, and `gh auth login` without --hostname, are refused (exit 3) unless
 #     PDO_GH_ALLOW_SWITCH=1. Other `auth`, `config`, `alias`, `help`, `version`, `completion`
 #     calls pass straight through.
@@ -50,7 +53,143 @@ fi
 
 REAL="$(find_real_gh)" || { echo "gh-identity-shim: no real gh on PATH (outside the shim dir)" >&2; exit 127; }
 
-[[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" || "${PDO_GH_SHIM:-}" == off ]] && exec "$REAL" "$@"
+# --- review guard: agents never post PR reviews as a guarded login (GH_REVIEW_GUARD) ---
+# Rules file lines "<OWNER/REPO glob> <login> <scope>", written by `pdo install --gh-identities` (or
+# --review-guard) from every project's GH_REVIEW_GUARD. Scope "all" refuses every review write
+# (approve, request changes, comment review, review comment, dismissal); "verdicts" refuses approve
+# and request changes only. It applies in agent sessions only (Claude Code, Codex, engine-launched),
+# and before PDO_GH_SHIM=off and the GH_TOKEN pass-through, so an agent can't step around it. There
+# is no override: the person reviews in the browser or their own terminal.
+GUARD_FILE="${PDO_GH_REVIEW_GUARD_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/project-dev-orchestration/gh-review-guard}"
+in_agent_session() {
+  [[ "${CLAUDECODE:-}" == 1 || "${PDO_DISPATCHED:-}" == 1 || -n "${CODEX_SANDBOX:-}${CODEX_SANDBOX_NETWORK_DISABLED:-}" ]]
+}
+origin_slug() {  # OWNER/REPO of the cwd's origin
+  local u re='github\.com[:/]([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)'
+  u="$(git remote get-url origin 2>/dev/null)" || return 1
+  [[ "$u" =~ $re ]] || return 1
+  printf '%s/%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]%.git}"
+}
+# review_write <args...>: when the call writes a PR review, sets rw_repo (OWNER/REPO, or * when the
+# call doesn't say: a GraphQL mutation) and rw_kind (approve, request-changes, comment, pending,
+# dismiss or unknown) and returns 0.
+rw_repo="" rw_kind=""
+review_write() {
+  local args=("$@") n=$# i a ep="" method="" fields=() input="" re
+  if [[ "${args[0]:-}" == pr && "${args[1]:-}" == review ]]; then
+    rw_kind=comment
+    for ((i = 2; i < n; i++)); do
+      a="${args[i]}"
+      case "$a" in
+        -a|--approve) rw_kind=approve ;;
+        -r|--request-changes) rw_kind=request-changes ;;
+        -R|--repo) rw_repo="${args[i + 1]:-}"; i=$((i + 1)) ;;
+        --repo=*) rw_repo="${a#--repo=}" ;;
+        -b|--body|-F|--body-file) i=$((i + 1)) ;;
+        -*) ;;
+        *) re='github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]+)/pull/'
+           [[ -z "$rw_repo" && "$a" =~ $re ]] && rw_repo="${BASH_REMATCH[1]}" ;;
+      esac
+    done
+    rw_repo="${rw_repo#https://github.com/}"; rw_repo="${rw_repo#github.com/}"
+    [[ -n "$rw_repo" ]] || rw_repo="${GH_REPO:-}"
+    [[ -n "$rw_repo" ]] || rw_repo="$(origin_slug)" || rw_repo="*"
+    return 0
+  fi
+  [[ "${args[0]:-}" == api ]] || return 1
+  for ((i = 1; i < n; i++)); do
+    a="${args[i]}"
+    case "$a" in
+      -X|--method) method="${args[i + 1]:-}"; i=$((i + 1)) ;;
+      --method=*) method="${a#--method=}" ;;
+      -X?*) method="${a#-X}" ;;
+      -f|-F|--field|--raw-field) fields+=("${args[i + 1]:-}"); i=$((i + 1)) ;;
+      --field=*|--raw-field=*) fields+=("${a#*=}") ;;
+      --input) input="${args[i + 1]:-}"; i=$((i + 1)) ;;
+      -H|--header|-q|--jq|-t|--template|--hostname|--cache|-p|--preview) i=$((i + 1)) ;;
+      -*) ;;
+      *) [[ -z "$ep" ]] && ep="$a" ;;
+    esac
+  done
+  method="${method^^}"
+  [[ -n "$method" ]] || { [[ ${#fields[@]} -gt 0 || -n "$input" ]] && method=POST || method=GET; }
+  local body="" f
+  for f in ${fields[@]+"${fields[@]}"}; do body+="$f"$'\n'; done
+  if [[ -n "$input" ]]; then
+    if [[ "$input" != - && -r "$input" ]]; then body+="$(head -c 200000 "$input")"; else body+="<unreadable>"; fi
+  fi
+  if [[ "$ep" == graphql ]]; then
+    [[ "$body" =~ (addPullRequestReview|submitPullRequestReview|updatePullRequestReview|addPullRequestReviewThread|dismissPullRequestReview) || "$body" == *"<unreadable>"* ]] || return 1
+    rw_repo="*"
+    if [[ "$body" == *"<unreadable>"* ]]; then rw_kind=unknown
+    elif [[ "$body" =~ APPROVE ]]; then rw_kind=approve
+    elif [[ "$body" =~ REQUEST_CHANGES ]]; then rw_kind=request-changes
+    elif [[ "$body" =~ dismissPullRequestReview ]]; then rw_kind=dismiss
+    elif [[ "$body" =~ event ]]; then rw_kind=unknown
+    else rw_kind=comment
+    fi
+    return 0
+  fi
+  [[ "$method" == GET || "$method" == DELETE ]] && return 1
+  ep="${ep#/}"; ep="${ep%%\?*}"
+  re='^repos/([^/]+)/([^/]+)/pulls/[^/]+/(reviews|comments)(/[^/]+)?(/(events|dismissals|replies))?/?$'
+  [[ "$ep" =~ $re ]] || return 1
+  rw_repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+  local what="${BASH_REMATCH[3]}" id="${BASH_REMATCH[4]}" action="${BASH_REMATCH[6]}"
+  [[ "$rw_repo" == "{owner}/{repo}" ]] && { rw_repo="$(origin_slug)" || rw_repo="*"; }
+  case "$what:$action" in
+    comments:*) rw_kind=comment ;;
+    reviews:dismissals) rw_kind=dismiss ;;
+    reviews:*)
+      if [[ "$body" == *"<unreadable>"* ]]; then rw_kind=unknown
+      elif [[ "$body" =~ (^|[^A-Z_])APPROVE ]]; then rw_kind=approve
+      elif [[ "$body" =~ REQUEST_CHANGES ]]; then rw_kind=request-changes
+      elif [[ "$body" =~ COMMENT ]]; then rw_kind=comment
+      elif [[ -n "$id" && -z "$action" ]]; then rw_kind=comment  # PUT: edit a review's body
+      else rw_kind=pending
+      fi ;;
+  esac
+  return 0
+}
+# guard_check <token | @active | ""> <login-or-empty> <gh args...>: exit 5 when this review write is guarded for the
+# identity the call runs as (compared by token, so a bot token is never mistaken for the person's).
+guard_check() {
+  local tok="$1" who="$2" glob glogin scope gtok hit
+  shift 2
+  [[ -r "$GUARD_FILE" ]] || return 0
+  in_agent_session || return 0
+  review_write "$@" || return 0
+  [[ "$tok" == @active ]] && tok="$("$REAL" auth token 2>/dev/null)"
+  while read -r glob glogin scope _; do
+    [[ -z "$glob" || "$glob" == \#* || -z "$glogin" ]] && continue
+    [[ "$rw_repo" == "*" || "${rw_repo,,}" == ${glob,,} ]] || continue
+    case "${scope:-all}:$rw_kind" in
+      verdicts:comment|verdicts:pending|verdicts:dismiss) continue ;;
+    esac
+    hit=0
+    if [[ -n "$tok" ]]; then
+      gtok="$("$REAL" auth token -u "$glogin" 2>/dev/null)" || gtok=""
+      if [[ -n "$gtok" ]]; then [[ "$tok" == "$gtok" ]] && hit=1
+      elif [[ "${PDO_GH_PIN:-}" == "$glogin" ]]; then hit=1
+      fi
+    elif [[ "${who,,}" == "${glogin,,}" ]]; then hit=1
+    fi
+    (( hit )) || continue
+    cat >&2 <<EOF
+gh-identity-shim: refused: a PR review write (${rw_kind}) on ${rw_repo/#\*/a pull request} as ${glogin}, from an agent session.
+  Reviews as ${glogin} on ${glob} come only from the person, in the browser (GH_REVIEW_GUARD, scope ${scope:-all}).
+  Post what you found as a PR comment instead (gh pr comment <PR> --body-file <file>), or ask the human.
+EOF
+    exit 5
+  done <"$GUARD_FILE"
+  return 0
+}
+
+if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" || "${PDO_GH_SHIM:-}" == off ]]; then
+  t="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  guard_check "${t:-@active}" "" "$@"
+  exec "$REAL" "$@"
+fi
 
 # --- the first subcommand (skipping leading global flags) ---
 sub="" sub2=""
@@ -182,7 +321,8 @@ if [[ "${PDO_GH_EXPLAIN:-}" == 1 ]]; then
   echo "owner=${owner:--} rule=${rule:--} login=${login:-(active account)} via=$how real=$REAL" >&2
   exit 0
 fi
-[[ -z "$login" ]] && exec "$REAL" "$@"
+if [[ -z "$login" ]]; then guard_check @active "" "$@"; exec "$REAL" "$@"; fi
+guard_check "" "$login" "$@"
 
 token="$("$REAL" auth token -u "$login" 2>/dev/null)"
 if [[ -z "$token" ]]; then

@@ -152,6 +152,16 @@ and write the comment's classification line in its terms (the reason it asks for
 the open question for the human). `needs_ux_forced` still means `pass-ux`, and "when unsure, review"
 still holds.
 
+**Spec-first repos.** When the repo has a spec repo (`pdo project-env 'SPEC_REPO[<repo>]'`), its notes
+define the spec gate (how results, the spec pin and any deviations must agree). Two outcomes are
+findings the command agent can't fix alone:
+- **A result changed with nothing backing it** (no spec pin bump, no deviation): post the finding as
+  usual.
+- **A coverage gap**: code in the governed scope (`SPEC_SCOPE[<repo>]`) changed, but no spec result
+  changed. Post the finding, and queue one intake report asking for the spec case
+  (`pdo intake-submit "<your workspace>" …`, severity `[unverified]` unless you reproduced a wrong
+  result). Intake files it in the spec repo to block the code issue. The PR waits on that.
+
 Otherwise classify the PR by the **visible-change rule**:
 - **Needs UX review:** a Feature, epic or design-doc PR; new components, dialogs, controls or menu
   items; changed layout, styling, copy or interaction flow; a bug fix whose result looks different

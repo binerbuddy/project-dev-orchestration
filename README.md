@@ -210,6 +210,18 @@ do; `--uninstall` removes the shim, the helper, the generated files and the incl
 the map. Per-owner `user.email` needs git 2.36+. `sysreport` and `fleet` show whether the shim is
 active and the map's owners. `PDO_GH_SHIM=off` makes the shim a plain pass-through for one command.
 
+**The review guard.** Agents share the human's GitHub login (`GH_USER`), so on a repo where a review
+is a human sign-off, an agent could approve as the human. A project's `GH_REVIEW_GUARD` lists those
+repos (`OWNER/REPO` globs; `=verdicts` limits the guard to approve and request changes). The install
+writes them to `~/.config/project-dev-orchestration/gh-review-guard`, and in an agent session
+(Claude Code, Codex, or anything the engine launched) the shim refuses, with exit 5, any PR review
+write that would run as that login: `gh pr review`, the reviews and review-comments API, the GraphQL
+review mutations. `PDO_GH_SHIM=off` and a preset `GH_TOKEN` don't bypass it. Reading reviews, PR
+comments and a bot's reviews are unaffected, and so is the person in their own terminal or the
+browser. It is a guard against mistakes, not a sandbox: a process that calls the real gh by its path,
+or sends the token itself, is not stopped. Re-run `pdo install --review-guard` after changing
+`GH_REVIEW_GUARD`; `--check` flags a stale guard file.
+
 ## Docs
 
 - [docs/user-guide/](docs/user-guide/): the illustrated pdo User Guide and workflow deep dive (HTML; published as

@@ -365,6 +365,7 @@ pdo_slug() {
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
   local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}" aqc_notes_by_repo="{}" deps_dirs="{}" deps_cmd="{}"
+  local spec_repo="{}" spec_scope="{}" review_guard="[]"
   if declare -p REPO_ROOT >/dev/null 2>&1; then
     for k in "${!REPO_ROOT[@]}"; do roots="$(jq -c --arg k "$k" --arg v "${REPO_ROOT[$k]}" '. + {($k): $v}' <<<"$roots")"; done
   fi
@@ -386,6 +387,16 @@ pdo_config_json() {
   fi
   if declare -p DEPS_NPM_CMD >/dev/null 2>&1; then
     for k in "${!DEPS_NPM_CMD[@]}"; do deps_cmd="$(jq -c --arg k "$k" --arg v "${DEPS_NPM_CMD[$k]}" '. + {($k): $v}' <<<"$deps_cmd")"; done
+  fi
+  if declare -p SPEC_REPO >/dev/null 2>&1; then
+    for k in "${!SPEC_REPO[@]}"; do spec_repo="$(jq -c --arg k "$k" --arg v "${SPEC_REPO[$k]}" '. + {($k): $v}' <<<"$spec_repo")"; done
+  fi
+  if declare -p SPEC_SCOPE >/dev/null 2>&1; then
+    for k in "${!SPEC_SCOPE[@]}"; do spec_scope="$(jq -c --arg k "$k" --arg v "${SPEC_SCOPE[$k]}" '. + {($k): $v}' <<<"$spec_scope")"; done
+  fi
+  if declare -p GH_REVIEW_GUARD >/dev/null 2>&1; then
+    review_guard="$(printf '%s\n' ${GH_REVIEW_GUARD[@]+"${GH_REVIEW_GUARD[@]}"} | jq -R . | jq -sc --arg login "${GH_USER:-}" \
+      'map(select(length > 0) | split("=") | {repo: .[0], scope: (.[1] // "all"), login: $login})')"
   fi
   if declare -p SELF_MANAGED_REPOS >/dev/null 2>&1; then
     managed="$(printf '%s\n' ${SELF_MANAGED_REPOS[@]+"${SELF_MANAGED_REPOS[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')"
@@ -412,6 +423,7 @@ pdo_config_json() {
     --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
     --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
     --arg deps_cache "${DEPS_CACHE_DIR:-}" --arg deps_days "${DEPS_CACHE_DAYS:-14}" --argjson deps_dirs "$deps_dirs" --argjson deps_cmd "$deps_cmd" \
+    --argjson spec_repo "$spec_repo" --argjson spec_scope "$spec_scope" --argjson review_guard "$review_guard" \
     '{project: $project, env_file: $env_file, env_dir: $env_dir, engine_home: $home, state_dir: $state,
       inbox: $inbox, org: $org, project_number: $num, repo_root: $roots, worktree_parent: $wt_parents, route_skill: $routes,
       self_managed_repos: $managed, default_model: $model, brief_template: $brief, gh_user: $gh_user,
@@ -441,7 +453,8 @@ pdo_config_json() {
       resource_profile: $profile, agent_mb: ($agent_mb | if . == "" then null else (tonumber? // null) end),
       agent_usage_weight: ($weight | if . == "" then null else (tonumber? // null) end),
       fleet_advice: $fleet, usage_cache: $usage_cache,
-      deps_cache_dir: $deps_cache, deps_cache_days: ($deps_days | tonumber? // 14), deps_link_dirs: $deps_dirs, deps_npm_cmd: $deps_cmd}'
+      deps_cache_dir: $deps_cache, deps_cache_days: ($deps_days | tonumber? // 14), deps_link_dirs: $deps_dirs, deps_npm_cmd: $deps_cmd,
+      spec_repo: $spec_repo, spec_scope: $spec_scope, review_guard: $review_guard}'
 }
 
 # identity_wrapper <dir>: the command prefix that gives an agent working in <dir> its GitHub identity.

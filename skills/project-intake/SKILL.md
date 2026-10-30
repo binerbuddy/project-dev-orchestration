@@ -14,7 +14,7 @@ re-exploring from scratch.
 **Project facts.** The project is the one whose repo contains the current directory, or the engine
 project you were started for (`--project`). From its project env (read each key with
 `pdo project-env [--project <p>] <KEY>`) take `ORG`, `PROJECT_NUMBER` (the
-board), `REPO_ROOT` (the repos) and `GH_USER`. From `.agents/project-profile.md` take `## Identity`
+board), `REPO_ROOT` (the repos), `GH_USER`, and `SPEC_REPO` / `SPEC_SCOPE` (spec-first repos, below). From `.agents/project-profile.md` take `## Identity`
 (what each related repo holds, so you can route an item to the right repo), `## Docs` (design-doc
 locations) and `## Conventions` (its list of business-critical areas, if any).
 
@@ -98,6 +98,18 @@ Filing is done by `pdo file-issue`.
 - **`Security`:** authn/authz, injection, secrets, exposure, unsafe input. Not general infra hardening.
 - **Area labels:** pick from the repo's existing labels (`gh label list -R <ORG>/<repo>`). Never invent labels.
 - **Parent epic:** an open Epic this clearly belongs to. Blank if unsure.
+- **Spec first.** `SPEC_REPO[<code repo>]` names the repo that holds the code repo's spec, and
+  `SPEC_SCOPE[<code repo>]` says which behaviour the spec governs (and the spec repo's path for urgent
+  fixes). An item for such a code repo that would **change governed behaviour** (a different result,
+  not a refactor, perf, tooling or output-text change) becomes a pair:
+  1. a **spec issue** in the spec repo: change the spec and its cases first;
+  2. the **code issue**, which the spec issue blocks. File it at `Backlog`, never the queue status,
+     while it is blocked.
+
+  When the human says the code fix can't wait, the spec issue asks for the urgent path that
+  `SPEC_SCOPE` names instead (e.g. a time-boxed deviation). It still blocks the code issue. A report
+  of a coverage gap (governed code changed but no spec case covers it) needs only the spec issue.
+  When you can't tell whether an item changes governed behaviour, ask in the clarification round.
 
 ## 2. Bounded, fact-only look (one sub-agent for the whole batch)
 
@@ -131,7 +143,9 @@ if nothing is missing. Later details belong to the command agent's own intake ph
 Show each draft as **key decision points only**: repo, type, title, labels, priority, parent, route,
 board status, plus any notable design or scope choice baked into the body (one line each). Do **not**
 print the full body unless asked. For a high-importance business-logic item, show it as its own
-decision point, `Blocking approval: yes — <reason>`, so the human can keep or drop it. Body template:
+decision point, `Blocking approval: yes — <reason>`, so the human can keep or drop it. Show a spec-first
+pair as one decision point, `Spec first: <spec repo> issue blocks <code repo> issue — <the governed
+behaviour it changes>` (or `urgent path: <what SPEC_SCOPE names>`). Body template:
 `references/issue-template.md`.
 
 Rules:
@@ -165,6 +179,12 @@ It validates labels (unknown ones fail loudly), attaches the parent, and adds th
 For an **Epic with obvious parts**, file the Epic first, then each part with `--parent <epic#>`;
 otherwise one Epic with `needs-design` and `route:design`. For a **duplicate**, post the approved
 comment with `gh issue comment` instead.
+
+For a **spec-first pair**, file the spec issue first, then the code issue (its body links the spec
+issue: "Blocked by <org>/<spec repo>#<n>: the spec changes first"), then link them:
+`pdo fleet deps add "<org>/<spec repo>#<n>" blocks "<org>/<code repo>#<m>" --as "<your workspace name>"`.
+That adds GitHub's native "blocked by" (or a coordination comment when GitHub refuses). Report both
+numbers. When the spec issue closes, the code issue's manager moves it on.
 
 ## 6. Close out and report
 

@@ -1228,6 +1228,43 @@ ln -sf "$SHIMD/gh" "$G/shim2/gh"
 out="$(PATH="$SHIMD:$G/shim2:$G/tools" timeout 10 gh pr list 2>&1)"; eq "shim: a symlink to the shim is skipped too" "$?" 127
 # the engine's pin still wins through the shim
 eq "shim: with-gh-user pin passes through" "$("$BIN/with-gh-user" --user octo gh pr list -R acme-corp/widget >/dev/null; last)" "token=tok-octo argv=pr list -R acme-corp/widget"
+# the review guard: agent sessions never post PR reviews as a guarded login
+printf '# test rules\nacme-corp/gov alice-work all\nacme-corp/* alice-work verdicts\n' >"$G/guard"
+gx() { env -u PDO_DISPATCHED -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED CLAUDECODE=1 PDO_GH_REVIEW_GUARD_FILE="$G/guard" "$@"; }
+n0="$(wc -l <"$GLOG")"
+gx env GH_TOKEN=tok-alice-work gh pr review 5 --approve -R acme-corp/gov 2>"$G/err"; eq "guard: approve on a guarded repo as the login = exit 5" "$?" 5
+has "guard: ... says to comment instead" "$(cat "$G/err")" "gh pr comment"
+has "guard: ... and names the browser" "$(cat "$G/err")" "in the browser"
+gx env GH_TOKEN=tok-alice-work gh pr review 5 -c -b hi -R acme-corp/gov 2>/dev/null; eq "guard: scope all refuses a comment review" "$?" 5
+gx env GH_TOKEN=tok-alice-work gh pr review https://github.com/acme-corp/gov/pull/5 -r -b no 2>/dev/null; eq "guard: the repo from a PR URL" "$?" 5
+gx env GH_TOKEN=tok-alice-work gh api repos/acme-corp/gov/pulls/5/reviews -f event=COMMENT -f body=x 2>/dev/null; eq "guard: reviews API (fields imply POST)" "$?" 5
+gx env GH_TOKEN=tok-alice-work gh api -X POST repos/acme-corp/gov/pulls/5/comments -f body=x 2>/dev/null; eq "guard: scope all refuses a review comment" "$?" 5
+gx env GH_TOKEN=tok-alice-work gh api repos/acme-corp/widget/pulls/5/reviews/9/events -f event=APPROVE 2>/dev/null; eq "guard: submitting a pending review as APPROVE" "$?" 5
+gx env GH_TOKEN=tok-alice-work gh pr review 5 --approve -R acme-corp/widget 2>/dev/null; eq "guard: scope verdicts refuses approve" "$?" 5
+gx env GH_TOKEN=tok-alice-work gh api graphql -f query='mutation { addPullRequestReview(input: {pullRequestId: "x", event: APPROVE}) { clientMutationId } }' 2>/dev/null
+eq "guard: a GraphQL review mutation (repo unknown)" "$?" 5
+gx env GH_TOKEN=tok-alice-work PDO_GH_SHIM=off gh pr review 5 --approve -R acme-corp/gov 2>/dev/null; eq "guard: PDO_GH_SHIM=off doesn't step around it" "$?" 5
+(cd "$G/repos/https" && gx gh pr review 3 --approve 2>/dev/null); eq "guard: the map's login, repo from origin" "$?" 5
+env -u CLAUDECODE PDO_DISPATCHED=1 PDO_GH_REVIEW_GUARD_FILE="$G/guard" GH_TOKEN=tok-alice-work gh pr review 5 --approve -R acme-corp/gov 2>/dev/null
+eq "guard: an engine-launched agent (PDO_DISPATCHED)" "$?" 5
+eq "guard: refused calls never reach gh" "$(wc -l <"$GLOG")" "$n0"
+gx env GH_TOKEN=tok-alice-work gh pr review 5 -c -b hi -R acme-corp/widget; has "guard: scope verdicts lets a comment review through" "$(last)" "argv=pr review 5 -c -b hi -R acme-corp/widget"
+gx env GH_TOKEN=tok-alice-work gh api repos/acme-corp/widget/pulls/5/reviews -f body=x; has "guard: ... and a pending review" "$(last)" "argv=api repos/acme-corp/widget/pulls/5/reviews"
+gx env GH_TOKEN=tok-alice-work gh api repos/acme-corp/gov/pulls/5/reviews; has "guard: reading reviews is fine" "$(last)" "argv=api repos/acme-corp/gov/pulls/5/reviews"
+gx env GH_TOKEN=tok-bot gh pr review 5 --approve -R acme-corp/gov; has "guard: another login's token (a bot) passes" "$(last)" "token=tok-bot argv=pr review"
+gx gh pr review 5 --approve -R alice/notes; has "guard: an unguarded repo passes" "$(last)" "token=tok-alice argv=pr review 5 --approve -R alice/notes"
+env -u CLAUDECODE -u PDO_DISPATCHED PDO_GH_REVIEW_GUARD_FILE="$G/guard" GH_TOKEN=tok-alice-work gh pr review 5 --approve -R acme-corp/gov
+has "guard: the person's own shell passes" "$(last)" "argv=pr review 5 --approve -R acme-corp/gov"
+gx env GH_TOKEN=tok-alice-work gh pr comment 5 -b hi -R acme-corp/gov; has "guard: a PR comment is not a review" "$(last)" "argv=pr comment 5"
+# install writes the rules from each project's GH_REVIEW_GUARD (login = its GH_USER)
+mkdir -p "$G/gcfg/projects"
+printf 'ORG="acme-corp"\nGH_USER="alice-work"\ndeclare -A REPO_ROOT=([gov]="%s")\nGH_REVIEW_GUARD=("acme-corp/gov" "acme-corp/*=verdicts")\n' "$G/repos/https" >"$G/gcfg/projects/guarded.env"
+PDO_CONFIG_DIRS="$G/gcfg" "$BIN/install" --review-guard >/dev/null 2>&1
+eq "guard: install --review-guard writes the rules" "$(grep -v '^#' "$GCFG/gh-review-guard")" "$(printf 'acme-corp/* alice-work verdicts\nacme-corp/gov alice-work all')"
+eq "guard: project-env lists GH_REVIEW_GUARD" "$(PDO_CONFIG_DIRS="$G/gcfg" "$BIN/project-env" --project guarded GH_REVIEW_GUARD)" "acme-corp/gov acme-corp/*=verdicts"
+out="$(cd "$G/repos/https" && "$BIN/install" --gh-identities --check 2>&1)"
+has "guard: --check flags rules that no longer match the projects" "$out" "STALE: the review guard"
+rm -f "$GCFG/gh-review-guard"
 
 # git: per-owner credentials (a real `git credential fill`) and per-owner user.email
 gcred() {  # gcred <dir> <path>: username:password git answers for https://github.com/<path>

@@ -71,6 +71,10 @@ surrounding code), its role prompt, the finding format and the hand-back rule fr
 2. Post ONE review: `gh pr review <PR> --comment --body-file <file>`. Format: a short summary of the
    PR and the review process, findings grouped Critical → Low, an overall assessment. Only
    consensus-approved findings. If nothing survived, post a brief "no significant concerns" review.
+   If the gh shim refuses it (exit 5, "refused: a PR review write"), the repo's reviews are reserved
+   for the human (`GH_REVIEW_GUARD`): post the same body as a PR comment with
+   `gh pr comment <PR> --body-file <file>` instead, and say so in the report. Never retry the review
+   another way.
 
 **Report the URL the post command itself printed. Never go looking for it afterwards.** That return
 value is the only thing that identifies what you created. A follow-up query cannot establish it:

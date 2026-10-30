@@ -347,6 +347,27 @@ root-cause guesses, asks at most one clarification round, and files through `bin
 labels validated, parent sub-issue attached, board status set). Agents never prompt it directly; they
 queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages the queue.
 
+**Spec-first repos (`SPEC_REPO`, 2026-10-30).** Some code repos implement a spec kept in another repo
+(conformance cases, a rules corpus). For a code repo with `SPEC_REPO[<repo>]`, intake files a change to
+the governed behaviour (`SPEC_SCOPE[<repo>]`) as two issues: the spec issue first, then the code issue,
+linked by `fleet deps add <spec> blocks <code>` (GitHub's native "blocked by"). An urgent fix still
+goes through the spec repo, by the urgent path `SPEC_SCOPE` names. Agent QC for that repo follows its
+notes' spec gate: a result change without a spec pin bump or a deviation is a finding, and governed code
+that changed with no result change is a coverage gap, which QC posts and queues for intake as a spec
+issue.
+
+**The review guard (`GH_REVIEW_GUARD`, 2026-10-30).** Agents run as the human's login, so a repo
+where a review is a human sign-off lists itself in `GH_REVIEW_GUARD`. `install --gh-identities` (or
+`--review-guard`) writes every project's entries, with that project's `GH_USER`, to
+`gh-review-guard` next to the map. In an agent session (`CLAUDECODE=1`, `PDO_DISPATCHED=1`, Codex's
+sandbox variables) the shim refuses (exit 5) a review write that would run as the guarded login:
+`gh pr review`; POST/PUT to `pulls/*/reviews`, `reviews/*/events`, `reviews/*/dismissals`,
+`pulls/*/comments`; the GraphQL review mutations (a GraphQL call names no repo, so any guarded rule for
+that login applies). It compares tokens, not names, so a bot token on the same repo passes. It runs
+before the `PDO_GH_SHIM=off` and preset-`GH_TOKEN` pass-throughs. It has no override: the person reviews
+in the browser or their own terminal. Limits: a process that runs the real gh by path or sends the
+token itself isn't stopped. `/project-pr-review` falls back to a PR comment when its review is refused.
+
 ## Configuration
 
 ### Resolution (one place: `bin/lib.sh`)
@@ -376,6 +397,9 @@ queue reports with `bin/intake-submit`, and only an explicit "inbox" run triages
 | `QUEUE_LABEL` | `queue:work` | board-less projects only: the issue label that puts an issue in the queue; empty = no queue |
 | `REPO_ROOT` | (required) | `declare -A`: repo name → local clone root |
 | `SELF_MANAGED_REPOS` | `()` | repos another manager owns; queue and watch skip them |
+| `SPEC_REPO[<repo>]` | `()` | `declare -A`: code repo → the repo holding its spec. Intake files a change to governed behaviour as a spec issue that blocks the code issue (`fleet deps`); agent QC treats an unbacked result change or a coverage gap as a finding |
+| `SPEC_SCOPE[<repo>]` | `()` | `declare -A`: what the spec governs in that code repo (plain text for intake and QC), plus the spec repo's urgent-fix path |
+| `GH_REVIEW_GUARD` | `()` | `OWNER/REPO` globs, each optionally `=verdicts` (default `=all`): in an agent session, the gh shim refuses PR review writes as this project's `GH_USER` on them (see "The review guard") |
 | `DEPS_CACHE_DIR` | `~/.cache/pdo/node_modules` | the shared `node_modules` cache (`bin/deps-link`): one `npm ci` per lockfile, linked into every worktree |
 | `DEPS_CACHE_DAYS` | `14` | `deps-link --prune` (hourly from the watcher, and from `/project-cleanup-worktrees`) removes an entry no worktree links to after this many days |
 | `DEPS_LINK_DIRS[<repo>]` | every tracked `package-lock.json` | the repo's npm package dirs (`.` = root), or `none`; npm workspace roots are always skipped |
