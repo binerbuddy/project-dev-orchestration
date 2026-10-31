@@ -211,7 +211,8 @@ orchestrator's queue)", or, in repo-only, "with no project board (a maintainer d
    that path. Install the engine (step 6, "Install the engine"), which puts a version-following `pdo` on PATH, and
    use case 1. If the human declines, use "your project-dev-orchestration checkout".
 In repo-only, replace it with "your project-dev-orchestration checkout".
-A re-run reports an `AGENTS.md` that names a plugin-cache path as drifted and proposes the fix. For a headless repo, use the template's headless wording in the QC Checklist rule.
+A re-run reports an `AGENTS.md` that names a plugin-cache path as drifted and proposes the fix. It also reports a section without the template's `**Spelling.**` paragraph as drifted, and proposes adding it
+(the project's own spelling exceptions go in the profile's §Conventions). For a headless repo, use the template's headless wording in the QC Checklist rule.
 
 - **No `AGENTS.md`:** create it with a one-line title and the section.
 - **`AGENTS.md` without the section:** append it at the end, unchanged otherwise.

@@ -86,6 +86,11 @@ Search open issues first and say what you found: `pdo intake-submit --checked <#
 queue with `/project-intake inbox`. Without an engine install, open an issue with the `needs-triage` label instead,
 only for what clears the bar (see the `project-how-it-works` skill).
 
+**Spelling.** New writing uses American English spelling (behavior, color, canceled): code, comments, docs, issues,
+PRs and your own output. Leave existing identifiers, comments, docs, schema keys and data as they are; only fix
+spelling users see in the UI. Never respell quoted regulation or source text, external tokens (`aria-labelledby`,
+GitHub's `cancelled` conclusion, third-party API fields) or data-contract keys.
+
 **QC Checklist rule.** Every PR that changes user-visible behaviour gets one PR comment starting
 `<!-- ux-qc-checklist -->` and headed `## QC Checklist`: a GitHub task list of concrete steps in the running app. Name
 data by project name and UI path, never by a localhost or host link, port or id. When the seed data doesn't cover a

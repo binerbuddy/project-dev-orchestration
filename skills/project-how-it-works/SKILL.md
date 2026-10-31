@@ -91,6 +91,10 @@ the queue status, the P-labels and the QC labels.
     a maintainer gave one), only for what clears the bar, using the intake template
     (`../project-intake/references/issue-template.md`: Summary / Details / Starting points (unverified)), and say who
     reported it.
+- **Spelling.** New writing uses American English spelling (behavior, color, canceled): code, comments, docs,
+  issues, PRs and your own output. Leave existing identifiers, comments, docs, schema keys and data as they are;
+  only fix spelling users see in the UI. Never respell quoted regulation or source text, external tokens
+  (`aria-labelledby`, GitHub's `cancelled` conclusion, third-party API fields) or data-contract keys.
 - **QC Checklist.** One PR comment starting `<!-- ux-qc-checklist -->` then exactly `## QC Checklist`,
   task-list steps, and the **project-name rule**: no localhost or host URLs, ports or ids; name data
   the way the app names it, plus the UI path. In a headless repo (no UI), the steps are QC cases:

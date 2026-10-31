@@ -178,6 +178,7 @@ that show each pattern best.
 - Write endpoints are `POST /<resource>/update`, never PUT/PATCH.
 - Mapping profiles are registered explicitly in `server/src/mapping/index.ts`; no auto-discovery.
 - Dialogs use the shared `ConfirmDialog` (`web/src/shared/confirm-dialog.tsx`).
+- Spelling exceptions to the US-spelling rule: quoted standard text and the `orderBehaviour` contract key stay as written.
 -->
 
 ## Project extras
