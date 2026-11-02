@@ -546,7 +546,8 @@ def event_hook(project, prev, cur, peek):
 PR_INDEX = {}  # (repo, headRefName) -> pr dict; filled once per snapshot by load_pr_index()
 PR_REVIEWS = {}  # (repo, number) -> recent CHANGES_REQUESTED reviews of open PRs; filled with PR_INDEX
 GRAPHQL_RESERVE = 600  # below this many GraphQL points left, skip optional calls (queue, pr-priority)
-PRS_Q = """query($o:String!,$r:String!){repository(owner:$o,name:$r){
+PR_RATE_LEFT = None  # GraphQL points left per the PR queries' own rateLimit field (None: not read)
+PRS_Q = """query($o:String!,$r:String!){rateLimit{remaining} repository(owner:$o,name:$r){
   open: pullRequests(states:OPEN,first:100){nodes{...f
     reviews(states:CHANGES_REQUESTED,last:5){nodes{databaseId url body submittedAt authorAssociation author{login}}}}}
   done: pullRequests(states:[MERGED,CLOSED],first:40,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{...f}}}}
@@ -557,12 +558,18 @@ def load_pr_index(org, repos):
     """One GraphQL call per repo for all open PRs plus recently merged/closed ones. Replaces a
     `gh pr list --head` per agent, which (with ~25 tracked agents) exhausted the shared 5000/h
     GraphQL budget."""
+    global PR_RATE_LEFT
     idx, ok = {}, True
     PR_REVIEWS.clear()
+    PR_RATE_LEFT = None
     for repo in sorted(repos):
         out = run(["gh", "api", "graphql", "-f", f"query={PRS_Q}", "-F", f"o={org}", "-F", f"r={repo}"])
         try:
-            d = json.loads(out)["data"]["repository"]
+            data = json.loads(out)["data"]
+            left = (data.get("rateLimit") or {}).get("remaining")
+            if isinstance(left, int):
+                PR_RATE_LEFT = left if PR_RATE_LEFT is None else min(PR_RATE_LEFT, left)
+            d = data["repository"]
         except (ValueError, KeyError, TypeError):
             ok = False
             continue
@@ -579,7 +586,11 @@ def load_pr_index(org, repos):
 
 
 def graphql_remaining():
-    out = run(["gh", "api", "rate_limit", "--jq", ".resources.graphql.remaining"])
+    """GraphQL points left, from GraphQL itself: the REST rate_limit endpoint can report one token's
+    own count while GitHub enforces the login's shared bucket (all its tokens, other machines too)."""
+    if PR_RATE_LEFT is not None:
+        return PR_RATE_LEFT
+    out = run(["gh", "api", "graphql", "-f", "query={rateLimit{remaining}}", "--jq", ".data.rateLimit.remaining"])
     try:
         return int(out.strip())
     except ValueError:

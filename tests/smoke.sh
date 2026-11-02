@@ -86,6 +86,8 @@ case "$*" in
   "pr view 5 -R acme/widget"*) cat "$SMOKE_DIR/pr5.json" ;;
   "project item-list 9 --owner alpha"*) echo '{"items":[{"content":{"number":2},"repository":"alpha/tool","status":"Claude Work This"}]}' ;;
   "project item-list"*) echo '{"items":[]}' ;;
+  "api graphql --paginate -f query=query queueBoard"*"-F o=alpha -F n=9 "*) echo '{"repo":"tool","number":2,"status":"Claude Work This"}' ;;
+  "api graphql --paginate -f query=query queueBoard"*) ;;
   "api repos/alpha/tool/issues?state=open"*) cat "$SMOKE_DIR/alpha-issues.jsonl" ;;
   "api repos/alpha/tool/issues/5") echo '{"state":"closed"}' ;;
   "api repos/alpha/tool/issues/8") echo '{"state":"closed","pull_request":{"merged_at":"2026-01-01T00:00:00Z"}}' ;;
@@ -100,6 +102,7 @@ case "$*" in
   "api repos/acme/"*"/issues?state=open"*) [[ -z "${SMOKE_OPEN_ISSUES:-}" ]] || cat "$SMOKE_OPEN_ISSUES" ;;
   "api repos/delta/tool/issues?state=open"*) cat "$SMOKE_DIR/delta-issues.jsonl" ;;
   "api repos/delta/tool/issues/24/dependencies/blocking"*) echo "tool 25" ;;
+  "api graphql -f query={rateLimit{remaining}} --jq"*) echo 4000 ;;
   "api graphql"*"open: pullRequests"*)
     if [[ -n "${SMOKE_PRS:-}" ]]; then cat "$SMOKE_PRS"; else echo '{"data":{"repository":{"open":{"nodes":[]},"done":{"nodes":[]}}}}'; fi ;;
   "api graphql"*) echo '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}' ;;
@@ -404,7 +407,7 @@ eq "branch_prefix in the JSON config" "$("$BIN/pdo-config" --project acme --json
 GH_USER=octo SMOKE_TOKEN_LOG="$T/tokens.log" "$BIN/spawn" widget 12 --dry-run >/dev/null 2>&1
 eq "spawn reads the issue as GH_USER (no with-gh-user wrapping)" "$(grep -c '^token-for-octo api repos/acme/widget/issues/12$' "$T/tokens.log")" 1
 SMOKE_TOKEN_LOG="$T/tokens-q.log" GH_USER=octo "$BIN/queue" --json >/dev/null 2>&1
-eq "queue (python) reads the board as GH_USER" "$(grep -c '^token-for-octo project item-list' "$T/tokens-q.log")" 1
+eq "queue (python) reads the board as GH_USER" "$(grep -c '^token-for-octo api graphql --paginate -f query=query queueBoard' "$T/tokens-q.log")" 1
 "$BIN/spawn" nosuchrepo 12 >/dev/null 2>&1
 check "spawn failure is logged" grep -q '"repo":"nosuchrepo"' "$T/state/spawn-failures.jsonl"
 
@@ -527,7 +530,7 @@ eq "board-less queue: label mode" "$(jq -c '[.mode, .queue_label]' <<<"$qd")" '[
 eq "board-less queue: queued work ranked by P-label; a blocker of queued work joins, lifted" "$(jq -c '[.ranked[] | "\(.number):\(.p)"]' <<<"$qd")" '["1:P2","24:P2","26:P3"]'
 eq "board-less queue: usual exclusions (label match ignores case)" "$(jq -c '[.excluded[] | "\(.number):\(.excluded | join(","))"]' <<<"$qd")" '["3:managed-by:other","25:blocked-by:1"]'
 eq "board-less queue: unqueued work is not listed" "$(jq -c '[.ranked[], .excluded[] | select(.number == 2)] | length' <<<"$qd")" 0
-eq "board-less queue: no board read" "$(grep -c 'project item-list' "$SMOKE_LOG")" 0
+eq "board-less queue: no board read" "$(grep -c 'query queueBoard' "$SMOKE_LOG")" 0
 has "board-less queue: summary names the label" "$(PDO_CONFIG_DIRS="$T/cfg-q" "$BIN/queue" --project delta 2>&1)" "board-less: issues labelled queue:work"
 eq "QUEUE_LABEL override" "$(PDO_CONFIG_DIRS="$T/cfg-q" QUEUE_LABEL=P3-medium "$BIN/queue" --project delta --json 2>/dev/null | jq -c '[.ranked[].number]')" '[26]'
 : >"$SMOKE_LOG"; rm -f "$T/state/agents/widget-12.json" "$T/label-exists"
@@ -936,6 +939,13 @@ has "watch hook: the legacy cursor seeds since (clamped to 7 days)" "$(jq -r .si
 SINCE1="$(jq -r .event_since "$WS/acme-watch.json")"
 check "watch hook: a clean run advances event_since" test "$SINCE1" != null -a "$SINCE1" != "$LEGACY"
 out="$(WATCH_EVENT_HOOK="$T/hook-ok" PDO_STATE_DIR="$WS" SMOKE_PRS="$T/prs.json" "$BIN/watch" --project acme --peek 2>/dev/null)"
+# the rate guard reads GraphQL's own rateLimit (the login's enforced bucket), not REST rate_limit
+WR="$T/watch-rate"; cp -r "$WS" "$WR"
+PDO_STATE_DIR="$WR" SMOKE_PRS="$T/prs.json" "$BIN/watch" --project acme >/dev/null 2>&1
+eq "watch: no rateLimit in the PR query falls back to a GraphQL rateLimit read" "$(jq -c .github.graphql_left "$WR/acme-watch.json")" 4000
+jq '.data.rateLimit = {remaining: 120}' "$T/prs.json" >"$T/prs-low.json"
+PDO_STATE_DIR="$WR" SMOKE_PRS="$T/prs-low.json" "$BIN/watch" --project acme >/dev/null 2>&1
+eq "watch: the PR query's rateLimit sets graphql_left and rate_low" "$(jq -c '[.github.graphql_left, .github.rate_low]' "$WR/acme-watch.json")" "[120,true]"
 eq "watch hook: --peek tells the hook" "$(jq -c .peek "$T/hook-ctx.json")" true
 check "watch hook: --peek sets PDO_WATCH_PEEK" grep -q "peek=1" "$SMOKE_LOG"
 for h in fail slow bad; do

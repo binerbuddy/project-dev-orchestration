@@ -34,6 +34,8 @@ defaults; a project's env may rename the queue status and the P-labels (`pdo pro
    `gh project item-list <PROJECT_NUMBER> --owner <ORG> --format json --limit 1000 > <scratchpad>/board.json`.
    Items carry `status`, `labels`, `repository`, `content.number/title/type`. `item-list` truncates
    silently: if the count equals the limit, raise it and refetch.
+   It costs about 1 GraphQL point per board item (the login's 5000/h budget is shared with every agent), so fetch
+   it once per status run, never in a loop.
 2. Open issues with timestamps and types, once per repo:
    `gh issue list -R <ORG>/<repo> --state open --limit 500 --json number,title,labels,updatedAt,url`,
    plus `gh api "repos/<ORG>/<repo>/issues?state=open&per_page=100" --paginate --jq

@@ -98,19 +98,22 @@ def load_env(project):
     return CFG["org"], CFG["project_number"], [r for r in CFG["repo_root"] if r not in managed]
 
 
+# Only each item's repo, number and Status: about 1 point per 100 items. `gh project item-list` fetches every
+# field of every item and cost ~1 point per item (504 points for a 543-item board, every watcher refresh).
+BOARD_Q = """query queueBoard($o:String!,$n:Int!,$endCursor:String){repositoryOwner(login:$o){
+  ... on ProjectV2Owner{projectV2(number:$n){items(first:100,after:$endCursor){pageInfo{hasNextPage endCursor}
+  nodes{status: fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}}
+  content{... on Issue{number repository{name}} ... on PullRequest{number repository{name}}}}}}}}}"""
+
+
 def board_items(org, num):
-    data = json.loads(sh("gh", "project", "item-list", num, "--owner", org,
-                         "--format", "json", "--limit", str(BOARD_LIMIT)))
-    items = data["items"]
+    raw = sh("gh", "api", "graphql", "--paginate", "-f", f"query={BOARD_Q}", "-F", f"o={org}", "-F", f"n={num}",
+             "--jq", ".data.repositoryOwner.projectV2.items.nodes[] | {repo: .content.repository.name, "
+                     "number: .content.number, status: .status.name}")
+    items = [json.loads(line) for line in raw.splitlines() if line.strip()]
     if len(items) >= BOARD_LIMIT:
         sys.exit(f"queue: board returned {len(items)} items = limit; raise BOARD_LIMIT (truncation guard)")
-    out = {}
-    for it in items:
-        c = it.get("content") or {}
-        repo = (it.get("repository") or "").rsplit("/", 1)[-1]
-        if c.get("number"):
-            out[(repo, c["number"])] = it.get("status")
-    return out
+    return {(it["repo"], it["number"]): it.get("status") for it in items if it.get("repo") and it.get("number")}
 
 
 def open_issues(org, repo):
