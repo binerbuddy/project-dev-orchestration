@@ -119,7 +119,7 @@ def stop_agent(cfg, s):
     if not os.path.exists(meta_file):
         run(os.path.join(HERE, "bin", "agent-meta"), "backfill", "--project", p)
     if os.path.exists(meta_file):
-        run(os.path.join(HERE, "bin", "hibernate"), s["repo"], str(s["number"]), "--project", p, "--servers-only", timeout=300)
+        run(os.path.join(HERE, "bin", "hibernate"), s["repo"], str(s["number"]), "--project", p, "--servers-only", "--force", timeout=300)
     pdo_herdr.close(s["slot"])
     if not os.path.exists(meta_file):
         return "tab closed (no metadata: resume will start fresh)"

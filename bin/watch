@@ -55,7 +55,9 @@ Hibernation: unless --peek, agents idle >= HIBERNATE_AFTER_MIN with no question 
 session recorded are released with bin/hibernate when parked at 'ready for QC' or 'QC escalated'
 (quiet event 'hibernated') or finished: PR merged, or 'QC complete' / 'Ready for Merge' plus
 "wrap-up done" (or, after a rebase, "rebase done") on screen (no idle wait for these), or the issue
-closed with no open PR (quiet event 'closed_out'). They are released: side processes stopped,
+closed with no open PR (quiet event 'closed_out'). Never while the agent's worktree has a
+rebase, merge or cherry-pick in progress or commits its PR lacks: the agent gets `git_hold` (why)
+instead, until it pushes. They are released: side processes stopped,
 workspace closed. They stay in `agents` with status "hibernated" (built from metadata), so
 qc_complete / pr_merged still fire; bin/resume-agent brings them back.
 
@@ -257,6 +259,7 @@ def agents(org, repos, prev):
             "unchanged_min": idle_min, "digest": digest, "changed_at": changed_at,
             "session_id": meta.get("session_id"), "hibernated": False,
             "wrapup_done": finished_marker(tail), "issue_state": issue.get("state"),
+            "worktree": meta.get("worktree") or meta.get("cwd"),
         }
     out.update(hibernated_agents(org, repos, set(out)))
     return out
@@ -330,6 +333,12 @@ def auto_hibernate(project, ag):
         # waiting for QC, or escalated to the human after failed agent-QC rounds; a pass label wins
         parked_qc = state == "OPEN" and bool({QC_READY, QC_ESCALATED} & labels) and not PASSED & labels
         if not (closed_out or parked_qc):
+            continue
+        # mid-rebase, or rebased but not pushed yet: its background checks run before the push, and
+        # releasing it now kills them (the PR stays conflicting). Held until the worktree is clean.
+        hold = pdo_config.git_hold(a.get("worktree"), (a.get("pr") or {}).get("head_sha") if state == "OPEN" else None)
+        if hold:
+            a["git_hold"] = hold
             continue
         cmd = [os.path.join(HERE, "bin", "hibernate"), a["repo"], str(a["number"]), "--project", project]
         r = subprocess.run(cmd + (["--closed-out"] if closed_out else []), capture_output=True, text=True, timeout=120)

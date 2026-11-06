@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """hibernate — release a parked command agent's RAM until it's needed again.
 
-Usage: hibernate <repo> <issue#> [--project P] [--servers-only] [--ux-gate] [--dry-run]
+Usage: hibernate <repo> <issue#> [--project P] [--servers-only] [--ux-gate] [--closed-out] [--force] [--dry-run]
 
 Default (full hibernation): requires the agent to be idle, with no question pending, its PR
 labelled 'ready for QC' (or 'QC escalated'), and a Claude session id recorded (so bin/resume-agent can bring the
@@ -25,7 +25,12 @@ bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibe
                 PR (likely-fixed confirmed, won't-fix). Same cleanup; the session is kept, and the
                 issue's managed-by claim label is removed (bin/claim --release). Plain hibernation
                 (still in progress) keeps the label.
+--force         skip the git check below (bin/shutdown: the human is stopping everything).
 --dry-run       print what would be stopped or closed, and change nothing.
+
+Every mode first refuses (exit 3) while the agent's worktree has a rebase, merge, cherry-pick or
+revert in progress, or commits its PR branch doesn't have: stopping its side processes would kill
+the background checks it runs before it pushes.
 """
 import argparse
 import glob
@@ -158,6 +163,7 @@ def main():
     ap.add_argument("--servers-only", action="store_true")
     ap.add_argument("--ux-gate", action="store_true")
     ap.add_argument("--closed-out", action="store_true")
+    ap.add_argument("--force", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -195,7 +201,7 @@ def main():
             if pane.get("agent_status") == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed")):
                 die("a question is pending in the agent's workspace", 3)
         pr = json.loads(run("gh", "pr", "list", "-R", f"{org}/{a.repo}", "--head", meta.get("branch", ""),
-                            "--state", "all", "--json", "number,labels,state,isDraft", "--limit", "1") or "[]")
+                            "--state", "all", "--json", "number,labels,state,isDraft,headRefOid", "--limit", "1") or "[]")
         labels = {l["name"] for l in (pr[0]["labels"] if pr else [])}
         pr_state = pr[0]["state"] if pr else ""
         issue = json.loads(run("gh", "api", f"repos/{org}/{a.repo}/issues/{a.number}", "--jq",
@@ -217,6 +223,11 @@ def main():
         if pr_state == "OPEN" and QC_READY in labels and pr[0].get("isDraft") and not a.dry_run:
             run("gh", "pr", "ready", str(pr[0]["number"]), "-R", f"{org}/{a.repo}")
 
+    if not a.force:
+        head = pr[0].get("headRefOid") if not a.servers_only and pr_state == "OPEN" else None
+        hold = pdo_config.git_hold(worktree, head)
+        if hold:
+            die(f"{hold} in {worktree}; the agent hasn't pushed yet (--force to release it anyway)", 3)
     procs = side_processes(worktree, session, qc_wt, keep_mcp=a.servers_only)
     rss = 0
     for p in procs:

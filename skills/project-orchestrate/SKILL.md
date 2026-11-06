@@ -25,7 +25,7 @@ Detailed event handling: `references/events.md`. Read it on any tick that has ev
 ## 1. Snapshot
 
 Run `pdo watch --project <p>` and read its JSON: `events`, `agents` (per command agent: status,
-question_pending, pr, parked, stalled), `waiting_on_you`, `active`, `free_slots`, `usage`, `queue`,
+question_pending, pr, parked, stalled, `git_hold`), `waiting_on_you`, `active`, `free_slots`, `usage`, `queue`,
 `conflicting`, `urgent`, `spawn_floor`, `pr_cap`, `github`.
 
 If this invocation was triggered by a finished background `pdo watch --until-event`, its output
@@ -41,7 +41,8 @@ tail, nudge once or report; `agent_gone` → report; `usage_ceiling` → stop sp
 `closed_out` / `hibernated` / `hibernate_failed` / `event_hook_failed` / `claim_released` / hook events marked
 quiet → one informational line (close-out and the watcher's release take the claim label off; a hibernated
 agent still in progress keeps it); `claim_release_failed` → report it, and `pdo claim --release <repo> <n>`
-once the cause is clear; `first_run` / `heartbeat` →
+once the cause is clear; an agent with `git_hold` (mid-rebase, or rebased and not pushed) is never
+released: leave it while its checks run, and nudge it to push only if it stays idle with the hold; `first_run` / `heartbeat` →
 continue.
 
 ## 2b. Rebase conflicting PRs (every tick, throttled)

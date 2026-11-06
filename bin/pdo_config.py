@@ -120,3 +120,34 @@ def fleet_advice(cfg, now=None):
     entry["age_min"] = int(age / 60)
     entry["honoured"] = (cfg.get("fleet_advice") or "ignore").lower() in ("honour", "honor")
     return entry
+
+
+GIT_OPS = (("rebase-merge", "a rebase"), ("rebase-apply", "a rebase"), ("MERGE_HEAD", "a merge"),
+           ("CHERRY_PICK_HEAD", "a cherry-pick"), ("REVERT_HEAD", "a revert"))
+
+
+def git_hold(worktree, pr_head=None):
+    """Why an agent's worktree must not be released yet, or None: a rebase, merge, cherry-pick or
+    revert in progress, or commits on HEAD that the PR's head (pr_head; the upstream branch when
+    it isn't known locally) doesn't have. Hibernating then kills the agent's background checks
+    before it pushes, and the PR keeps its conflict."""
+    if not worktree or not os.path.isdir(worktree):
+        return None
+
+    def git(*a):
+        r = subprocess.run(["git", "-C", worktree, *a], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+
+    for name, what in GIT_OPS:
+        p = git("rev-parse", "--git-path", name)
+        if p and os.path.exists(os.path.join(worktree, p)):
+            return f"{what} is in progress"
+    if git("rev-parse", "--verify", "-q", "HEAD") is None:
+        return None
+    if pr_head and git("cat-file", "-e", f"{pr_head}^{{commit}}") is not None:
+        n = git("rev-list", "--count", f"{pr_head}..HEAD")
+    else:
+        n = git("rev-list", "--count", "@{upstream}..HEAD")
+    if n and n != "0":
+        return f"{n} commit{'s' if n != '1' else ''} not pushed to the PR branch"
+    return None

@@ -1016,6 +1016,49 @@ check "hibernate (tabs): closes the agent's tab" grep -qx "herdr tab close wH:t3
 eq "hibernate (tabs): never closes a workspace (the manager's home)" "$(grep -c 'workspace close' "$SMOKE_LOG")" 0
 eq "hibernate (tabs): metadata drops the stale ids" "$(jq -c '[(.hibernated_at > 0), .workspace_id, .tab_id]' "$T/state/agents/widget-77.json")" '[true,null,null]'
 
+# the git hold: never release an agent mid-rebase or with commits its PR branch lacks
+GH8="$T/hold"; G8=(git -c user.name=t -c user.email=t@example.com -c init.defaultBranch=main)
+"${G8[@]}" init -q --bare "$GH8/origin.git" && "${G8[@]}" clone -q "$GH8/origin.git" "$GH8/wt" 2>/dev/null
+(cd "$GH8/wt" && echo a >f && "${G8[@]}" add f && "${G8[@]}" commit -qm a && "${G8[@]}" push -q -u origin main 2>/dev/null)
+hold() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pdo_config as c; print(c.git_hold(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None))' "$BIN" "$@"; }
+eq "git hold: a pushed worktree is free" "$(hold "$GH8/wt")" "None"
+eq "git hold: no worktree on disk is free" "$(hold "$T/nowhere")" "None"
+(cd "$GH8/wt" && echo b >f && "${G8[@]}" commit -qam b)
+eq "git hold: a commit the upstream lacks" "$(hold "$GH8/wt")" "1 commit not pushed to the PR branch"
+eq "git hold: ... unless the PR's head has it" "$(hold "$GH8/wt" "$(git -C "$GH8/wt" rev-parse HEAD)")" "None"
+eq "git hold: the PR's head wins over the upstream" "$(hold "$GH8/wt" "$(git -C "$GH8/wt" rev-parse HEAD~1)")" "1 commit not pushed to the PR branch"
+(cd "$GH8/wt" && "${G8[@]}" push -q 2>/dev/null && "${G8[@]}" checkout -qb side HEAD~1 && echo c >f && "${G8[@]}" commit -qam c \
+  && "${G8[@]}" rebase -q main >/dev/null 2>&1)
+eq "git hold: a rebase in progress" "$(hold "$GH8/wt")" "a rebase is in progress"
+(cd "$GH8/wt" && "${G8[@]}" rebase --abort && "${G8[@]}" checkout -q main && "${G8[@]}" cherry-pick side >/dev/null 2>&1)
+eq "git hold: a cherry-pick in progress" "$(hold "$GH8/wt")" "a cherry-pick is in progress"
+(cd "$GH8/wt" && "${G8[@]}" cherry-pick --abort && "${G8[@]}" merge -q side >/dev/null 2>&1)
+eq "git hold: a merge in progress" "$(hold "$GH8/wt")" "a merge is in progress"
+"${G8[@]}" -C "$GH8/wt" merge --abort
+"${G8[@]}" -C "$GH8/wt" worktree add -q "$GH8/linked" side 2>/dev/null
+(cd "$GH8/linked" && "${G8[@]}" rebase -q main >/dev/null 2>&1)
+eq "git hold: a rebase in a linked worktree" "$(hold "$GH8/linked")" "a rebase is in progress"
+eq "watch: an agent mid-rebase at 'ready for QC' is held, not hibernated" "$(python3 - "$BIN/watch" "$GH8/linked" <<'PY'
+import importlib.machinery, importlib.util, sys, types
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+w.subprocess = types.SimpleNamespace(run=lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="ok", stderr=""))  # bin/hibernate only; git_hold runs real git
+ag = {"h": {"repo": "widget", "number": 8, "status": "idle", "question_pending": False, "session_id": "s",
+            "unchanged_min": 30, "wrapup_done": True, "worktree": sys.argv[2],
+            "pr": {"state": "OPEN", "labels": [w.QC_READY], "head_sha": None}}}
+print(w.auto_hibernate("acme", ag), ag["h"].get("git_hold"), ag["h"]["status"])
+PY
+)" "[] a rebase is in progress idle"
+echo '{"repo":"widget","number":88,"name":"widget-88 held","branch":"feat/88","session_id":"sess77","worktree":"'"$GH8/linked"'"}' >"$T/state/agents/widget-88.json"
+HB8=(env SMOKE_HERDR_WS="$HL/hb-ws.json" SMOKE_HERDR_TABS="$HL/hb-tabs.json" SMOKE_HERDR_AGENTS="$HL/hb-agents.json")
+out="$("${HB8[@]}" "$BIN/hibernate" widget 88 --project acme --servers-only --dry-run 2>&1)"; rc=$?
+eq "hibernate: refuses while the worktree is mid-rebase (exit 3)" "$rc" 3
+has "hibernate: ... and says why" "$out" "a rebase is in progress"
+"${HB8[@]}" "$BIN/hibernate" widget 88 --project acme --servers-only --dry-run --force >/dev/null 2>&1
+eq "hibernate: --force releases it anyway (bin/shutdown)" "$?" 0
+check "shutdown: passes --force to hibernate" grep -q '"--servers-only", "--force"' "$BIN/shutdown"
+rm -f "$T/state/agents/widget-88.json"
+
 # start-manager: the project's Repo Manager opens tab 1 of a new home and starts nothing else
 echo '{"result":{"agents":[{"agent":"claude","workspace_id":"wN","tab_id":"wN:t1","pane_id":"wN:p1","agent_status":"idle"}]}}' >"$HL/sm-agents.json"
 echo '{"result":{"workspaces":[]}}' >"$HL/empty-ws.json"
@@ -1096,7 +1139,7 @@ eq "relayout dry run: changes nothing" "$(grep -cE 'herdr (workspace|tab) (renam
 "${RL[@]}" "$BIN/relayout" --project acme --apply >/dev/null 2>&1
 check "relayout --apply: the workspace becomes the home" grep -qx "herdr workspace rename wM acme" "$SMOKE_LOG"
 check "relayout --apply: its tab 1 takes the manager's name" grep -qx "herdr tab rename wM:t1 Orchestrator (acme)" "$SMOKE_LOG"
-eq "relayout --apply: live command agents and the CEO are never touched" "$(grep -cE 'wO|wC' "$SMOKE_LOG")" 0
+eq "relayout --apply: live command agents and the CEO are never touched" "$(grep -cE '(^| )w[OC](:| |$)' "$SMOKE_LOG")" 0
 
 # --- pdo dispatcher ---
 has "pdo help lists commands" "$("$BIN/pdo" help)" "intake-submit"
