@@ -106,8 +106,9 @@ the queue status, the P-labels and the QC labels.
   merge.
 - **Answer remote QC on the PR**, with an `@mention`; the reporter reads GitHub, not your session.
 - **Gates (UX sign-off, design decisions):** push, then `pdo gate enter <repo> <n> --kind ux|decision --name "<which>"
-  [--link URL]` (no engine: add `awaiting-ux-gate` / `awaiting-decision` to the issue and its PR by hand); `pdo gate
-  clear <repo> <n>` when the human responds. An agent waiting on the human (a gate, a question menu, likely-fixed /
+  [--link URL]` (no engine: add `awaiting-ux-gate` / `awaiting-decision` to the issue and its PR by hand), then ask
+  with your question UI "Have you reviewed the <kind> gate (<name>, <link>)? Am I good to proceed?"; on yes, `pdo
+  gate clear <repo> <n>` and continue. An agent waiting on the human (a gate, a question menu, likely-fixed /
   on-hold, open blockers) is paused after 10 idle minutes and resumed first when the human replies: in the tab
   before then, by a comment on the issue or PR, by removing the gate label, or via `pdo answer`.
 - **Pin gh and git, never switch the account.** If the project env sets `GH_USER`, use

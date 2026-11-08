@@ -945,7 +945,7 @@ PY
 [True, True, False, False, False, False]
 [('stalled_long', 'g#2', True), ('stalled_long', 'x#1', False)]
 []"
-eq "watch: self-managed agents are only closed out, never parked" "$(python3 - "$BIN/watch" <<'PY'
+eq "watch: self-managed agents are closed out and paused, never parked" "$(python3 - "$BIN/watch" <<'PY'
 import importlib.machinery, importlib.util, sys, types
 spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
 w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
@@ -954,10 +954,11 @@ w.CFG["repo_manager"] = {"gov": "Repo Manager (gov)"}
 def agent(n, state, labels=(), issue="open"):
     return {"repo": "gov", "number": n, "status": "idle", "question_pending": False, "session_id": "s", "unchanged_min": 30,
             "wrapup_done": False, "issue_state": issue, "pr": {"state": state, "labels": list(labels)} if state else None}
-ag = {"m": agent(1, "MERGED"), "q": agent(2, "OPEN", [w.QC_READY]), "c": agent(3, None, issue="closed")}
+ag = {"m": agent(1, "MERGED"), "q": agent(2, "OPEN", [w.QC_READY]), "c": agent(3, None, issue="closed"),
+      "a": dict(agent(4, None), question_pending=True, status="blocked")}
 print(sorted((e["agent"], e["type"], e["owner"]) for e in w.auto_hibernate("acme", ag, closeout_only=True)))
 PY
-)" "[('c', 'closed_out', 'Repo Manager (gov)'), ('m', 'closed_out', 'Repo Manager (gov)')]"
+)" "[('a', 'paused', 'Repo Manager (gov)'), ('c', 'closed_out', 'Repo Manager (gov)'), ('m', 'closed_out', 'Repo Manager (gov)')]"
 # feedback took the pass labels off; agent QC escalates; then a direct no-UX pass fires once
 mkprs '["QC escalated"]' '[]' >"$T/prs.json"
 out="$(W)"
@@ -1146,7 +1147,8 @@ def ag(**kw):
 w.CFG["org"] = "o"
 print([w.pause_reason(a) for a in (ag(question_pending=True, status="blocked"), ag(question_pending=True, unchanged_min=5),
        ag(ux_gate=True), ag(ux_gate=True, git_hold="1 commit not pushed"), ag(decision_gate=True), ag(likely_fixed=True),
-       ag(), ag(number=3), ag(status="working", ux_gate=True), ag(ux_gate=True, hibernated=True), ag(ux_gate=True, pause_refused="x"))])
+       ag(), ag(number=3), ag(status="working", ux_gate=True), ag(ux_gate=True, hibernated=True), ag(ux_gate=True, pause_refused="x"),
+       ag(ux_gate=True, question_pending=True, status="blocked"))])
 prev = {"agents": {"r#1": {"paused": {"reason": "question", "reply": None}}}, "queue": [], "pr_cap": {}}
 cur = {"agents": {"r#1": {"repo": "r", "number": 1, "workspace": "r-1 w", "parked": True, "merged": False, "stalled": False, "pr": None,
                           "paused": {"reason": "question", "reply": {"kind": "answer", "detail": "yes"}}}},
@@ -1154,7 +1156,7 @@ cur = {"agents": {"r#1": {"repo": "r", "number": 1, "workspace": "r-1 w", "parke
 print([(e["type"], e["kind"], e["detail"]) for e in w.events(prev, cur) if e["type"] == "reply_arrived"], [e["type"] for e in w.events(cur, cur) if e["type"] == "reply_arrived"])
 PY
 )" "['gate cleared', None, 'gate cleared', None, 'unparked', None, 'answer', None, 'unblocked']
-['question', None, 'ux-gate', None, 'decision', 'parked', 'blocked', None, None, None, None]
+['question', None, 'ux-gate', None, 'decision', 'parked', 'blocked', None, None, None, None, 'ux-gate']
 [('reply_arrived', 'answer', 'yes')] []"
 out="$("$BIN/answer" widget 79 "go with the second layout" --project acme 2>&1)"
 has "answer: a paused agent's reply is recorded for the orchestrator" "$out" '"answer": "recorded"'

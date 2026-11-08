@@ -26,8 +26,8 @@ difference; never rename it.
 | `client-requested` | `CARRY_LABELS` (each) | `0052cc` | A client or customer asked for it; carried onto PRs | pr-priority, intake |
 | `needs-triage` | | `fbca04` | Not yet reviewed by a human; the queue skips it | queue, intake, collaborators |
 | `epic-phase` | | `c5def5` | A phase of an epic; worked only by the epic's build agent | queue, spawn, feature-design |
-| `awaiting-ux-gate` | | `ffe800` | An agent waits for a human's prototype sign-off (on the issue and its PR) | hibernate, watch, feature-build, dispatch brief |
-| `awaiting-decision` | | `ffe800` | An agent waits for a human's design decision (on the issue and its PR) | gate, hibernate, watch, feature-design |
+| `awaiting-ux-gate` | | `fbca04` | An agent waits for a human's prototype sign-off (on the issue and its PR) | hibernate, watch, feature-build, dispatch brief |
+| `awaiting-decision` | | `fbca04` | An agent waits for a human's design decision (on the issue and its PR) | gate, hibernate, watch, feature-design |
 | `likely-fixed` | | `fbca04` | An agent thinks the default branch already does this; a human confirms | queue, watch, hibernate, dispatch brief |
 | `has-follow-ups` | | `bfd4f2` | The PR body has a "Follow-ups (not filed)" list; `/project-intake follow-ups` harvests them | lifecycle skills, pr-triage, intake |
 | `blocked-by-pr` | | `e99695` | The PR can't merge until another PR lands | small-fix, feature-build |
@@ -39,9 +39,8 @@ difference; never rename it.
 | `queue:work` | `QUEUE_LABEL` | `0e8a16` | In the orchestrator's queue (projects without a board) | queue (board-less mode) |
 
 **Colors.** Yellow means a human must act now, and only those labels are yellow: `needs-triage`,
-`likely-fixed`, `QC complete - ready to review`, `QC escalated` (`fbca04`), plus any repo-specific label with the
-same meaning (e.g. a "requires criteria review" label). `awaiting-ux-gate` is a brighter lemon yellow (`ffe800`) so
-it stands out: an agent's build is waiting on it, so it usually comes first. `Ready for Merge` is the exception: a human merges it,
+`likely-fixed`, `QC complete - ready to review`, `QC escalated`, `awaiting-ux-gate`, `awaiting-decision`, all the
+same `fbca04`, plus any repo-specific label with the same meaning (e.g. a "requires criteria review" label). `Ready for Merge` is the exception: a human merges it,
 but it stays green (`0e8a16`). Every other label avoids yellow: P1 red, P2 orange, P3 blue, P4 pale; agent and
 pipeline states in teal, purple, blue or grey; blocked in pale red.
 

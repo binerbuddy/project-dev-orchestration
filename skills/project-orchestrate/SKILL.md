@@ -174,7 +174,8 @@ ran still fire once, computed against the last saved snapshot.
   a gate (`awaiting-ux-gate`, `awaiting-decision`), `likely-fixed` / `on-hold`, or open GitHub
   blockers, the watcher runs `pdo hibernate --pause <reason>`: session and worktree kept, dev stack
   stopped, slot freed, the human notified (NOTIFY_CMD). It comes back through `reply_arrived` and
-  `resume_queue`. A gate waits while the agent has unpushed work. Never nudge a gated or paused agent
+  `resume_queue`. A gate waits while the agent has unpushed work. A gated agent first asks the human
+  "good to proceed?" in its tab (the human's notification); unanswered, it pauses as the gate, label kept. Never nudge a gated or paused agent
   as stalled. A manager relays an answer with `pdo answer <repo> <n> "<text>"`.
 - **Designs need no human review before build.** Never hold a build "pending design review".
 - **`orchestrator-system` issues** are work on the orchestration system, owned by the System Manager

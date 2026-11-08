@@ -440,12 +440,15 @@ def pause_reason(a):
     PR branch for the human to see it once its own dev stack is gone."""
     if a.get("hibernated") or not a.get("session_id") or a["unchanged_min"] < PAUSE_GRACE_MIN or a.get("pause_refused"):
         return None
+    gate = "ux-gate" if a.get("ux_gate") else "decision" if a.get("decision_gate") else None
+    if gate and a["status"] in ("idle", "done", "blocked") and not finished(a):
+        # an agent at a gate asks "reviewed it? good to proceed?" (that prompt is the human's
+        # notification); unanswered, it pauses as the gate, and the label stays for later
+        return None if a.get("git_hold") else gate
     if a["question_pending"] and a["status"] in ("idle", "done", "blocked"):
         return "question"
     if a["status"] not in ("idle", "done") or finished(a):
         return None
-    if a.get("ux_gate") or a.get("decision_gate"):
-        return None if a.get("git_hold") else ("ux-gate" if a.get("ux_gate") else "decision")
     if a.get("likely_fixed") or a.get("on_hold"):
         return "parked"
     pr = a.get("pr") or {}
@@ -457,14 +460,15 @@ def pause_reason(a):
 
 def auto_hibernate(project, ag, closeout_only=False):
     """Release RAM held by agents parked at 'ready for QC' (idle >= HIBERNATE_AFTER_MIN, no
-    question pending). Token-free: runs inside the watcher. Returns quiet events. closeout_only
-    (agents in SELF_MANAGED_REPOS): only finished agents are closed out; parking is their owner's."""
+    question pending), and pauses agents waiting on the human (pause_reason). Token-free: runs inside
+    the watcher. Returns quiet events. closeout_only (agents in SELF_MANAGED_REPOS): finished agents
+    are closed out and waiting ones paused, but none is parked at QC; that is their owner's."""
     ev = []
     for k, a in ag.items():
         labels = set((a.get("pr") or {}).get("labels", []))
         state = (a.get("pr") or {}).get("state")
         # waiting on the human: pause it (session and worktree kept, slot freed, dev stack stopped)
-        reason = None if closeout_only else pause_reason(a)
+        reason = pause_reason(a)  # self-managed repos too: nothing else pauses them
         if reason:
             r = subprocess.run([os.path.join(HERE, "bin", "hibernate"), a["repo"], str(a["number"]), "--project", project,
                                 "--pause", reason], capture_output=True, text=True, timeout=180)
@@ -904,11 +908,14 @@ def closeout_only(project, state_file):
             ev.append({"type": "stalled_long", "agent": k, "workspace": a.get("workspace"), "why": a["idle_reason"],
                        "detail": a.get("git_hold"), "idle_hours": a["idle_hours"], "self_managed": True,
                        "owner": (CFG.get("repo_manager") or {}).get(a["repo"])})
+    resume = sorted(({"agent": k, "repo": v["repo"], "number": v["number"], "workspace": v.get("workspace"),
+                      "reason": v["paused"].get("reason"), **v["paused"]["reply"]}
+                     for k, v in sm_ag.items() if (v.get("paused") or {}).get("reply")), key=lambda r: r.get("at") or 0)
     prev.update(self_managed_agents=sm_ag, self_managed_fresh=fresh)
     with open(state_file + ".tmp", "w", encoding="utf-8") as f:
         json.dump(prev, f)
     os.replace(state_file + ".tmp", state_file)
-    print(json.dumps({"fresh": fresh, "agents": len(sm_ag), "events": ev}))
+    print(json.dumps({"fresh": fresh, "agents": len(sm_ag), "events": ev, "resume_queue": resume}))
 
 
 def snapshot(project, prev):
@@ -988,6 +995,12 @@ def events(prev, cur):
     # self-managed repos' agents belong to their Repo Manager: a long stall is reported quietly, with the owner
     ps = prev.get("self_managed_agents", {})
     for k, a in cur.get("self_managed_agents", {}).items():
+        reply = (a.get("paused") or {}).get("reply")
+        if reply and not (ps.get(k, {}).get("paused") or {}).get("reply"):
+            ev.append({"type": "reply_arrived", "quiet": True, "agent": k, "workspace": a.get("workspace"),
+                       "reason": a["paused"].get("reason"), "self_managed": True,
+                       "owner": (CFG.get("repo_manager") or {}).get(a["repo"]),
+                       **{x: reply.get(x) for x in ("kind", "detail", "url")}})
         if a.get("stalled_long") and not ps.get(k, {}).get("stalled_long"):
             ev.append({"type": "stalled_long", "quiet": True, "agent": k, "workspace": a.get("workspace"),
                        "why": a["idle_reason"], "detail": a.get("git_hold"), "idle_hours": a["idle_hours"],

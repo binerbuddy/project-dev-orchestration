@@ -455,7 +455,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
 <section id="labels">
   <span class="eyebrow">Reference</span>
   <h2>Labels you'll see</h2>
-  <p><b>Yellow means it's your move.</b> Only labels that wait on a person are yellow: <code>needs-triage</code>, <code>likely-fixed</code>, <code>QC complete - ready to review</code> and <code>QC escalated</code>, plus <code>awaiting-ux-gate</code> in a brighter lemon yellow because an agent is blocked on it. <code>Ready for Merge</code> also waits on you, but stays green. Filter GitHub by these to see your queue.</p>
+  <p><b>Yellow means it's your move.</b> Only labels that wait on a person are yellow: <code>needs-triage</code>, <code>likely-fixed</code>, <code>QC complete - ready to review</code> and <code>QC escalated</code>, <code>awaiting-ux-gate</code> and <code>awaiting-decision</code>, all the same yellow. <code>Ready for Merge</code> also waits on you, but stays green. Filter GitHub by these to see your queue.</p>
   <div class="tbl"><table>
     <thead><tr><th>Label</th><th>Meaning</th><th>Who sets it</th></tr></thead>
     <tbody>
@@ -470,7 +470,8 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
       <tr><td><i class="sw" style="background:#c5def5"></i><code>UX testing skipped</code></td><td>Agent QC found no visible change, so no UX review.</td><td>QC Agent</td></tr>
       <tr><td><i class="sw" style="background:#fbca04"></i><code>QC escalated</code></td><td>Agent QC failed twice; a person decides.</td><td>QC Agent</td></tr>
       <tr><td><i class="sw" style="background:#d4c5f9"></i><code>needs UX review</code></td><td>Always gets a person's UX review. Copied from the issue to its PR.</td><td>Intake, owner</td></tr>
-      <tr><td><i class="sw" style="background:#ffe800"></i><code>awaiting-ux-gate</code></td><td>A build waits for your prototype sign-off. On the issue and its PR, in a brighter yellow: clear these first, since an agent is waiting to keep building.</td><td>Command agent</td></tr>
+      <tr><td><i class="sw" style="background:#fbca04"></i><code>awaiting-ux-gate</code></td><td>A build waits for your prototype sign-off. On the issue and its PR: clear these first, since an agent is waiting to keep building.</td><td>Command agent</td></tr>
+      <tr><td><i class="sw" style="background:#fbca04"></i><code>awaiting-decision</code></td><td>An agent waits for your design decision. On the issue and its PR.</td><td>Command agent</td></tr>
       <tr><td><i class="sw" style="background:#fbca04"></i><code>likely-fixed</code></td><td>The agent thinks it's already done; a maintainer confirms and closes.</td><td>Command agent</td></tr>
       <tr><td><i class="sw" style="background:#bfd4f2"></i><code>has-follow-ups</code></td><td>The PR body lists follow-ups the agent didn't file (ideas, cleanup, test gaps). <code>/project-intake follow-ups</code> lists them so you can promote any to issues.</td><td>Command agent</td></tr>
       <tr><td><i class="sw" style="background:#c5def5"></i><code>epic-phase</code></td><td>One phase of an epic; worked only by the epic's build agent.</td><td>Design agent</td></tr>

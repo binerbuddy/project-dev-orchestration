@@ -28,7 +28,9 @@ the CEO.
 2. `pdo fleet --project <p>`: what waits on the human for this project, claims, dependencies.
    For a self-managed repo, or when no orchestrator watcher runs, first `pdo watch --project <p> --closeout`
    (token-free: closes out finished agents of self-managed repos, marks hibernated ones done, sweeps /tmp;
-   it does nothing while the project's watcher runs). Repeat it at each check-in and after you merge.
+   it does nothing while the project's watcher runs). Repeat it at each check-in and after you merge. It also
+   pauses agents waiting on the human; its `resume_queue` lists paused agents the human has answered: resume
+   each with `pdo resume-agent <repo> <n> --prompt "<the reply prompt in the orchestrate skill's events.md>"`.
 3. Report in ≤8 lines: what is running in the home, what is not, what waits on the human. Don't start
    anything yet: the team starts when you're told to.
 

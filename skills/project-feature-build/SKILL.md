@@ -142,9 +142,10 @@ For each phase:
    look at and confirm, the screenshots for the phase (paths, plus the line "Open them: `pdo shots <PR#>`"), the dev-server URL, and any decision the run needs. Leave the dev servers running. Ledger status →
    `gate pending`. Push first, then mark the gate with `pdo gate enter <repo> <issue#> --kind ux --name "phase N: <what>"
    --link <PR comment URL>` (outside an engine install: add the `awaiting-ux-gate` label to the issue and PR by hand).
-   It labels the issue and PR, comments, and notifies the human; after 10 idle minutes the watcher pauses you (dev
-   servers stopped, session kept) and resumes you when the human replies. Clear it with `pdo gate clear <repo>
-   <issue#>` as soon as the human responds.
+   It labels the issue and PR and comments. Then ask with your question UI: "Have you reviewed the UX gate (<name>,
+   <link>)? Am I good to proceed?" (Yes, proceed / Not yet); that question is the human's notification. On yes,
+   `pdo gate clear <repo> <issue#>` and go on. Unanswered for 10 idle minutes, the watcher pauses you (dev servers
+   stopped, session kept, label left on) and resumes you when the human clears the gate or replies.
    - `blocking`: push, post, report, STOP. The user resumes with `/project-feature-build <doc> resume`.
    - `async`: post, then continue with phases whose `depends-on` excludes the gated phase. Before starting a dependent
      phase, check for feedback (ticks/notes on the gate comment via `gh api`, a comment on the phase issue, or chat).
