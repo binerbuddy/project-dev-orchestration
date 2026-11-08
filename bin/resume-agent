@@ -101,5 +101,5 @@ fi
 herdr agent rename "$PANE_ID" "$(tr 'A-Z' 'a-z' <<<"$REPO" | tr -cd 'a-z0-9-' | cut -c1-24)-$NUM" >/dev/null 2>&1 || true
 write_meta "$REPO" "$NUM" "$(jq -n --arg ws "$WS_ID" --arg tab "$TAB_ID" --arg home "$HOME_WS" --arg pane "$PANE_ID" \
   --arg cwd "$CWD" --arg session "$(session_of "$PANE_ID")" '{workspace_id: $ws, tab_id: $tab, home: $home, pane_id: $pane,
-    cwd: $cwd, session_id: $session, hibernated_at: null}')"
+    cwd: $cwd, session_id: $session, hibernated_at: null, paused: null}')"
 jq -cn --arg a "$ACTION" --arg name "$NAME" --arg ws "$WS_ID" --arg pane "$PANE_ID" '{action: $a, workspace: $name, workspace_id: $ws, pane_id: $pane}'

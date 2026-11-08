@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""gate — enter or clear a human gate (a UX sign-off or a design decision) for an issue's agent.
+
+Usage: gate enter <repo> <issue#> --kind ux|decision --name "<which gate>" [--link URL] [--project P]
+       gate clear <repo> <issue#> [--note TEXT] [--project P]
+
+enter: the one way an agent stops at a gate, so the state is always set the same way. It adds the
+gate label to the issue and its open PR ('awaiting-ux-gate' for ux, 'awaiting-decision' for
+decision; created when the repo lacks it), posts one comment naming the gate, the link to look at
+and how to clear it, records metadata "gate" {kind, name, link, since}, and runs NOTIFY_CMD. The
+watcher then shows it (idle_reason "UX gate" / "decision gate", fleet's waiting list) and, after
+PAUSE_GRACE_MIN idle, pauses the agent (bin/hibernate --pause); a pushed prototype stays viewable
+through the human review tab.
+
+clear: removes the label from the issue and the PR and records cleared_at. A paused agent is
+resumed by the orchestrator (the watcher sees the label go: reply_arrived); --note is passed to
+it as the human's answer. The human can also clear a gate by removing the label or replying in
+the agent's tab before it pauses.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+LABELS = {"ux": ("awaiting-ux-gate", "An agent waits for a human's prototype sign-off (on the issue and its PR)"),
+          "decision": ("awaiting-decision", "An agent waits for a human's design decision (on the issue and its PR)")}
+
+
+def gh(*a):
+    r = subprocess.run(["gh", *a], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+def die(msg, code=1):
+    print(f"gate: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def write_meta(path, meta):
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=1)
+    os.replace(path + ".tmp", path)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("action", choices=("enter", "clear"))
+    ap.add_argument("repo")
+    ap.add_argument("number", type=lambda s: int(s.lstrip("#")))
+    ap.add_argument("--kind", choices=tuple(LABELS))
+    ap.add_argument("--name")
+    ap.add_argument("--link")
+    ap.add_argument("--note")
+    ap.add_argument("--project")
+    a = ap.parse_args()
+    cfg = pdo_config.load(a.project, "gate")
+    slug = f"{cfg['org']}/{a.repo}"
+    meta_file = os.path.join(cfg["state_dir"], "agents", f"{a.repo}-{a.number}.json")
+    meta = json.load(open(meta_file, encoding="utf-8")) if os.path.exists(meta_file) else {"repo": a.repo, "number": a.number}
+    pr = json.loads(gh("pr", "list", "-R", slug, "--head", meta.get("branch") or "-", "--state", "open",
+                       "--json", "number,url", "--limit", "1") or "[]") if meta.get("branch") else []
+    targets = [("issue", a.number)] + [("pr", p["number"]) for p in pr]
+
+    if a.action == "enter":
+        if not a.kind or not a.name:
+            die("enter needs --kind ux|decision and --name")
+        label, desc = LABELS[a.kind]
+        gh("label", "create", label, "-R", slug, "--color", "ffe800", "--description", desc)  # exists already: fine
+        for kind, n in targets:
+            if gh(kind, "edit", str(n), "-R", slug, "--add-label", label) is None:
+                die(f"could not label {kind} #{n} '{label}'")
+        what = "UX gate" if a.kind == "ux" else "Design decision gate"
+        body = (f"**{what}: {a.name}**. The agent has stopped and waits for you."
+                + (f"\n\nLook at: {a.link}" if a.link else "")
+                + f"\n\nTo let it continue: reply here (or in its tab), or remove the `{label}` label."
+                + " A paused agent resumes on its own, ahead of new work.")
+        kind, n = targets[-1]
+        gh(kind, "comment", str(n), "-R", slug, "--body", body)
+        meta["gate"] = {"kind": a.kind, "name": a.name, "link": a.link, "since": int(time.time()),
+                        "notified_at": None, "cleared_at": None}
+        if pdo_config.notify(cfg, f"{meta.get('name') or f'{a.repo}#{a.number}'}: {what}", a.name, a.link or (pr[0]["url"] if pr else None)):
+            meta["gate"]["notified_at"] = int(time.time())
+        if os.path.exists(meta_file):
+            write_meta(meta_file, meta)
+        print(json.dumps({"gate": "entered", "label": label, "on": [f"{k} #{n}" for k, n in targets],
+                          "notified": bool(meta["gate"]["notified_at"])}))
+        return
+
+    gate = meta.get("gate") or {}
+    kinds = [gate["kind"]] if gate.get("kind") in LABELS else list(LABELS)
+    for k in kinds:
+        for kind, n in targets:
+            gh(kind, "edit", str(n), "-R", slug, "--remove-label", LABELS[k][0])
+    if gate:
+        gate["cleared_at"] = int(time.time())
+    if a.note and meta.get("paused"):
+        meta["paused"].update(answer=a.note, answered_at=int(time.time()))
+    if os.path.exists(meta_file):
+        write_meta(meta_file, meta)
+    print(json.dumps({"gate": "cleared", "paused": bool(meta.get("paused")),
+                      "next": "the orchestrator resumes it (first in line)" if meta.get("paused") else
+                      "tell the agent in its tab, or `pdo answer`"}))
+
+
+if __name__ == "__main__":
+    main()

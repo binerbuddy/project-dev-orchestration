@@ -45,7 +45,13 @@ case "$*" in
   "issue edit"*) ;;
   "pr list -R acme/widget --state open"*) echo feat/61 ;;
   "pr list -R acme/widget --head feat/77"*) echo '[{"number":77,"labels":[{"name":"ready for QC"}],"state":"OPEN","isDraft":false}]' ;;
-  "api repos/acme/widget/issues/77 --jq"*) echo '{"state":"open","labels":[]}' ;;  # tmp-sweep: open PRs keep their agents' scratchpads
+  "api repos/acme/widget/issues/77 --jq"*) echo '{"state":"open","labels":[]}' ;;
+  "api repos/acme/widget/issues/79 --jq"*) echo '{"state":"open","labels":["awaiting-ux-gate"]}' ;;
+  "api repos/acme/widget/issues/8"[01]" --jq"*) echo '{"state":"open","labels":[]}' ;;
+  "pr list -R acme/widget --head feat/"[78][019]*) echo '[]' ;;
+  "api repos/acme/widget/issues/80/dependencies/blocked_by --jq"*) echo '["acme/widget#5"]' ;;
+  "api repos/acme/widget/issues/"*"/dependencies/blocked_by --jq"*) echo '[]' ;;
+  "label create awaiting-"*|"issue comment "*|"pr comment "*) ;;  # tmp-sweep: open PRs keep their agents' scratchpads
   # qc-fixture-push: the fixture release and its assets
   "release view "*" -R acme/"*) [[ -f "$SMOKE_DIR/fixture-release" ]] || exit 1 ;;
   "release create "*" -R acme/"*) touch "$SMOKE_DIR/fixture-release" ;;
@@ -684,7 +690,7 @@ eq "fleet: active / hibernated agents" "$(jq -c '.projects[0].agents | [(.active
 eq "fleet: queue depth" "$(jq -c '.projects[0].queue | [.eligible, .urgent]' <<<"$out" 2>/dev/null)" '[2,1]'
 has "fleet: a project with no queue is reported, not fatal" "$(jq -r '.projects[1].queue.error' <<<"$out" 2>/dev/null)" "every repo is self-managed"
 eq "fleet: PRs vs cap" "$(jq -c '.projects[0].prs | [.open, .awaiting_human, .cap]' <<<"$out" 2>/dev/null)" '[2,2,10]'
-eq "fleet: waiting on you ranked by impact" "$(jq -c '[.waiting_on_you[].why]' <<<"$out" 2>/dev/null)" '["merge (QC passed)","question","UX gate","QC","intake inbox"]'
+eq "fleet: waiting on you ranked by impact" "$(jq -c '[.waiting_on_you[].why]' <<<"$out" 2>/dev/null)" '["merge (QC passed)","UX gate","question","QC","intake inbox"]'
 eq "fleet: rate limits per GH_USER identity" "$(jq -c '[.system.gh[] | "\(.user)=\(.graphql.remaining)"]' <<<"$out" 2>/dev/null)" '["(active gh account)=4000","gbot=4000"]'
 eq "fleet: agent count" "$(jq -c '.system.agents | [.herdr_total, .claude, .project_active, .self_managed_active]' <<<"$out" 2>/dev/null)" '[3,3,1,1]'
 eq "fleet: a self-managed repo's agent is not in the project's active" "$(jq -c '.projects[1].agents | [(.active | length), (.self_managed | map(.agent + ":" + .owner))]' <<<"$out" 2>/dev/null)" '[0,["lib#5:Lib Lead"]]'
@@ -1108,6 +1114,63 @@ has "hibernate: ... and says why" "$out" "a rebase is in progress"
 "${HB8[@]}" "$BIN/hibernate" widget 88 --project acme --servers-only --dry-run --force >/dev/null 2>&1
 eq "hibernate: --force releases it anyway (bin/shutdown)" "$?" 0
 check "shutdown: passes --force to hibernate" grep -q '"--servers-only", "--force"' "$BIN/shutdown"
+
+# pausing an agent that waits on the human: session kept, NOTIFY_CMD run, refused without its signal
+printf '#!/bin/sh\nprintf "%%s|" "$@" >>"%s"; echo >>"%s"\n' "$T/notified" "$T/notified" >"$T/notify" && chmod +x "$T/notify"
+"${G8[@]}" clone -q "$GH8/origin.git" "$GH8/clean" 2>/dev/null
+for n in 79 80 81; do
+  echo '{"repo":"widget","number":'$n',"name":"widget-'$n' waits","branch":"feat/'$n'","session_id":"sess77","worktree":"'"$GH8/clean"'","gate":{"kind":"ux","name":"phase 2 map","link":"https://example.com/proto","notified_at":null}}' >"$T/state/agents/widget-$n.json"
+done
+NOTIFY_CMD="$T/notify" "${HB8[@]}" "$BIN/hibernate" widget 79 --project acme --pause ux-gate >/dev/null 2>&1
+eq "pause: a UX gate hibernates, keeping the session" "$?" 0
+eq "pause: ... records why, the gate and its link" "$(jq -c '[.paused.reason, .paused.detail, .paused.link, (.hibernated_at > 0), .session_id]' "$T/state/agents/widget-79.json")" '["ux-gate","phase 2 map","https://example.com/proto",true,"sess77"]'
+has "pause: ... and notifies the human" "$(cat "$T/notified" 2>/dev/null)" "widget-79 waits waits at a UX gate|phase 2 map|https://example.com/proto|"
+NOTIFY_CMD="$T/notify" "${HB8[@]}" "$BIN/hibernate" widget 80 --project acme --blocked >/dev/null 2>&1
+eq "pause --blocked: open blockers and a clean worktree" "$(jq -c '[.paused.reason, .paused.blockers]' "$T/state/agents/widget-80.json")" '["blocked",["acme/widget#5"]]'
+"${HB8[@]}" "$BIN/hibernate" widget 81 --project acme --pause decision 2>/dev/null; eq "pause: refused without the gate label" "$?" 3
+"${HB8[@]}" "$BIN/hibernate" widget 81 --project acme --blocked 2>/dev/null; eq "pause --blocked: refused with no blockers" "$?" 3
+"${HB8[@]}" "$BIN/hibernate" widget 81 --project acme --pause question 2>/dev/null; eq "pause question: refused without a live tab" "$?" 3
+eq "watch: a reply ends a pause (gate label off, an answer, the last blocker closed)" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+w.run = lambda *a, **k: "[]"  # no comments
+w.pdo_config.open_blockers = lambda o, r, n: [] if n == 3 else ["x/y#1"]
+R = lambda reason, labels=(), n=1, **kw: (w.reply_for("o", "r", n, dict({"reason": reason, "since": 1}, **kw), set(labels), None) or {}).get("kind")
+print([R("ux-gate"), R("ux-gate", ["awaiting-ux-gate"]), R("decision", ["awaiting-ux-gate"]), R("parked", ["on-hold"]),
+       R("parked"), R("question"), R("question", answer="use metres"), R("blocked", n=2), R("blocked", n=3)])
+def ag(**kw):
+    a = {"session_id": "s", "unchanged_min": 15, "status": "idle", "question_pending": False, "issue_state": "open", "pr": None,
+         "repo": "r", "number": 2, "idle_reason": "idle"}
+    a.update(kw); return a
+w.CFG["org"] = "o"
+print([w.pause_reason(a) for a in (ag(question_pending=True, status="blocked"), ag(question_pending=True, unchanged_min=5),
+       ag(ux_gate=True), ag(ux_gate=True, git_hold="1 commit not pushed"), ag(decision_gate=True), ag(likely_fixed=True),
+       ag(), ag(number=3), ag(status="working", ux_gate=True), ag(ux_gate=True, hibernated=True), ag(ux_gate=True, pause_refused="x"))])
+prev = {"agents": {"r#1": {"paused": {"reason": "question", "reply": None}}}, "queue": [], "pr_cap": {}}
+cur = {"agents": {"r#1": {"repo": "r", "number": 1, "workspace": "r-1 w", "parked": True, "merged": False, "stalled": False, "pr": None,
+                          "paused": {"reason": "question", "reply": {"kind": "answer", "detail": "yes"}}}},
+       "queue": [], "pr_cap": {}, "usage_over_ceiling": False, "free_slots": 0}
+print([(e["type"], e["kind"], e["detail"]) for e in w.events(prev, cur) if e["type"] == "reply_arrived"], [e["type"] for e in w.events(cur, cur) if e["type"] == "reply_arrived"])
+PY
+)" "['gate cleared', None, 'gate cleared', None, 'unparked', None, 'answer', None, 'unblocked']
+['question', None, 'ux-gate', None, 'decision', 'parked', 'blocked', None, None, None, None]
+[('reply_arrived', 'answer', 'yes')] []"
+out="$("$BIN/answer" widget 79 "go with the second layout" --project acme 2>&1)"
+has "answer: a paused agent's reply is recorded for the orchestrator" "$out" '"answer": "recorded"'
+eq "answer: ... in its metadata" "$(jq -r .paused.answer "$T/state/agents/widget-79.json")" "go with the second layout"
+: >"$SMOKE_LOG"
+out="$(NOTIFY_CMD="$T/notify" "$BIN/gate" enter widget 81 --kind decision --name "storage layout" --link https://example.com/doc --project acme 2>&1)"
+check "gate enter: labels the issue" grep -qx "gh issue edit 81 -R acme/widget --add-label awaiting-decision" "$SMOKE_LOG"
+check "gate enter: posts one comment naming the gate" grep -q "gh issue comment 81 -R acme/widget --body \*\*Design decision gate: storage layout\*\*" "$SMOKE_LOG"
+eq "gate enter: records it and notifies" "$(jq -c '[.gate.kind, .gate.name, (.gate.notified_at > 0)]' "$T/state/agents/widget-81.json")" '["decision","storage layout",true]'
+"$BIN/gate" clear widget 81 --project acme >/dev/null 2>&1
+check "gate clear: removes the label" grep -qx "gh issue edit 81 -R acme/widget --remove-label awaiting-decision" "$SMOKE_LOG"
+rm -f "$T/state/agents/widget-79.json" "$T/state/agents/widget-80.json" "$T/state/agents/widget-81.json"
+bash -c 'exec -a fake/bin/watch sleep 300' & SLP=$!
+ASD="$("$BIN/project-env" --project acme PDO_STATE_DIR)"; echo '{"pid":'$SLP'}' >"$ASD/acme-watch.lock"
+has "watch --closeout: left to the project's running watcher" "$("$BIN/watch" --project acme --closeout 2>&1)" "the project's watcher does this"
+kill $SLP 2>/dev/null; rm -f "$ASD/acme-watch.lock"
 rm -f "$T/state/agents/widget-88.json"
 
 # start-manager: the project's Repo Manager opens tab 1 of a new home and starts nothing else

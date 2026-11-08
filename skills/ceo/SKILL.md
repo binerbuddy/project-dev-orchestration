@@ -65,7 +65,9 @@ unless the human points you at one.
 
 1. **Fleet snapshot:** `pdo fleet` (add `--json` when you need the fields). It is read-only, and
    writes nothing without `--write-advice`. Warnings at the end (no herdr, no board, a gh failure)
-   mean that part is unknown, not fine.
+   mean that part is unknown, not fine. A project whose `watch_snapshot_age_min` is stale or missing
+   (no orchestrator watcher; typically all repos self-managed) leaves finished agents open: run
+   `pdo watch --project <p> --closeout` for it (token-free; it skips a project whose watcher runs).
 2. **Each project's lessons and its manager list.** For every project in the snapshot: its
    lessons file (the overlay's and the engine's `docs/lessons-learned.md`), its `MANAGER`, its
    `SELF_MANAGED_REPOS` and their `REPO_MANAGER` entries (`pdo project-env --project <p>`). Skim

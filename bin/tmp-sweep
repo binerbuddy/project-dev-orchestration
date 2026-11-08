@@ -118,7 +118,7 @@ def sessions():
 
 def agent_sessions(cfg):
     """(finished, kept) session ids from agent metadata. Finished: done_tracking. Kept: not finished,
-    and still running or its branch has an open PR (a repo gh can't list keeps all of its agents)."""
+    and still running, paused for the human, or its branch has an open PR (a repo gh can't list keeps all of its agents)."""
     finished, kept, by_repo = set(), set(), {}
     for f in glob.glob(os.path.join(cfg["state_dir"], "agents", "*.json")):
         try:
@@ -130,7 +130,7 @@ def agent_sessions(cfg):
             continue
         if meta.get("done_tracking"):
             finished.add(sid)
-        elif not meta.get("hibernated_at"):
+        elif not meta.get("hibernated_at") or meta.get("paused"):  # a paused agent resumes when the human replies
             kept.add(sid)
         else:
             by_repo.setdefault(meta.get("repo"), []).append((meta.get("branch"), sid))

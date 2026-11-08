@@ -25,7 +25,8 @@ Detailed event handling: `references/events.md`. Read it on any tick that has ev
 ## 1. Snapshot
 
 Run `pdo watch --project <p>` and read its JSON: `events`, `agents` (per command agent: status,
-question_pending, pr, parked, stalled, `git_hold`), `waiting_on_you`, `active`, `free_slots`, `usage`, `queue`,
+question_pending, pr, parked, stalled, `git_hold`, `idle_reason`, `paused`), `waiting_on_you`, `resume_queue`,
+`active`, `free_slots`, `usage`, `queue`,
 `conflicting`, `urgent`, `spawn_floor`, `pr_cap`, `github`.
 
 If this invocation was triggered by a finished background `pdo watch --until-event`, its output
@@ -38,7 +39,8 @@ Per event, act as `references/events.md` says. Summary: `urgent` → spawn now (
 the build; `pr_conflict` → nothing (step 2b); `pr_cap_reached` → report once; `qc_feedback` /
 `qc_complete` → resume the owning agent; `pr_merged` → check the issue and card; `stalled` → read the
 tail, nudge once or report; `stalled_long` → nudge once if it waits on nothing, and tell the manager; `agent_gone` → report; `usage_ceiling` → stop spawning, report;
-`closed_out` / `hibernated` / `hibernate_failed` / `event_hook_failed` / `claim_released` / hook events marked
+`reply_arrived` → resume it now if a slot is free, else it waits in `resume_queue` (step 3);
+`paused` / `closed_out` / `hibernated` / `hibernate_failed` / `event_hook_failed` / `claim_released` / hook events marked
 quiet → one informational line (close-out and the watcher's release take the claim label off; a hibernated
 agent still in progress keeps it); `claim_release_failed` → report it, and `pdo claim --release <repo> <n>`
 once the cause is clear; an agent with `git_hold` (mid-rebase, or rebased and not pushed) is never
@@ -67,7 +69,13 @@ report it once.
 
 ## 3. Fill free slots
 
-**Urgent bypass first.** Every item in `urgent` (P1-urgent AND on the queue status, `urgent_bypass:
+**Answered agents first.** Every `resume_queue` entry (a paused agent the human has replied to,
+oldest reply first) takes a free slot before any queue item, P1s included:
+`pdo resume-agent <repo> <n> --project <p> --prompt "<the reply prompt in references/events.md>"`.
+Spend `free_slots` on them first; queue spawns get what is left. The urgent bypass below is separate
+and unchanged (it takes no slot).
+
+**Urgent bypass.** Every item in `urgent` (P1-urgent AND on the queue status, `urgent_bypass:
 true` in `pdo queue`) is spawned now, all of them, whatever `free_slots` and
 `usage_over_ceiling` say. It skips the vagueness check too, because the human asked for it: spawn it
 and let the agent ask. Report each as `spawned <workspace> (over cap: active N/<max>)` when the cap was
@@ -161,11 +169,13 @@ ran still fire once, computed against the last saved snapshot.
 - **Hibernation is automatic and token-free.** The watcher runs `pdo hibernate` for agents idle at
   `ready for QC` for 5+ min with no question pending. Never close a parked agent's tab yourself:
   it skips the process cleanup and metadata. Hibernated agents show `hibernated`, stay under QC, hold
-  no slot. Reach any parked agent with `pdo resume-agent`, never `herdr agent prompt`. Agents at
-  `awaiting-ux-gate` aren't hibernated automatically (the human may want the live stack); when memory
-  is tight offer `pdo hibernate <repo> <n> --servers-only` or `--ux-gate`.
-- **UX sign-off waits don't hold slots.** An agent labelled `awaiting-ux-gate` is parked while idle;
-  list it under "UX gate". Never nudge it as stalled.
+  no slot. Reach any parked agent with `pdo resume-agent`, never `herdr agent prompt`.
+- **An agent waiting on the human is paused automatically.** After 10 min idle on a question menu,
+  a gate (`awaiting-ux-gate`, `awaiting-decision`), `likely-fixed` / `on-hold`, or open GitHub
+  blockers, the watcher runs `pdo hibernate --pause <reason>`: session and worktree kept, dev stack
+  stopped, slot freed, the human notified (NOTIFY_CMD). It comes back through `reply_arrived` and
+  `resume_queue`. A gate waits while the agent has unpushed work. Never nudge a gated or paused agent
+  as stalled. A manager relays an answer with `pdo answer <repo> <n> "<text>"`.
 - **Designs need no human review before build.** Never hold a build "pending design review".
 - **`orchestrator-system` issues** are work on the orchestration system, owned by the System Manager
   (workspace `SYSTEM_MANAGER_WORKSPACE`). The queue excludes them; never spawn one; point the human to

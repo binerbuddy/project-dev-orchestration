@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """hibernate — release a parked command agent's RAM until it's needed again.
 
-Usage: hibernate <repo> <issue#> [--project P] [--servers-only] [--ux-gate] [--closed-out] [--force] [--dry-run]
+Usage: hibernate <repo> <issue#> [--project P] [--servers-only] [--ux-gate] [--closed-out]
+                 [--pause question|ux-gate|decision|blocked|parked] [--blocked] [--force] [--dry-run]
 
 Default (full hibernation): requires the agent to be idle, with no question pending, its PR
 labelled 'ready for QC' (or 'QC escalated'), and a Claude session id recorded (so bin/resume-agent can bring the
@@ -20,6 +21,15 @@ bin/resume-agent brings it back (`claude --resume <session_id>`) and clears hibe
                 live map the human doesn't need right now).
 --ux-gate       allow full hibernation of an agent parked at 'awaiting-ux-gate' instead of
                 'ready for QC' (opt-in: the human may want the live stack for the review).
+--pause R       pause an agent that waits on the human (session and worktree kept, slot freed, dev
+                stack stopped), recording metadata "paused" {reason, since, detail, link, blockers}
+                and running NOTIFY_CMD. The watcher resumes it when the reply arrives. R is one of:
+                question  a question is pending on its screen (the text is kept as detail);
+                ux-gate   the issue carries 'awaiting-ux-gate' (--ux-gate is the same);
+                decision  the issue carries 'awaiting-decision' (a design-decisions gate);
+                blocked   open native GitHub "blocked by" issues, and a clean worktree (--blocked);
+                parked    the issue carries 'likely-fixed' or 'on-hold'.
+                No PR label is needed.
 --closed-out    close out a finished agent instead: its PR is MERGED, or carries 'QC complete -
                 ready to review' or 'Ready for Merge' (the wrap-up after QC pass), or its issue is closed with no open
                 PR (likely-fixed confirmed, won't-fix). Same cleanup; the session is kept, and the
@@ -48,6 +58,8 @@ import pdo_config  # noqa: E402
 import pdo_herdr  # noqa: E402
 
 HERE = pdo_config.ENGINE_HOME
+PAUSE_REASONS = ("question", "ux-gate", "decision", "blocked", "parked")
+PAUSE_LABELS = {"ux-gate": {"awaiting-ux-gate"}, "decision": {"awaiting-decision"}, "parked": {"likely-fixed", "on-hold"}}
 QC_PORTS = set()  # the project's QC_PORTS + AGENT_QC_PORTS: never stopped (the human's and the QC Agent's servers)
 QC_READY, QC_DONE = "ready for QC", "QC complete - ready to review"  # LABEL_QC_READY / LABEL_QC_DONE
 MERGE_READY, QC_ESCALATED = "Ready for Merge", "QC escalated"  # LABEL_MERGE_READY / LABEL_QC_ESCALATED
@@ -163,9 +175,17 @@ def main():
     ap.add_argument("--servers-only", action="store_true")
     ap.add_argument("--ux-gate", action="store_true")
     ap.add_argument("--closed-out", action="store_true")
+    ap.add_argument("--pause", choices=PAUSE_REASONS)
+    ap.add_argument("--blocked", action="store_true")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
+    if a.blocked:
+        a.pause = "blocked"
+    if a.ux_gate and not a.pause:
+        a.pause = "ux-gate"
+    if a.pause and (a.servers_only or a.closed_out):
+        die("--pause is a full hibernation: not with --servers-only or --closed-out")
 
     global QC_PORTS, QC_READY, QC_DONE, MERGE_READY, QC_ESCALATED
     cfg = pdo_config.load(a.project, "hibernate")
@@ -194,12 +214,19 @@ def main():
     if not a.servers_only:
         if not session or not glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session}.jsonl")):
             die("no resumable Claude session recorded; refusing (it couldn't be brought back)")
+        tail = ""
         if pane:
             tail = "\n".join(run("herdr", "pane", "read", pane["pane_id"]).splitlines()[-40:])
-            if pane.get("agent_status") not in ("idle", "done"):
+            asking = pane.get("agent_status") == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed"))
+            if a.pause == "question":
+                if not asking:
+                    die("--pause question: no question is pending on its screen", 3)
+            elif pane.get("agent_status") not in ("idle", "done"):
                 die(f"agent is {pane.get('agent_status')}, not idle", 3)
-            if pane.get("agent_status") == "blocked" or any(q in tail for q in ("Enter to select", "Do you want to proceed")):
-                die("a question is pending in the agent's workspace", 3)
+            elif asking:
+                die("a question is pending in the agent's workspace (--pause question keeps it for the human)", 3)
+        elif a.pause == "question":
+            die("--pause question needs the agent's live tab (the question is read from its screen)", 3)
         pr = json.loads(run("gh", "pr", "list", "-R", f"{org}/{a.repo}", "--head", meta.get("branch", ""),
                             "--state", "all", "--json", "number,labels,state,isDraft,headRefOid", "--limit", "1") or "[]")
         labels = {l["name"] for l in (pr[0]["labels"] if pr else [])}
@@ -211,7 +238,19 @@ def main():
         # confirmed, won't-fix)
         finished = pr_state == "MERGED" or bool({QC_DONE, MERGE_READY} & labels) \
             or (issue.get("state") == "closed" and pr_state != "OPEN")
-        if a.closed_out:
+        blockers = None
+        if a.pause:
+            if a.pause in PAUSE_LABELS and not PAUSE_LABELS[a.pause] & issue_labels:
+                die(f"--pause {a.pause}: the issue carries none of {sorted(PAUSE_LABELS[a.pause])}", 3)
+            if a.pause == "blocked":
+                blockers = pdo_config.open_blockers(org, a.repo, a.number)
+                if not blockers:
+                    die("--pause blocked: no open blocked-by issues recorded on GitHub "
+                        "(add them first: the issue's Relationships, or `pdo fleet deps add`)", 3)
+                dirty = run("git", "-C", worktree, "status", "--porcelain", "--untracked-files=no") if worktree else ""
+                if dirty.strip():
+                    die(f"--pause blocked: uncommitted changes in {worktree}; commit and push first", 3)
+        elif a.closed_out:
             if not finished:
                 die(f"--closed-out needs a merged PR, a PR labelled '{QC_DONE}' or '{MERGE_READY}', "
                     "or a closed issue with no open PR", 3)
@@ -259,9 +298,22 @@ def main():
         meta["workspace_id"] = meta["pane_id"] = meta["tab_id"] = None  # stale ids must not point at a future place
         if a.closed_out:
             meta["closed_out"] = True
+        if a.pause:
+            gate = meta.get("gate") or {}
+            detail = ("\n".join(l for l in tail.splitlines() if l.strip())[-1500:] if a.pause == "question"
+                      else gate.get("name") if a.pause in ("ux-gate", "decision") else None)
+            meta["paused"] = {"reason": a.pause, "since": meta["hibernated_at"], "detail": detail,
+                              "link": gate.get("link") if a.pause in ("ux-gate", "decision") else None,
+                              "blockers": blockers, "reply": None}
         with open(meta_file + ".tmp", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=1)
         os.replace(meta_file + ".tmp", meta_file)
+    if a.pause and not a.dry_run and not (a.pause in ("ux-gate", "decision") and (meta.get("gate") or {}).get("notified_at")):
+        what = {"question": "has a question for you", "ux-gate": "waits at a UX gate", "decision": "waits for your design decision",
+                "blocked": "is parked until its blockers close", "parked": "waits on you (parked)"}[a.pause]
+        pdo_config.notify(cfg, f"{meta.get('name') or f'{a.repo}#{a.number}'} {what}",
+                          (meta["paused"].get("detail") or ", ".join(blockers or []) or "")[-300:],
+                          meta["paused"].get("link"))
     released = None
     if a.closed_out:
         # finished: the managed-by claim label comes off (a hibernated agent still in progress keeps it)
@@ -270,7 +322,7 @@ def main():
         released = r.returncode == 0
         if not released:
             print(f"hibernate: warning: claim label not released: {r.stderr.strip()[:200]}", file=sys.stderr)
-    print(json.dumps({"workspace": meta.get("name"), "hibernated": not a.servers_only, "stopped": len(procs), "freed_side_mb": freed,
+    print(json.dumps({"workspace": meta.get("name"), "hibernated": not a.servers_only, "paused": a.pause, "stopped": len(procs), "freed_side_mb": freed,
                       "freed_tmp_mb": freed_tmp,
                       "tab_closed": not a.servers_only, "claim_released": released}))
 

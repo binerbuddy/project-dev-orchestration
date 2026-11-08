@@ -8,6 +8,8 @@ Usage:
   watch --until-event [--interval 300] [--max 3600]
                                           poll until an actionable event, or until --max
                                           seconds pass (then emit a "heartbeat" event)
+  watch --closeout                        close out finished agents in SELF_MANAGED_REPOS and sweep /tmp,
+                                          for a project with no event watcher running (Repo Manager, CEO)
   watch --arm-status                      print "running" if this Claude session already owns a
                                           live watcher, else "none"; kills watchers left behind by
                                           other (dead or replaced) orchestrator sessions
@@ -34,7 +36,7 @@ human_queue: open PRs by QC stage (agent QC, UX review, Ready for Merge, QC esca
 It also reports weekly/5-hour usage from the oh-my-claudecode HUD cache, and the top of bin/queue.
 
 Events are transitions against the previous snapshot (state file), so each fires once:
-  slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, stalled_long, new_claude_work_this,
+  slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, stalled_long, reply_arrived, new_claude_work_this,
   usage_ceiling, heartbeat. Quiet events (hibernated, closed_out, hibernate_failed,
   event_hook_failed, and any hook event marked "quiet") ride along with the next wake and never
   end --until-event on their own.
@@ -72,6 +74,12 @@ closes them out (same finished rule as above, never parking) and marks hibernate
 their PR merges or issue closes, so tmp-sweep and fleet treat them as finished; a long stall is a
 quiet stalled_long event naming the owner (REPO_MANAGER). Spawning, QC and parking stay the owner's.
 
+Pausing: unless --peek, a live agent idle PAUSE_GRACE_MIN on a question menu, a gate label
+(awaiting-ux-gate / awaiting-decision; only once its work is pushed), likely-fixed / on-hold, or
+open native blockers is paused with bin/hibernate --pause (quiet event 'paused'). A paused agent's
+reply (gate or parked label removed, last blocker closed, a trusted comment since the pause,
+bin/answer) fires reply_arrived once and puts it in resume_queue, served before the queue.
+
 Claims: unless --peek, finished agents (closed out, or hibernated and then merged/closed) whose
 issue still carries the managed-by claim label get it removed with bin/claim --release (quiet
 events 'claim_released' / 'claim_release_failed').
@@ -99,8 +107,10 @@ WEEKLY_CEILING = 90   # keep 10% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
 STALL_ESCALATE_MIN = 24 * 60  # idle this long with unpushed work, or with nothing open: stalled_long, to the owning manager
+PAUSE_GRACE_MIN = 10  # an agent waiting on the human this long is paused (bin/hibernate --pause); an answer typed in its tab sooner still works
+GATE_LABELS = {"ux-gate": "awaiting-ux-gate", "decision": "awaiting-decision"}
 HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'
-QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed", "event_hook_failed", "claim_released", "claim_release_failed"}  # reported on the next wake; never wake by themselves
+QUIET_EVENTS = {"hibernated", "paused", "closed_out", "hibernate_failed", "event_hook_failed", "claim_released", "claim_release_failed"}  # reported on the next wake; never wake by themselves
 SEEN_KEEP = 500  # review ids remembered for dedupe (ids only grow, so the newest are kept)
 SINCE_MAX_AGE_SEC = 7 * 86400  # a carried "since" older than this is clamped (bounds the hook's first fetch)
 HOOK_MAX_EVENTS = 200
@@ -251,11 +261,12 @@ def agents(org, repos, prev):
         # a declared UX sign-off wait frees the slot only while the agent is idle: once it
         # resumes work it counts as active again, even if it forgot to drop the label
         ux_gate = "awaiting-ux-gate" in issue_labels and status != "working"
+        decision_gate = "awaiting-decision" in issue_labels and status != "working"
         parked = bool(pr and pr["state"] == "OPEN" and PARKED_LABELS & set(pr["labels"])) \
-            or likely_fixed or design_ready or ux_gate or "on-hold" in issue_labels or issue.get("state") == "closed"
+            or likely_fixed or design_ready or ux_gate or decision_gate or "on-hold" in issue_labels or issue.get("state") == "closed"
         idle_min = int((time.time() - changed_at) / 60)
         if meta.get("hibernated_at") and pane:  # resumed by hand; resume-agent normally clears this
-            meta["hibernated_at"] = None
+            meta["hibernated_at"] = meta["paused"] = None
             mf = os.path.join(STATE_DIR, "agents", f"{repo}-{num}.json")
             with open(mf + ".tmp", "w", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=1)
@@ -272,6 +283,9 @@ def agents(org, repos, prev):
             "session_id": meta.get("session_id"), "hibernated": False,
             "wrapup_done": finished_marker(tail), "issue_state": issue.get("state"),
             "worktree": meta.get("worktree") or meta.get("cwd"), "on_hold": "on-hold" in issue_labels,
+            "decision_gate": decision_gate, "gate": meta.get("gate"),
+            # a refused --pause isn't retried until the screen changes
+            "pause_refused": old.get("pause_refused") if old.get("digest") == digest else None,
         }
         a = out[key]
         if status in ("idle", "done"):
@@ -305,6 +319,15 @@ def hibernated_agents(org, repos, seen):
             with open(mf + ".tmp", "w", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=1)
             os.replace(mf + ".tmp", mf)
+        paused = meta.get("paused")
+        if paused and not meta.get("done_tracking") and not paused.get("reply"):
+            reply = reply_for(org, repo, num, paused, ilabels, pr)
+            if reply:
+                paused["reply"] = reply
+                mf = os.path.join(STATE_DIR, "agents", f)
+                with open(mf + ".tmp", "w", encoding="utf-8") as fh:
+                    json.dump(meta, fh, indent=1)
+                os.replace(mf + ".tmp", mf)
         out[key] = {
             "repo": repo, "number": num, "brief": (meta.get("name") or "").split(" ", 1)[-1],
             "workspace": meta.get("name"), "workspace_id": None, "pane_id": None,
@@ -316,9 +339,41 @@ def hibernated_agents(org, repos, seen):
             "stalled": False,
             "unchanged_min": int((time.time() - meta["hibernated_at"]) / 60), "digest": "",
             "changed_at": meta["hibernated_at"], "session_id": meta.get("session_id"), "hibernated": True,
-            "idle_reason": "hibernated",
+            "idle_reason": f"paused: {paused['reason']}" if paused else "hibernated", "paused": paused,
+            "decision_gate": "awaiting-decision" in ilabels, "gate": meta.get("gate"),
         }
     return out
+
+
+def reply_for(org, repo, num, paused, ilabels, pr):
+    """The human's reply to a paused agent, or None: its gate or parked label came off, its last
+    blocker closed, a trusted comment on the issue or PR since the pause, or `pdo answer` (recorded
+    as paused.answer). Returns {kind, detail, at}."""
+    now = int(time.time())
+    reason = paused.get("reason")
+    if paused.get("answer"):
+        return {"kind": "answer", "detail": paused["answer"], "at": paused.get("answered_at") or now}
+    if reason in GATE_LABELS and GATE_LABELS[reason] not in ilabels:
+        return {"kind": "gate cleared", "detail": f"'{GATE_LABELS[reason]}' was removed", "at": now}
+    if reason == "parked" and not {"likely-fixed", "on-hold"} & ilabels:
+        return {"kind": "unparked", "detail": "its likely-fixed / on-hold label was removed", "at": now}
+    if reason == "blocked":
+        left = pdo_config.open_blockers(org, repo, num)
+        if left == []:
+            return {"kind": "unblocked", "detail": "every blocker closed: " + ", ".join(paused.get("blockers") or []), "at": now}
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(paused.get("since") or now))
+    for n in {num, (pr or {}).get("number")} - {None}:
+        out = run(["gh", "api", f"repos/{org}/{repo}/issues/{n}/comments?since={since}&per_page=50", "--jq",
+                   '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or '
+                   '.author_association == "COLLABORATOR") | {url: .html_url, body: .body[:600], created_at}]'])
+        try:
+            fresh = [c for c in json.loads(out or "[]") if c["created_at"] >= since]
+        except ValueError:
+            fresh = []
+        if fresh:
+            c = fresh[-1]
+            return {"kind": "comment", "detail": c["body"], "url": c["url"], "at": now}
+    return None
 
 
 def finished(a):
@@ -346,6 +401,8 @@ def classify(a):
         why = "unpushed"
     elif a.get("ux_gate"):
         why = "UX gate"
+    elif a.get("decision_gate"):
+        why = "decision gate"
     elif open_pr and QC_ESCALATED in labels and not PASSED & labels:
         why = "QC escalated"
     elif open_pr and MERGE_READY in labels:
@@ -376,6 +433,28 @@ def finished_marker(tail):
     return "wrap-up done" in t or "rebase done" in t
 
 
+def pause_reason(a):
+    """The --pause reason for a live agent that has waited on the human PAUSE_GRACE_MIN, or None.
+    A question needs an unmistakable prompt (a menu, herdr's blocked status), never a turn that
+    merely ends in "?". Gates wait while the agent has unpushed work: its prototype must be on the
+    PR branch for the human to see it once its own dev stack is gone."""
+    if a.get("hibernated") or not a.get("session_id") or a["unchanged_min"] < PAUSE_GRACE_MIN or a.get("pause_refused"):
+        return None
+    if a["question_pending"] and a["status"] in ("idle", "done", "blocked"):
+        return "question"
+    if a["status"] not in ("idle", "done") or finished(a):
+        return None
+    if a.get("ux_gate") or a.get("decision_gate"):
+        return None if a.get("git_hold") else ("ux-gate" if a.get("ux_gate") else "decision")
+    if a.get("likely_fixed") or a.get("on_hold"):
+        return "parked"
+    pr = a.get("pr") or {}
+    if pr.get("state") != "OPEN" and a.get("idle_reason") in ("idle", "stalled") and not a.get("git_hold"):
+        if pdo_config.open_blockers(CFG["org"], a["repo"], a["number"]):
+            return "blocked"
+    return None
+
+
 def auto_hibernate(project, ag, closeout_only=False):
     """Release RAM held by agents parked at 'ready for QC' (idle >= HIBERNATE_AFTER_MIN, no
     question pending). Token-free: runs inside the watcher. Returns quiet events. closeout_only
@@ -384,6 +463,19 @@ def auto_hibernate(project, ag, closeout_only=False):
     for k, a in ag.items():
         labels = set((a.get("pr") or {}).get("labels", []))
         state = (a.get("pr") or {}).get("state")
+        # waiting on the human: pause it (session and worktree kept, slot freed, dev stack stopped)
+        reason = None if closeout_only else pause_reason(a)
+        if reason:
+            r = subprocess.run([os.path.join(HERE, "bin", "hibernate"), a["repo"], str(a["number"]), "--project", project,
+                                "--pause", reason], capture_output=True, text=True, timeout=180)
+            if r.returncode == 0:
+                a.update({"status": "hibernated", "hibernated": True, "workspace_id": None, "pane_id": None,
+                          "idle_reason": f"paused: {reason}", "paused": {"reason": reason, "reply": None}})
+                ev.append({"type": "paused", "agent": k, "reason": reason, "detail": r.stdout.strip()})
+            else:
+                a["pause_refused"] = r.stderr.strip()[:200]
+                ev.append({"type": "hibernate_failed", "agent": k, "detail": f"--pause {reason}: " + r.stderr.strip()[:200]})
+            continue
         if (a.get("hibernated") or a["status"] not in ("idle", "done") or a["question_pending"]
                 or not a.get("session_id")):
             continue
@@ -490,8 +582,15 @@ def waiting_on_you(ag):
         if a["merged"] or a["status"] == "gone":
             continue
         labels = set((a["pr"] or {}).get("labels", []))
-        if a.get("ux_gate"):
+        paused = a.get("paused") or {}
+        if paused and not paused.get("reply"):
+            why = f"paused: {paused.get('reason')}"
+        elif paused:
+            continue  # replied: in resume_queue, the orchestrator's move
+        elif a.get("ux_gate"):
             why = "UX gate"
+        elif a.get("decision_gate"):
+            why = "decision gate"
         elif a["question_pending"]:
             why = "question"
         elif QC_ESCALATED in labels and not PASSED & labels:
@@ -507,7 +606,8 @@ def waiting_on_you(ag):
         else:
             continue
         out.append({"agent": k, "why": why, "workspace": a.get("workspace"), "pane_id": a["pane_id"],
-                    "hibernated": bool(a.get("hibernated")),
+                    "hibernated": bool(a.get("hibernated")), "detail": paused.get("detail") or (a.get("gate") or {}).get("name"),
+                    "link": paused.get("link") or (a.get("gate") or {}).get("link"), "blockers": paused.get("blockers"),
                     "pr": (a["pr"] or {}).get("url"), "waiting_min": a["unchanged_min"]})
     inbox = CFG.get("inbox") or os.environ.get("PDO_INBOX") or os.path.join(STATE_DIR, "intake-inbox")
     pending = sorted(f for f in (os.listdir(inbox) if os.path.isdir(inbox) else [])
@@ -517,8 +617,9 @@ def waiting_on_you(ag):
         out.append({"agent": None, "why": "intake inbox", "workspace": "intake", "pane_id": None,
                     "hibernated": False, "pr": None, "count": len(pending),
                     "waiting_min": int((time.time() - oldest) / 60)})
-    order = {"question": 0, "QC escalated": 1, "UX gate": 1, "idle - gate/review?": 2, "QC": 3, "intake inbox": 4,
-             "confirm likely-fixed": 5}
+    order = {"question": 0, "paused: question": 0, "QC escalated": 1, "UX gate": 1, "decision gate": 1,
+             "paused: ux-gate": 1, "paused: decision": 1, "idle - gate/review?": 2, "QC": 3, "intake inbox": 4,
+             "confirm likely-fixed": 5, "paused: parked": 5, "paused: blocked": 6}
     return sorted(out, key=lambda x: (order[x["why"]], -x["waiting_min"]))
 
 
@@ -760,6 +861,56 @@ def conflicting(ag):
     return sorted(out, key=lambda c: c["pr"] or 0)
 
 
+def self_managed(org, prev, rate_low):
+    """(agents in SELF_MANAGED_REPOS, fresh?). Tracked only to close out finished ones and flag long
+    stalls (2 GraphQL points per repo); their queue, QC and parking stay their Repo Manager's. Not
+    fresh (rate low, GitHub failing): the last poll's, never acted on."""
+    global PR_INDEX
+    sm_repos = set(CFG["self_managed_repos"]) & set(CFG["repo_root"])
+    sm_ag, fresh = prev.get("self_managed_agents", {}) if sm_repos else {}, False
+    if sm_repos and not rate_low:
+        reviews_kept = dict(PR_REVIEWS)  # load_pr_index refills PR_REVIEWS: only the watched repos' reviews count
+        sm_idx, fresh = load_pr_index(org, sm_repos)
+        PR_REVIEWS.clear()
+        PR_REVIEWS.update(reviews_kept)
+        if fresh:  # agents() reads PR_INDEX; the human queue, PR cap and reviews must not see these
+            main_idx, PR_INDEX = PR_INDEX, sm_idx
+            try:
+                sm_ag = agents(org, sm_repos, sm_ag)
+            finally:
+                PR_INDEX = main_idx
+    return sm_ag, fresh
+
+
+def closeout_only(project, state_file):
+    """--closeout: the self-managed half of a watcher tick, for projects whose repos are all (or
+    partly) self-managed and run no orchestrator watcher. Skipped while the project's event watcher
+    runs (it does this every tick). Updates only self_managed_agents in the snapshot."""
+    lock = read_lock(project)
+    if lock.get("pid") and alive(lock["pid"]):
+        print(json.dumps({"skipped": "the project's watcher does this each tick"}))
+        return
+    try:
+        prev = json.load(open(state_file, encoding="utf-8"))
+    except Exception:
+        prev = {}
+    gql_left = graphql_remaining()
+    sm_ag, fresh = self_managed(CFG["org"], prev, gql_left is not None and gql_left < GRAPHQL_RESERVE)
+    ev = auto_hibernate(project, sm_ag, closeout_only=True) if fresh else []
+    ev += tmp_sweep(project)
+    ps = prev.get("self_managed_agents", {})
+    for k, a in sm_ag.items():
+        if a.get("stalled_long") and not ps.get(k, {}).get("stalled_long"):
+            ev.append({"type": "stalled_long", "agent": k, "workspace": a.get("workspace"), "why": a["idle_reason"],
+                       "detail": a.get("git_hold"), "idle_hours": a["idle_hours"], "self_managed": True,
+                       "owner": (CFG.get("repo_manager") or {}).get(a["repo"])})
+    prev.update(self_managed_agents=sm_ag, self_managed_fresh=fresh)
+    with open(state_file + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(prev, f)
+    os.replace(state_file + ".tmp", state_file)
+    print(json.dumps({"fresh": fresh, "agents": len(sm_ag), "events": ev}))
+
+
 def snapshot(project, prev):
     polled_at = time.time()  # cursors advance to the start of this poll, so nothing between polls is missed
     org, repos = load_repos(project)
@@ -774,21 +925,7 @@ def snapshot(project, prev):
             if a.get("pr") and a.get("branch"):
                 PR_INDEX.setdefault((a["repo"], a["branch"]), a["pr"])
     ag = agents(org, repos, prev.get("agents", {}))
-    # agents in SELF_MANAGED_REPOS: tracked only to close out finished ones and flag long stalls
-    # (2 GraphQL points per repo); their queue, QC and parking stay their Repo Manager's
-    sm_repos = set(CFG["self_managed_repos"]) & set(CFG["repo_root"])
-    sm_ag, sm_fresh = prev.get("self_managed_agents", {}) if sm_repos else {}, False
-    if sm_repos and not rate_low:
-        reviews_kept = dict(PR_REVIEWS)  # load_pr_index refills PR_REVIEWS: only the watched repos' reviews count
-        sm_idx, sm_fresh = load_pr_index(org, sm_repos)
-        PR_REVIEWS.clear()
-        PR_REVIEWS.update(reviews_kept)
-        if sm_fresh:  # agents() reads PR_INDEX; the human queue, PR cap and reviews must not see these
-            main_idx, PR_INDEX = PR_INDEX, sm_idx
-            try:
-                sm_ag = agents(org, sm_repos, sm_ag)
-            finally:
-                PR_INDEX = main_idx
+    sm_ag, sm_fresh = self_managed(org, prev, rate_low)
     q, q_at = (prev.get("queue", []), prev.get("queue_at", 0)) if rate_low else queue_top(project, prev)
     floor = run([os.path.join(HERE, "bin", "floor"), "--project", project]).strip() or "none"
     if prs_ok:
@@ -806,6 +943,10 @@ def snapshot(project, prev):
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "agents": ag, "active": active,
         "self_managed_agents": sm_ag, "self_managed_fresh": sm_fresh,  # stale (kept from the last poll): never acted on
         "waiting_on_you": waiting_on_you(ag), "human_queue": human_queue(),
+        # paused agents the human answered: resumed before any queue work, oldest reply first
+        "resume_queue": sorted(({"agent": k, "repo": v["repo"], "number": v["number"], "workspace": v.get("workspace"),
+                                 "reason": v["paused"].get("reason"), **v["paused"]["reply"]}
+                                for k, v in ag.items() if (v.get("paused") or {}).get("reply")), key=lambda r: r.get("at") or 0),
         "free_slots": 0 if (over or cap["reached"]) else max(0, MAX_ACTIVE - len(active)),
         "pr_cap": cap, "github": {"graphql_left": gql_left, "rate_low": rate_low, "prs_ok": prs_ok},  # free_slots is 0 only when every repo is capped; queue rows of a capped repo carry pr_capped; the urgent bypass still spawns
         "conflicting": conflicting(ag), "rebase_concurrency": REBASE_CONCURRENCY,
@@ -837,6 +978,10 @@ def events(prev, cur):
             ev.append({"type": "pr_merged", "agent": k, "pr": a["pr"]["url"]})
         if a["stalled"] and not o.get("stalled"):
             ev.append({"type": "stalled", "agent": k, "unchanged_min": a["unchanged_min"]})
+        reply = (a.get("paused") or {}).get("reply")
+        if reply and not (o.get("paused") or {}).get("reply"):
+            ev.append({"type": "reply_arrived", "agent": k, "workspace": a.get("workspace"),
+                       "reason": a["paused"].get("reason"), **{x: reply.get(x) for x in ("kind", "detail", "url")}})
         if a.get("stalled_long") and not o.get("stalled_long"):
             ev.append({"type": "stalled_long", "agent": k, "workspace": a.get("workspace"), "why": a["idle_reason"],
                        "detail": a.get("git_hold"), "idle_hours": a["idle_hours"], "pr": (a["pr"] or {}).get("url")})
@@ -928,6 +1073,7 @@ def main():
     ap.add_argument("--max", type=int, default=3600)
     ap.add_argument("--arm-status", action="store_true")
     ap.add_argument("--peek", action="store_true", help="read-only: don't save the snapshot (for humans/debugging)")
+    ap.add_argument("--closeout", action="store_true", help="only close out finished self-managed agents (no watcher running)")
     a = ap.parse_args()
 
     load_repos(a.project)
@@ -946,6 +1092,9 @@ def main():
                        "started": time.time()}, f)
         os.replace(tmp, lock_path(a.project))
     state_file = os.path.join(STATE_DIR, f"{a.project}-watch.json")
+    if a.closeout:
+        closeout_only(a.project, state_file)
+        return
     try:
         prev = json.load(open(state_file, encoding="utf-8"))
     except Exception:

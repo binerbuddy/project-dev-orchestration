@@ -146,7 +146,7 @@ pdo_finalize() {
   PDO_PROJECT="$PROJECT"
   export PDO_STATE_DIR PDO_INBOX PDO_PROJECT
   local k
-  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES AGENT_QC_REVIEW_HOOK; do
+  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK NOTIFY_CMD BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES AGENT_QC_REVIEW_HOOK; do
     [[ -n "${!k:-}" ]] && printf -v "$k" '%s' "$(_pdo_abs "${!k}")"
   done
   BRIEF_TEMPLATE="${BRIEF_TEMPLATE:-$(pdo_find_prompt dispatch-brief.md)}"
@@ -175,6 +175,7 @@ pdo_finalize() {
   AGENT_QC_REVIEW_HOOK="${AGENT_QC_REVIEW_HOOK:-}" # optional: run by `agent-qc verdict … pass-ux` with <repo> <pr#> (e.g. request a hosted preview)
   WATCH_EVENT_HOOK="${WATCH_EVENT_HOOK:-}"   # optional: bin/watch runs it each snapshot for project-specific events
   WATCH_EVENT_HOOK_TIMEOUT="${WATCH_EVENT_HOOK_TIMEOUT:-120}"  # seconds before the watcher gives up on it
+  NOTIFY_CMD="${NOTIFY_CMD:-}"   # optional: run with <title> <body> [<url>] when an agent pauses for the human or enters a gate
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
   ORCHESTRATE_SKILL="${ORCHESTRATE_SKILL:-${PDO_SKILL_PREFIX}project-orchestrate}"
   REPO_MANAGER_SKILL="${REPO_MANAGER_SKILL:-${PDO_SKILL_PREFIX}project-repo-manager}"
@@ -406,7 +407,7 @@ pdo_config_json() {
     --arg org "${ORG:-}" --arg num "${PROJECT_NUMBER:-}" --argjson roots "$roots" --argjson wt_parents "$wt_parents" --argjson routes "$routes" \
     --argjson managed "$managed" --arg model "$DEFAULT_MODEL" --arg brief "$BRIEF_TEMPLATE" \
     --arg gh_user "$GH_USER" --arg primary "$PRIMARY_REPO" --arg identity "${IDENTITY_HOOK:-}" \
-    --arg team_up "${TEAM_UP_HOOK:-}" --arg sysreport "${SYSREPORT_HOOK:-}" --arg qc "${QC_HOOK:-}" --arg watch_hook "${WATCH_EVENT_HOOK:-}" --arg watch_hook_timeout "${WATCH_EVENT_HOOK_TIMEOUT:-120}" \
+    --arg team_up "${TEAM_UP_HOOK:-}" --arg sysreport "${SYSREPORT_HOOK:-}" --arg qc "${QC_HOOK:-}" --arg watch_hook "${WATCH_EVENT_HOOK:-}" --arg watch_hook_timeout "${WATCH_EVENT_HOOK_TIMEOUT:-120}" --arg notify "${NOTIFY_CMD:-}" \
     --arg fixture_ext "$FIXTURE_EXT" --argjson fx_by_repo "$fx_by_repo" --arg fixture_branch "$FIXTURE_BRANCH" --arg agent_cli "$AGENT_CLI" \
     --arg qc_worktree "$QC_WORKTREE" --arg branch_prefix "$BRANCH_PREFIX" --arg qc_repo "$QC_REPO" --arg qc_ports "$QC_PORTS" --arg qc_ports_shared "$QC_PORTS_SHARED" \
     --arg sm "$SYSTEM_MANAGER_WORKSPACE" --arg control "$CONTROL_DIR" \
@@ -431,7 +432,7 @@ pdo_config_json() {
       qc_hook: $qc, fixture_ext: $fixture_ext, fixture_ext_by_repo: $fx_by_repo, fixture_branch: $fixture_branch, agent_cli: $agent_cli,
       qc_worktree: $qc_worktree, qc_repo: $qc_repo,
       branch_prefix: ($branch_prefix | split(" ") | map(select(test("=")) | split("=") | {key: (.[0] | ascii_downcase), value: (.[1:] | join("="))}) | from_entries),
-      watch_event_hook: $watch_hook, watch_event_hook_timeout: ($watch_hook_timeout | tonumber? // 120),
+      watch_event_hook: $watch_hook, watch_event_hook_timeout: ($watch_hook_timeout | tonumber? // 120), notify_cmd: $notify,
       qc_ports: ($qc_ports | split(" ") | map(select(length > 0) | tonumber)), qc_ports_shared: ($qc_ports_shared == "1"),
       agent_qc_ports: ($aqc_ports | split(" ") | map(select(length > 0) | tonumber)),
       agent_qc_repos: ($aqc_repos | split(" ") | map(select(length > 0))), agent_qc_worktree: $aqc_wt,

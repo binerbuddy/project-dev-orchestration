@@ -226,7 +226,7 @@ def herdr_state():
 
 FLEET_Q = """query fleet($o:String!,$r:String!){repository(owner:$o,name:$r){
   pullRequests(states:OPEN,first:100){totalCount nodes{number title url isDraft headRefName labels(first:30){nodes{name}}}}
-  gates: issues(states:OPEN,labels:["awaiting-ux-gate"],first:50){nodes{number title url}}
+  gates: issues(states:OPEN,labels:["awaiting-ux-gate","awaiting-decision"],first:50){nodes{number title url labels(first:20){nodes{name}}}}
   claims: labels(first:50,query:"managed-by:"){nodes{name issues(states:OPEN,first:100){totalCount nodes{number title url}}}}}}"""
 # native dependencies: every open issue's open blockers, 100 issues a page (~1 point a page)
 DEPS_Q = """query fleetdeps($o:String!,$r:String!,$c:String){repository(owner:$o,name:$r){
@@ -267,7 +267,9 @@ def repo_facts(org, repo, env):
         prs = [{"number": n["number"], "title": n["title"], "url": n["url"], "draft": n["isDraft"],
                 "branch": n["headRefName"], "labels": [l["name"] for l in n["labels"]["nodes"]]}
                for n in d["pullRequests"]["nodes"]]
-        gates = [{"number": n["number"], "title": n["title"], "url": n["url"]} for n in d["gates"]["nodes"]]
+        gates = [{"number": n["number"], "title": n["title"], "url": n["url"],
+                  "kind": "ux" if "awaiting-ux-gate" in {l["name"] for l in ((n.get("labels") or {}).get("nodes") or [])}
+                  or not n.get("labels") else "decision"} for n in d["gates"]["nodes"]]
         claims = [{"label": l["name"], "slug": l["name"].split(":", 1)[1], "total": l["issues"]["totalCount"],
                    "issues": [{"number": i["number"], "title": i["title"], "url": i["url"]} for i in l["issues"]["nodes"]]}
                   for l in ((d.get("claims") or {}).get("nodes") or []) if l["name"].lower().startswith("managed-by:")]
@@ -353,7 +355,10 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
             if repo in managed and {labels_ready, labels_done, labels_merge, labels_esc} & set(pr["labels"]):
                 awaiting += 1
                 awaiting_by_repo[repo] += 1
-        gates += [dict(g, repo=repo) for g in f["gates"]]
+        for g in f["gates"]:  # the agent's `pdo gate enter` record names the gate and what to look at
+            gm = (read_json(os.path.join(state, "agents", f"{repo}-{g['number']}.json"), {}) or {})
+            gates.append(dict(g, repo=repo, name=(gm.get("gate") or {}).get("name"), link=(gm.get("gate") or {}).get("link"),
+                              paused=bool(gm.get("paused") and gm.get("hibernated_at"))))
     try:
         cap = int(open(os.path.join(state, f"{p}-pr-cap"), encoding="utf-8").read().strip())
     except (OSError, ValueError):
@@ -369,7 +374,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         pass
     gate_keys = {f"{g['repo']}#{g['number']}" for g in gates}
     active, parked, hibernated, stalled, questions, standing, owned = [], [], [], [], [], [], []
-    owned_hibernated, idle, stalled_long = [], [], []
+    owned_hibernated, idle, stalled_long, paused = [], [], [], []
     seen = set()
     standing_names = {f"Orchestrator ({p})": "orchestrator", f"Human Review ({p})": "human-review",
                       f"QC ({p})": "human-review", f"QC Agent ({p})": "agent-qc"}  # "QC (<p>)": the pre-0.15 name
@@ -419,6 +424,12 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         pr = pr_by_branch.get((repo, meta.get("branch")))
         # with no open PR it is most likely finished (merged, or closed out by hand) and the watcher
         # marks it done_tracking on its next pass; with one it waits on QC or review
+        if meta.get("paused") and repo not in self_managed:
+            pz = meta["paused"]
+            paused.append({"agent": key, "workspace": meta.get("name"), "reason": pz.get("reason"),
+                           "detail": pz.get("detail"), "link": pz.get("link"), "blockers": pz.get("blockers"),
+                           "replied": bool(pz.get("reply") or pz.get("answer")),
+                           "hours": round((time.time() - (pz.get("since") or meta["hibernated_at"])) / 3600, 1)})
         (owned_hibernated if repo in self_managed else hibernated).append(
             {"agent": key, "workspace": meta.get("name"), "pr": pr["number"] if pr else None, "open_pr": bool(pr),
              "hours": round((time.time() - meta["hibernated_at"]) / 3600, 1),
@@ -485,7 +496,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         "self_managed": [{"repo": r, "manager": (cfg.get("repo_manager") or {}).get(r)} for r in sorted(self_managed)],
         "agents": {"active": active, "parked": parked, "hibernated": hibernated, "stalled": stalled,
                    "standing": standing, "self_managed": owned, "self_managed_hibernated": owned_hibernated,
-                   "idle": idle, "stalled_long": stalled_long},
+                   "idle": idle, "stalled_long": stalled_long, "paused": paused},
         # memory this project's live agents hold, self-managed ones included (they still use the machine)
         "est_agent_mb": (len(active) + len(parked) + len(owned)) * agent_mb,
         "questions": questions, "qc_ready": qc_ready, "qc_done": qc_done, "ux_gates": gates,
@@ -821,8 +832,17 @@ def waiting_list(views, inboxes):
         for x in v["questions"]:
             out.append({"rank": 1, "why": "question", "project": p, "item": x["workspace"], "title": "", "url": None})
         for x in v["ux_gates"]:
-            out.append({"rank": 2, "why": "UX gate", "project": p,
-                        "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
+            out.append({"rank": 1, "why": ("UX gate" if x.get("kind", "ux") == "ux" else "decision gate")
+                        + (" (paused)" if x.get("paused") else ""), "project": p, "item": f"{x['repo']}#{x['number']}",
+                        "title": (f"{x['name']}: " if x.get("name") else "") + x["title"], "url": x.get("link") or x["url"]})
+        for x in v["agents"].get("paused", []):
+            if x["reason"] in ("ux-gate", "decision") or x["replied"]:
+                continue  # gates are listed above; a replied agent is the orchestrator's to resume
+            last = (x.get("detail") or "").strip().splitlines()[-1:] or [""]
+            out.append({"rank": 1 if x["reason"] == "question" else 5,
+                        "why": "paused: " + (f"blocked by {', '.join(x['blockers'] or [])}" if x["reason"] == "blocked" else x["reason"])
+                        + f" {x['hours']:g}h", "project": p, "item": x["workspace"] or x["agent"],
+                        "title": last[0][:120] if x["reason"] == "question" else "", "url": x.get("link")})
         for x in v["agents"].get("stalled_long", []):
             out.append({"rank": 1, "why": f"stalled {x['hours']:g}h ({x['why']})", "project": p, "item": x["workspace"],
                         "title": (x.get("detail") or "") + (f" owner: {x['owner']}" if x.get("owner") else ""), "url": None})
@@ -914,6 +934,10 @@ def text_report(r, only):
             hw = sum(1 for x in hib if x["open_pr"])
             print(f"  self-managed (owner: {owner}) {len(rows)} live: {nm(rows)}"
                   + (f"; {len(hib)} hibernated ({hw} with an open PR)" if hib else "") + "  [not in active/MAX or advice]")
+        if ag.get("paused"):
+            print("  paused (waiting on the human; resumed first when answered): " + "; ".join(
+                f"{x['workspace'] or x['agent']} ({x['reason']}" + (f": {', '.join(x['blockers'] or [])}" if x["reason"] == "blocked" else "")
+                + (", answered" if x["replied"] else "") + f", {x['hours']:g}h)" for x in ag["paused"]))
         if ag.get("idle"):
             print("  idle: " + "; ".join(f"{x['workspace']} ({x['why']}" + (f", {x['hours']:g}h" if x.get("hours") is not None else "") + ")"
                                         for x in ag["idle"]))

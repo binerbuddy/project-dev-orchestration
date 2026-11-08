@@ -48,7 +48,7 @@ once with `bin/install --bin` from a project-dev-orchestration checkout.
   `QC complete - ready to review` → agent QC passed; a human UX review is next. `Ready for Merge` → all QC done
   (`UX testing skipped` with it: agent QC found no visible change). `QC escalated` → agent QC failed twice; a human
   decides. `needs UX review` → always gets a human UX review. Only a human applies `Ready for Merge` by hand.
-- `awaiting-ux-gate`: an agent is waiting for a prototype sign-off. `likely-fixed`: an agent thinks the issue is
+- `awaiting-ux-gate` / `awaiting-decision`: an agent is waiting for a prototype sign-off or a design decision. `likely-fixed`: an agent thinks the issue is
   already done on `<base>`. `blocked-by-pr`: the PR can't merge until another PR lands. `needs-triage`: not yet
   triaged.
 - `managed-by:<manager>`: that manager's agents hold the issue (its claim comment names them). If it isn't your

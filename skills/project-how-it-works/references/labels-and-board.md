@@ -49,6 +49,7 @@ wrong (a "small" fix that needs a migration or a design decision) stops and asks
 | `QC escalated` | Agent QC failed twice; a human decides what happens next. |
 | `has-follow-ups` | On a PR: its body has a "Follow-ups (not filed)" list (ideas, cleanup, test gaps below the reporting bar). `/project-intake follow-ups` lists them so a human can promote any to issues. |
 | `awaiting-ux-gate` | On an issue and its PR: the agent waits for a human's prototype sign-off. |
+| `awaiting-decision` | On an issue and its PR: the agent waits for a human's design decision. |
 | `likely-fixed` | The agent thinks main already does this; a human confirms and closes. |
 | `blocked-by-pr` | The PR can't merge until another PR lands. |
 | `orchestrator-system` | Work on the orchestration system itself, for its System Manager. |

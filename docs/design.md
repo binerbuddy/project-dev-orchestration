@@ -230,6 +230,14 @@ watcher).
   command line lies in the agent's worktree or session scratchpad (plus descendants), closes the workspace
   and records `hibernated_at`. It never touches the agent CLI's ancestors (the pane shell), the QC worktree
   or anything on `QC_PORTS` / `AGENT_QC_PORTS`. `--servers-only` keeps the session and stops just the dev stack and browser.
+- **Paused for the human.** `bin/hibernate --pause question|ux-gate|decision|blocked|parked` (`--blocked`,
+  `--ux-gate`) hibernates an agent that waits on the human: the session and worktree stay, the dev stack
+  stops, the slot frees, NOTIFY_CMD runs, and metadata `paused` records the reason, the question text or the
+  gate (`bin/gate enter`) and the blockers. The watcher pauses agents after `PAUSE_GRACE_MIN` (10) idle on a
+  question menu, a gate label, `likely-fixed` / `on-hold`, or open native blockers (gates wait for a push),
+  then watches for the reply: the gate or parked label removed, the last blocker closed, a trusted comment
+  on the issue or PR, or `bin/answer`. That fires `reply_arrived` and lists the agent in `resume_queue`,
+  which the orchestrator serves before any queue item; `bin/resume-agent` clears `paused`.
 - **Automatic.** The watcher (not under `--peek`) hibernates agents idle at `ready for QC` for 5+ min,
   and closes out finished ones (`--closed-out`): PR merged, or `QC complete` / `Ready for Merge` plus
   "wrap-up done" on screen,
@@ -435,6 +443,7 @@ token itself isn't stopped. `/project-pr-review` falls back to a PR comment when
 | `FIXTURE_EXT_BY_REPO` | `()` | `declare -A`: repo → its fixture extension, for repos whose format differs; `qc-fixture-push --repo` uses it before `FIXTURE_EXT` |
 | `WATCH_EVENT_HOOK` | (none) | executable the watcher runs each snapshot for project-specific events (contract below) |
 | `WATCH_EVENT_HOOK_TIMEOUT` | `120` | seconds before the watcher abandons a hook run |
+| `NOTIFY_CMD` | (none) | executable run with `<title> <body> [<url>]` when an agent pauses for the human or enters a gate (a push notification) |
 | `FIXTURE_BRANCH` | `qc-fixtures` | never-merged fixture branch |
 | `SCREENSHOT_DIR` | `.omc/qa` | screenshot root inside a worktree |
 | `CARRY_LABELS` | `client-requested` | issue labels copied onto PRs (comma-separated when a name has spaces) |

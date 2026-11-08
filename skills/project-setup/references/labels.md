@@ -27,6 +27,7 @@ difference; never rename it.
 | `needs-triage` | | `fbca04` | Not yet reviewed by a human; the queue skips it | queue, intake, collaborators |
 | `epic-phase` | | `c5def5` | A phase of an epic; worked only by the epic's build agent | queue, spawn, feature-design |
 | `awaiting-ux-gate` | | `ffe800` | An agent waits for a human's prototype sign-off (on the issue and its PR) | hibernate, watch, feature-build, dispatch brief |
+| `awaiting-decision` | | `ffe800` | An agent waits for a human's design decision (on the issue and its PR) | gate, hibernate, watch, feature-design |
 | `likely-fixed` | | `fbca04` | An agent thinks the default branch already does this; a human confirms | queue, watch, hibernate, dispatch brief |
 | `has-follow-ups` | | `bfd4f2` | The PR body has a "Follow-ups (not filed)" list; `/project-intake follow-ups` harvests them | lifecycle skills, pr-triage, intake |
 | `blocked-by-pr` | | `e99695` | The PR can't merge until another PR lands | small-fix, feature-build |

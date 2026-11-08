@@ -125,6 +125,7 @@ the command that checks each; you QC by running them or by reading the evidence 
 | `QC escalated` | Agent QC failed twice; you decide. |
 | `needs UX review` | Always gets a human UX review. Intake sets it on issues; it's carried onto their PRs. |
 | `awaiting-ux-gate` | On an issue and its PR: the agent is waiting for your prototype sign-off. |
+| `awaiting-decision` | On an issue and its PR: the agent is waiting for your design decision. |
 | `likely-fixed` | The agent thinks it's already done; you confirm and close. |
 | `has-follow-ups` | The PR body lists follow-ups the agent didn't file; `/project-intake follow-ups` lists them to promote. |
 | `on-hold` | Parked by you; never started. |

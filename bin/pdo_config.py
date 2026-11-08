@@ -151,3 +151,30 @@ def git_hold(worktree, pr_head=None):
     if n and n != "0":
         return f"{n} commit{'s' if n != '1' else ''} not pushed to the PR branch"
     return None
+
+
+def notify(cfg, title, body, url=None):
+    """Run the project's NOTIFY_CMD with <title> <body> [<url>] (a push notification to the human).
+    Never raises: a missing or failing command is ignored (the waiting lists still show the item)."""
+    cmd = (cfg or {}).get("notify_cmd")
+    if not cmd:
+        return False
+    try:
+        r = subprocess.run([cmd, title, body] + ([url] if url else []), capture_output=True, text=True, timeout=30)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def open_blockers(org, repo, number):
+    """Open issues blocking <repo>#<number> (GitHub's native "blocked by"), as ["owner/repo#n", ...];
+    None when GitHub can't say."""
+    r = subprocess.run(["gh", "api", f"repos/{org}/{repo}/issues/{number}/dependencies/blocked_by", "--jq",
+                        '[.[] | select(.state == "open") | (.repository_url | sub(".*/repos/"; "")) + "#" + (.number | tostring)]'],
+                       capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout or "[]")
+    except ValueError:
+        return None
