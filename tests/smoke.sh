@@ -698,6 +698,11 @@ eq "fleet: ... nor in its advice" "$(jq -r '.advice.gamma.active' <<<"$out" 2>/d
 eq "fleet: ... but in its memory estimate" "$(jq -r '.projects[1].est_agent_mb' <<<"$out" 2>/dev/null)" 400
 has "fleet text: self-managed line names the owner" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --project gamma 2>/dev/null)" "self-managed (owner: Lib Lead) 1 live: lib-5 owned work"
 check "fleet: gbot's calls used its own token" grep -q "gh auth token -u gbot" "$SMOKE_LOG"
+# a self-managed repo that another project runs with its own orchestrator belongs to that project
+ME="$T/cfg-me"; mkdir -p "$ME/projects"; cp "$FC/projects/gamma.env" "$ME/projects/"
+printf 'ORG="gamma"\ndeclare -A REPO_ROOT=([lib]="%s")\nMANAGER="Lib Lead"\nCONFLICT_RESOLUTION=merge\n' "$T/repos/widget.git" >"$ME/projects/libteam.env"
+eq "managed_elsewhere: lib is libteam's now, not gamma's" "$(PDO_CONFIG_DIRS="$ME" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pdo_config as c; print(sorted(c.managed_elsewhere(c.try_load("gamma")[0])), sorted(c.managed_elsewhere(c.try_load("libteam")[0])))' "$BIN")" "['lib'] []"
+eq "CONFLICT_RESOLUTION: merge, default rebase" "$(PDO_CONFIG_DIRS="$ME" "$BIN/pdo-config" --project libteam --json | jq -r .conflict_resolution) $(PDO_CONFIG_DIRS="$ME" "$BIN/pdo-config" --project gamma --json | jq -r .conflict_resolution)" "merge rebase"
 # the watcher's idle reasons and long stalls; a hibernated self-managed agent is counted apart
 echo '{"agents":{"tool#4":{"idle_reason":"unpushed","idle_hours":30,"stalled_long":true,"git_hold":"8 commits not pushed to the PR branch"}}}' >"$FS/alpha-watch.json"
 echo '{"repo":"lib","number":8,"name":"lib-8 parked","branch":"feat/8","hibernated_at":1700000000}' >"$FS/agents/lib-8.json"

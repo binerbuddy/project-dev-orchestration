@@ -443,6 +443,8 @@ token itself isn't stopped. `/project-pr-review` falls back to a PR comment when
 | `FIXTURE_EXT_BY_REPO` | `()` | `declare -A`: repo → its fixture extension, for repos whose format differs; `qc-fixture-push --repo` uses it before `FIXTURE_EXT` |
 | `WATCH_EVENT_HOOK` | (none) | executable the watcher runs each snapshot for project-specific events (contract below) |
 | `WATCH_EVENT_HOOK_TIMEOUT` | `120` | seconds before the watcher abandons a hook run |
+| `CONFLICT_RESOLUTION` | `rebase` | how a conflicting PR is brought up to date: `rebase` (force-with-lease) or `merge` (merge the base in, plain push; for projects that never rewrite PR history) |
+| `SELF_MANAGED_REPOS` that another project runs | | a repo another project lists in `REPO_ROOT` (not self-managed there) is left to that project: this project's watcher and fleet skip its agents; it stays in `REPO_ROOT` only for reading (spec repo, cross-repo work) |
 | `NOTIFY_CMD` | (none) | executable run with `<title> <body> [<url>]` when an agent pauses for the human or enters a gate (a push notification) |
 | `FIXTURE_BRANCH` | `qc-fixtures` | never-merged fixture branch |
 | `SCREENSHOT_DIR` | `.omc/qa` | screenshot root inside a worktree |

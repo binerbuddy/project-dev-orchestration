@@ -322,8 +322,10 @@ def manager_of(cfg, workspaces, agents_by_ws):
 def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     p = cfg["project"]
     state = cfg["state_dir"]
-    repos = set(cfg["repo_root"])
-    self_managed = set(cfg["self_managed_repos"])
+    # a self-managed repo that another project runs with its own orchestrator is listed there, not here
+    elsewhere = pdo_config.managed_elsewhere(cfg)
+    repos = set(cfg["repo_root"]) - elsewhere
+    self_managed = set(cfg["self_managed_repos"]) - elsewhere
     managed = repos - self_managed
     labels_ready, labels_done = cfg["label_qc_ready"], cfg["label_qc_done"]
     labels_merge, labels_esc = cfg["label_merge_ready"], cfg["label_qc_escalated"]

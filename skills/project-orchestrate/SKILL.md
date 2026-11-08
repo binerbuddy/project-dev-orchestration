@@ -51,7 +51,8 @@ continue.
 
 `conflicting` lists agent PRs GitHub marks CONFLICTING; `in_progress` means the agent is already
 working. While fewer than `rebase_concurrency` (2) entries are in progress, take the next one that
-isn't (lowest PR number first) and send the rebase prompt from `references/events.md` with
+isn't (lowest PR number first) and send the rebase prompt from `references/events.md` (the **merge**
+variant when the entry says `resolve: merge`: the project never rewrites PR history) with
 `pdo resume-agent <repo> <issue#> --project <p> --prompt "…"`. After a successful resume,
 `pdo rebase-mark <Repo>-<issue#>`.
 

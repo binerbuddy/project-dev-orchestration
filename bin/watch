@@ -854,13 +854,16 @@ def conflicting(ag):
             except (OSError, ValueError):
                 requested_min, attempts = None, 0
             out.append({"agent": k, "pr": pr.get("number"), "url": pr.get("url"), "base": pr.get("base"),
+                        "resolve": CFG.get("conflict_resolution") or "rebase",  # merge: merge the base in, never force-push
                         "in_progress": not a.get("hibernated") and a["status"] in ("working",),
                         "requested_min": requested_min, "attempts": attempts})
-    # a PR that's clean again clears its rebase marker, so a later conflict starts a fresh count
+    # a PR that's clean again clears its rebase marker, so a later conflict starts a fresh count;
+    # only this watcher's repos (another project's watcher may share the state dir)
     live = {c["agent"].replace("#", "-") for c in out}
+    mine = {a["repo"] for a in ag.values()} | set(CFG.get("repo_root") or {}) - set(CFG.get("self_managed_repos") or [])
     d = os.path.join(STATE_DIR, "rebase")
     for f in (os.listdir(d) if os.path.isdir(d) else []):
-        if f not in live:
+        if f not in live and f.rsplit("-", 1)[0] in mine:
             os.remove(os.path.join(d, f))
     return sorted(out, key=lambda c: c["pr"] or 0)
 
@@ -870,7 +873,7 @@ def self_managed(org, prev, rate_low):
     stalls (2 GraphQL points per repo); their queue, QC and parking stay their Repo Manager's. Not
     fresh (rate low, GitHub failing): the last poll's, never acted on."""
     global PR_INDEX
-    sm_repos = set(CFG["self_managed_repos"]) & set(CFG["repo_root"])
+    sm_repos = (set(CFG["self_managed_repos"]) & set(CFG["repo_root"])) - pdo_config.managed_elsewhere(CFG)
     sm_ag, fresh = prev.get("self_managed_agents", {}) if sm_repos else {}, False
     if sm_repos and not rate_low:
         reviews_kept = dict(PR_REVIEWS)  # load_pr_index refills PR_REVIEWS: only the watched repos' reviews count

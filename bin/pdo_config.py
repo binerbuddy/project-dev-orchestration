@@ -178,3 +178,23 @@ def open_blockers(org, repo, number):
         return json.loads(r.stdout or "[]")
     except ValueError:
         return None
+
+
+_ELSEWHERE = {}
+
+
+def managed_elsewhere(cfg):
+    """This project's SELF_MANAGED_REPOS that another project runs with its own orchestrator (in its
+    REPO_ROOT and not self-managed there). Kept in REPO_ROOT here only for reading (a spec repo,
+    cross-repo work); this project's watcher and fleet leave their agents to that project."""
+    p = cfg["project"]
+    if p not in _ELSEWHERE:
+        mine, out = set(cfg.get("self_managed_repos") or []), set()
+        for other in projects() if mine else []:
+            if other == p:
+                continue
+            o, _ = try_load(other)
+            if o and o.get("org") == cfg.get("org"):
+                out |= (set(o.get("repo_root") or {}) - set(o.get("self_managed_repos") or [])) & mine
+        _ELSEWHERE[p] = out
+    return _ELSEWHERE[p]

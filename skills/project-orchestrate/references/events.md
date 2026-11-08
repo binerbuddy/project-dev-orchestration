@@ -64,6 +64,12 @@ Orchestrator check-in: you've been idle for <n> min without a pending question. 
 Your PR #<n> now conflicts with its base (<base>), after other PRs merged. Rebase it: git fetch origin && git rebase origin/<base> (if <base> was merged or deleted, retarget the PR to the default branch with gh pr edit --base <default> and rebase onto origin/<default>). Resolve every conflict keeping both sides' intent, following any rebase notes in your project profile's Conventions section (e.g. generated files to regenerate rather than merge). Run the profile's Build & checks commands and wait for them (don't end your turn on a background job), then git push --force-with-lease. Keep all labels. Post one PR comment: 'Rebased onto <base> @ <sha>; conflicts resolved in: <files>' (say if behaviour may have changed and needs re-QC). Stop any dev server you started. Say 'rebase done' as your last line.
 ```
 
+**Merge** (step 2b, `resolve: merge`):
+
+```
+Your PR #<n> now conflicts with its base (<base>), after other PRs merged. This project never rewrites PR history: don't rebase, amend or force-push. Merge the base in: git fetch origin && git merge origin/<base>. Resolve every conflict keeping both sides' intent, following any notes in your project profile's Conventions section. Run the profile's Build & checks commands and wait for them (don't end your turn on a background job), then git push (a plain push). Keep all labels. Post one PR comment: 'Merged <base> @ <sha>; conflicts resolved in: <files>' (say if behavior may have changed and needs re-QC). Stop any dev server you started. Say 'rebase done' as your last line.
+```
+
 **Reply prompt** (`reply_arrived` / `resume_queue`):
 
 ```
