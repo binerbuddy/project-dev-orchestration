@@ -22,14 +22,19 @@ Command agents are herdr workspaces labelled "<Repo>-<n> <brief>". For each one,
   - parked: PR open with "ready for QC", "QC complete - ready to review", "Ready for Merge" or
     "QC escalated", or the issue is labelled likely-fixed / on-hold or closed (parked agents don't
     count toward the active cap);
-  - stalled: not parked, no pending question, not working, screen unchanged for STALL_MIN.
+  - stalled: not parked, no pending question, not working, screen unchanged for STALL_MIN;
+  - idle_reason (idle_hours), for an idle agent: question, finished-should-close, unpushed (git_hold),
+    UX gate, QC escalated, waiting on merge / UX review / QC, confirm likely-fixed, on hold, handed
+    off, stalled or idle;
+  - stalled_long: idle STALL_ESCALATE_MIN (24 h) with commits it hasn't pushed, or with no question,
+    no open PR and nothing finished.
 It also lists waiting_on_you: agents whose next step is the human's (question, idle at a gate,
 QC, likely-fixed confirmation), with workspace name and pane, for the orchestrator's report, and
 human_queue: open PRs by QC stage (agent QC, UX review, Ready for Merge, QC escalated).
 It also reports weekly/5-hour usage from the oh-my-claudecode HUD cache, and the top of bin/queue.
 
 Events are transitions against the previous snapshot (state file), so each fires once:
-  slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, new_claude_work_this,
+  slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, stalled_long, new_claude_work_this,
   usage_ceiling, heartbeat. Quiet events (hibernated, closed_out, hibernate_failed,
   event_hook_failed, and any hook event marked "quiet") ride along with the next wake and never
   end --until-event on their own.
@@ -61,6 +66,12 @@ instead, until it pushes. They are released: side processes stopped,
 workspace closed. They stay in `agents` with status "hibernated" (built from metadata), so
 qc_complete / pr_merged still fire; bin/resume-agent brings them back.
 
+Self-managed repos (SELF_MANAGED_REPOS): their agents are listed apart, under self_managed_agents
+(their own PR query, 2 GraphQL points per repo, skipped while the rate is low). The watcher only
+closes them out (same finished rule as above, never parking) and marks hibernated ones done once
+their PR merges or issue closes, so tmp-sweep and fleet treat them as finished; a long stall is a
+quiet stalled_long event naming the owner (REPO_MANAGER). Spawning, QC and parking stay the owner's.
+
 Claims: unless --peek, finished agents (closed out, or hibernated and then merged/closed) whose
 issue still carries the managed-by claim label get it removed with bin/claim --release (quiet
 events 'claim_released' / 'claim_release_failed').
@@ -87,6 +98,7 @@ MAX_ACTIVE_DEFAULT = MAX_ACTIVE = 3
 WEEKLY_CEILING = 90   # keep 10% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
+STALL_ESCALATE_MIN = 24 * 60  # idle this long with unpushed work, or with nothing open: stalled_long, to the owning manager
 HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'
 QUIET_EVENTS = {"hibernated", "closed_out", "hibernate_failed", "event_hook_failed", "claim_released", "claim_release_failed"}  # reported on the next wake; never wake by themselves
 SEEN_KEEP = 500  # review ids remembered for dedupe (ids only grow, so the newest are kept)
@@ -259,8 +271,12 @@ def agents(org, repos, prev):
             "unchanged_min": idle_min, "digest": digest, "changed_at": changed_at,
             "session_id": meta.get("session_id"), "hibernated": False,
             "wrapup_done": finished_marker(tail), "issue_state": issue.get("state"),
-            "worktree": meta.get("worktree") or meta.get("cwd"),
+            "worktree": meta.get("worktree") or meta.get("cwd"), "on_hold": "on-hold" in issue_labels,
         }
+        a = out[key]
+        if status in ("idle", "done"):
+            a["git_hold"] = pdo_config.git_hold(a["worktree"], pr.get("head_sha") if pr and pr["state"] == "OPEN" else None)
+        classify(a)
     out.update(hibernated_agents(org, repos, set(out)))
     return out
 
@@ -300,8 +316,57 @@ def hibernated_agents(org, repos, seen):
             "stalled": False,
             "unchanged_min": int((time.time() - meta["hibernated_at"]) / 60), "digest": "",
             "changed_at": meta["hibernated_at"], "session_id": meta.get("session_id"), "hibernated": True,
+            "idle_reason": "hibernated",
         }
     return out
+
+
+def finished(a):
+    """Its work is over: the PR merged, or the issue closed with no open PR (likely-fixed, won't-fix)."""
+    state = (a.get("pr") or {}).get("state")
+    return state == "MERGED" or (a.get("issue_state") == "closed" and state != "OPEN")
+
+
+def classify(a):
+    """Why a live agent is idle (idle_reason, idle_hours), and stalled_long: idle STALL_ESCALATE_MIN
+    with commits it hasn't pushed, or with no question, no open PR and nothing finished. Reasons:
+    question, finished-should-close, unpushed, UX gate, QC escalated, waiting on merge, waiting on UX
+    review, waiting on QC, confirm likely-fixed, on hold, handed off, stalled, idle."""
+    a["idle_reason"], a["stalled_long"] = None, False
+    if a["status"] not in ("idle", "done", "blocked"):
+        return
+    pr = a.get("pr") or {}
+    labels, open_pr = set(pr.get("labels", [])), pr.get("state") == "OPEN"
+    hold = a.get("git_hold")
+    if a["question_pending"]:
+        why = "question"
+    elif finished(a):
+        why = "finished-should-close"
+    elif hold:
+        why = "unpushed"
+    elif a.get("ux_gate"):
+        why = "UX gate"
+    elif open_pr and QC_ESCALATED in labels and not PASSED & labels:
+        why = "QC escalated"
+    elif open_pr and MERGE_READY in labels:
+        why = "waiting on merge"
+    elif open_pr and QC_DONE in labels:
+        why = "waiting on UX review"
+    elif open_pr and QC_READY in labels:
+        why = "waiting on QC"
+    elif a.get("likely_fixed"):
+        why = "confirm likely-fixed"
+    elif a.get("on_hold"):
+        why = "on hold"
+    elif a.get("design_ready"):
+        why = "handed off"
+    elif a.get("stalled"):
+        why = "stalled"
+    else:
+        why = "idle"
+    a["idle_reason"], a["idle_hours"] = why, round(a["unchanged_min"] / 60, 1)
+    a["stalled_long"] = (a["unchanged_min"] >= STALL_ESCALATE_MIN and not a["question_pending"]
+                         and (why == "unpushed" or (why in ("stalled", "idle") and not open_pr)))
 
 
 def finished_marker(tail):
@@ -311,9 +376,10 @@ def finished_marker(tail):
     return "wrap-up done" in t or "rebase done" in t
 
 
-def auto_hibernate(project, ag):
+def auto_hibernate(project, ag, closeout_only=False):
     """Release RAM held by agents parked at 'ready for QC' (idle >= HIBERNATE_AFTER_MIN, no
-    question pending). Token-free: runs inside the watcher. Returns quiet events."""
+    question pending). Token-free: runs inside the watcher. Returns quiet events. closeout_only
+    (agents in SELF_MANAGED_REPOS): only finished agents are closed out; parking is their owner's."""
     ev = []
     for k, a in ag.items():
         labels = set((a.get("pr") or {}).get("labels", []))
@@ -332,7 +398,7 @@ def auto_hibernate(project, ag):
                       or (a.get("issue_state") == "closed" and state != "OPEN"))  # likely-fixed / won't-fix
         # waiting for QC, or escalated to the human after failed agent-QC rounds; a pass label wins
         parked_qc = state == "OPEN" and bool({QC_READY, QC_ESCALATED} & labels) and not PASSED & labels
-        if not (closed_out or parked_qc):
+        if not (closed_out or (parked_qc and not closeout_only)):
             continue
         # mid-rebase, or rebased but not pushed yet: its background checks run before the push, and
         # releasing it now kills them (the PR stays conflicting). Held until the worktree is clean.
@@ -347,6 +413,9 @@ def auto_hibernate(project, ag):
             ev.append({"type": "closed_out" if closed_out else "hibernated", "agent": k, "detail": r.stdout.strip()})
         else:
             ev.append({"type": "hibernate_failed", "agent": k, "detail": r.stderr.strip()[:200]})
+    if closeout_only:
+        for e in ev:
+            e.update(self_managed=True, owner=(CFG.get("repo_manager") or {}).get(ag[e["agent"]]["repo"]))
     return ev
 
 
@@ -705,6 +774,21 @@ def snapshot(project, prev):
             if a.get("pr") and a.get("branch"):
                 PR_INDEX.setdefault((a["repo"], a["branch"]), a["pr"])
     ag = agents(org, repos, prev.get("agents", {}))
+    # agents in SELF_MANAGED_REPOS: tracked only to close out finished ones and flag long stalls
+    # (2 GraphQL points per repo); their queue, QC and parking stay their Repo Manager's
+    sm_repos = set(CFG["self_managed_repos"]) & set(CFG["repo_root"])
+    sm_ag, sm_fresh = prev.get("self_managed_agents", {}) if sm_repos else {}, False
+    if sm_repos and not rate_low:
+        reviews_kept = dict(PR_REVIEWS)  # load_pr_index refills PR_REVIEWS: only the watched repos' reviews count
+        sm_idx, sm_fresh = load_pr_index(org, sm_repos)
+        PR_REVIEWS.clear()
+        PR_REVIEWS.update(reviews_kept)
+        if sm_fresh:  # agents() reads PR_INDEX; the human queue, PR cap and reviews must not see these
+            main_idx, PR_INDEX = PR_INDEX, sm_idx
+            try:
+                sm_ag = agents(org, sm_repos, sm_ag)
+            finally:
+                PR_INDEX = main_idx
     q, q_at = (prev.get("queue", []), prev.get("queue_at", 0)) if rate_low else queue_top(project, prev)
     floor = run([os.path.join(HERE, "bin", "floor"), "--project", project]).strip() or "none"
     if prs_ok:
@@ -720,6 +804,7 @@ def snapshot(project, prev):
     q = mark_pr_capped(q, cap)
     return {
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "agents": ag, "active": active,
+        "self_managed_agents": sm_ag, "self_managed_fresh": sm_fresh,  # stale (kept from the last poll): never acted on
         "waiting_on_you": waiting_on_you(ag), "human_queue": human_queue(),
         "free_slots": 0 if (over or cap["reached"]) else max(0, MAX_ACTIVE - len(active)),
         "pr_cap": cap, "github": {"graphql_left": gql_left, "rate_low": rate_low, "prs_ok": prs_ok},  # free_slots is 0 only when every repo is capped; queue rows of a capped repo carry pr_capped; the urgent bypass still spawns
@@ -752,6 +837,16 @@ def events(prev, cur):
             ev.append({"type": "pr_merged", "agent": k, "pr": a["pr"]["url"]})
         if a["stalled"] and not o.get("stalled"):
             ev.append({"type": "stalled", "agent": k, "unchanged_min": a["unchanged_min"]})
+        if a.get("stalled_long") and not o.get("stalled_long"):
+            ev.append({"type": "stalled_long", "agent": k, "workspace": a.get("workspace"), "why": a["idle_reason"],
+                       "detail": a.get("git_hold"), "idle_hours": a["idle_hours"], "pr": (a["pr"] or {}).get("url")})
+    # self-managed repos' agents belong to their Repo Manager: a long stall is reported quietly, with the owner
+    ps = prev.get("self_managed_agents", {})
+    for k, a in cur.get("self_managed_agents", {}).items():
+        if a.get("stalled_long") and not ps.get(k, {}).get("stalled_long"):
+            ev.append({"type": "stalled_long", "quiet": True, "agent": k, "workspace": a.get("workspace"),
+                       "why": a["idle_reason"], "detail": a.get("git_hold"), "idle_hours": a["idle_hours"],
+                       "self_managed": True, "owner": (CFG.get("repo_manager") or {}).get(a["repo"])})
     for k in pa.keys() - ca.keys():
         if pa[k].get("hibernated") or pa[k].get("merged"):
             continue  # a finished, hibernated agent leaving tracking isn't "gone"
@@ -873,6 +968,8 @@ def main():
         quiet += hook_quiet
         if not a.peek:
             fresh = auto_hibernate(a.project, cur["agents"])
+            if cur["self_managed_fresh"]:
+                quiet += auto_hibernate(a.project, cur["self_managed_agents"], closeout_only=True)
             if fresh:  # waiting_on_you was built before these closed: rebuild it without dead panes
                 cur["waiting_on_you"] = waiting_on_you(cur["agents"])
             quiet += fresh

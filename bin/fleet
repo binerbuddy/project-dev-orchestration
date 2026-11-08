@@ -15,9 +15,12 @@ agents with a question pending, the intake inbox); the queue's eligible count; o
 the human against the PR cap. System constraints: weekly and 5-hour usage (USAGE_CACHE), free memory
 and swap, disk free on the state dir and repo roots, gh GraphQL/core rate limits per GH_USER, the
 overall agent count, and the gh identities shim (active or not, the map's owners). Agents working
-in a SELF_MANAGED_REPOS repo are listed apart, as "self-managed (owner: <REPO_MANAGER>)": the
-owning manager runs them, so they count toward neither the project's active/MAX nor its advice, but
-they are in the memory estimate.
+in a SELF_MANAGED_REPOS repo are listed apart, as "self-managed (owner: <REPO_MANAGER>)", live and
+hibernated: the owning manager runs them, so they count toward neither the project's active/MAX nor
+its advice, but they are in the memory estimate. Each idle agent shows why it is idle (the watcher's
+idle_reason: question, finished-should-close, unpushed, UX gate, waiting on QC / UX review / merge,
+stalled, ...). The waiting list adds "stalled Nh" for an agent idle 24 h with unpushed commits or
+nothing open (stalled_long), and "finished, tab still open" when the watcher's close-out was refused.
 
 Allocation advice per project: go | slow | hold, a reason and a soft suggested_max_active, from
 PORTFOLIO_PRIORITY (1 = highest), RESOURCE_PROFILE (light | medium | heavy, or AGENT_MB /
@@ -358,7 +361,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
 
     # agents: live places (tabs or old-layout workspaces) labelled <Repo>-<n> <brief>, then hibernated metadata
     snap = read_json(os.path.join(state, f"{p}-watch.json"), {}) or {}
-    snap_agents = snap.get("agents") or {}
+    snap_agents = dict(snap.get("self_managed_agents") or {}, **(snap.get("agents") or {}))
     snap_age = None
     try:
         snap_age = int((time.time() - os.path.getmtime(os.path.join(state, f"{p}-watch.json"))) / 60)
@@ -366,6 +369,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         pass
     gate_keys = {f"{g['repo']}#{g['number']}" for g in gates}
     active, parked, hibernated, stalled, questions, standing, owned = [], [], [], [], [], [], []
+    owned_hibernated, idle, stalled_long = [], [], []
     seen = set()
     standing_names = {f"Orchestrator ({p})": "orchestrator", f"Human Review ({p})": "human-review",
                       f"QC ({p})": "human-review", f"QC Agent ({p})": "agent-qc"}  # "QC (<p>)": the pre-0.15 name
@@ -390,6 +394,11 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
             or (key in gate_keys and status != "working") or bool(sa.get("parked") and status != "working")
         row = {"agent": key, "workspace": label, "status": status, "self_managed": m.group(1) in self_managed,
                "pr": pr["number"] if pr else None}
+        if sa.get("idle_reason") and status != "working":  # the watcher's last word on why it's idle
+            idle.append(dict(row, why=sa["idle_reason"], hours=sa.get("idle_hours"), detail=sa.get("git_hold"),
+                             owner=(cfg.get("repo_manager") or {}).get(m.group(1)) if row["self_managed"] else None))
+            if sa.get("stalled_long"):
+                stalled_long.append(idle[-1])
         if m.group(1) in self_managed:
             # another manager owns this repo end to end (this project's queue and watch skip it):
             # listed apart, kept out of active/MAX and the advice, still counted for memory
@@ -408,10 +417,12 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         if repo not in repos or key in seen or meta.get("done_tracking") or not meta.get("hibernated_at"):
             continue
         pr = pr_by_branch.get((repo, meta.get("branch")))
-        # with no open PR it is most likely finished (merged, closed out by hand, or a self-managed
-        # repo the watcher never closes out); with one it waits on QC or review
-        hibernated.append({"agent": key, "workspace": meta.get("name"), "pr": pr["number"] if pr else None,
-                           "open_pr": bool(pr), "hours": round((time.time() - meta["hibernated_at"]) / 3600, 1)})
+        # with no open PR it is most likely finished (merged, or closed out by hand) and the watcher
+        # marks it done_tracking on its next pass; with one it waits on QC or review
+        (owned_hibernated if repo in self_managed else hibernated).append(
+            {"agent": key, "workspace": meta.get("name"), "pr": pr["number"] if pr else None, "open_pr": bool(pr),
+             "hours": round((time.time() - meta["hibernated_at"]) / 3600, 1),
+             "owner": (cfg.get("repo_manager") or {}).get(repo) if repo in self_managed else None})
     if not herdr_ok:  # no live view: metadata says who was running last
         for f in sorted(os.listdir(agents_dir)) if os.path.isdir(agents_dir) else []:
             meta = read_json(os.path.join(agents_dir, f), {}) or {}
@@ -473,7 +484,8 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         "manager": manager_of(cfg, workspaces, agents_by_ws),
         "self_managed": [{"repo": r, "manager": (cfg.get("repo_manager") or {}).get(r)} for r in sorted(self_managed)],
         "agents": {"active": active, "parked": parked, "hibernated": hibernated, "stalled": stalled,
-                   "standing": standing, "self_managed": owned},
+                   "standing": standing, "self_managed": owned, "self_managed_hibernated": owned_hibernated,
+                   "idle": idle, "stalled_long": stalled_long},
         # memory this project's live agents hold, self-managed ones included (they still use the machine)
         "est_agent_mb": (len(active) + len(parked) + len(owned)) * agent_mb,
         "questions": questions, "qc_ready": qc_ready, "qc_done": qc_done, "ux_gates": gates,
@@ -811,6 +823,13 @@ def waiting_list(views, inboxes):
         for x in v["ux_gates"]:
             out.append({"rank": 2, "why": "UX gate", "project": p,
                         "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
+        for x in v["agents"].get("stalled_long", []):
+            out.append({"rank": 1, "why": f"stalled {x['hours']:g}h ({x['why']})", "project": p, "item": x["workspace"],
+                        "title": (x.get("detail") or "") + (f" owner: {x['owner']}" if x.get("owner") else ""), "url": None})
+        for x in v["agents"].get("idle", []):
+            if x["why"] == "finished-should-close" and (x.get("hours") or 0) >= 0.5:  # the watcher's close-out was refused
+                out.append({"rank": 4, "why": "finished, tab still open", "project": p, "item": x["workspace"],
+                            "title": f"owner: {x['owner']}" if x.get("owner") else "", "url": None})
         for x in v["qc_ready"]:
             if x.get("agent_qc"):
                 continue
@@ -857,7 +876,8 @@ def text_report(r, only):
     a = s["agents"]
     print(f"== agents: {a['herdr_total']} herdr agent(s) ({a['claude']} claude), "
           f"{a['project_active']} active and {a['project_hibernated']} hibernated project agent(s)"
-          + (f", {a['self_managed_active']} in self-managed repos" if a["self_managed_active"] else "")
+          + (f", {a['self_managed_active']} live and {a['self_managed_hibernated']} hibernated in self-managed repos"
+             if a["self_managed_active"] or a["self_managed_hibernated"] else "")
           + f"; ~{gb(a['est_agent_mb'])} estimated for live agents")
     print("== waiting on you (all projects, by impact)")
     if not r["waiting_on_you"]:
@@ -887,8 +907,16 @@ def text_report(r, only):
         by_owner = {}
         for x in ag["self_managed"]:
             by_owner.setdefault(x["owner"] or "REPO_MANAGER unset", []).append(x)
+        for x in ag.get("self_managed_hibernated", []):
+            by_owner.setdefault(x["owner"] or "REPO_MANAGER unset", [])
         for owner, rows in sorted(by_owner.items()):
-            print(f"  self-managed (owner: {owner}) {len(rows)}: {nm(rows)}  [not in active/MAX or advice]")
+            hib = [x for x in ag.get("self_managed_hibernated", []) if (x["owner"] or "REPO_MANAGER unset") == owner]
+            hw = sum(1 for x in hib if x["open_pr"])
+            print(f"  self-managed (owner: {owner}) {len(rows)} live: {nm(rows)}"
+                  + (f"; {len(hib)} hibernated ({hw} with an open PR)" if hib else "") + "  [not in active/MAX or advice]")
+        if ag.get("idle"):
+            print("  idle: " + "; ".join(f"{x['workspace']} ({x['why']}" + (f", {x['hours']:g}h" if x.get("hours") is not None else "") + ")"
+                                        for x in ag["idle"]))
         if ag["parked"]:
             print(f"  parked {len(ag['parked'])}: {nm(ag['parked'])}")
         hw = [x for x in ag["hibernated"] if x["open_pr"]]
@@ -999,7 +1027,8 @@ def main():
                    "project_active": sum(len(v["agents"]["active"]) for v in views),
                    "self_managed_active": sum(len(v["agents"]["self_managed"]) for v in views),
                    "est_agent_mb": sum(v["est_agent_mb"] for v in views),
-                   "project_hibernated": sum(len(v["agents"]["hibernated"]) for v in views)},
+                   "project_hibernated": sum(len(v["agents"]["hibernated"]) for v in views),
+                   "self_managed_hibernated": sum(len(v["agents"]["self_managed_hibernated"]) for v in views)},
     }
     advice = advise(views, system)
 

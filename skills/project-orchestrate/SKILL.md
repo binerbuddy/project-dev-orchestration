@@ -37,7 +37,7 @@ Per event, act as `references/events.md` says. Summary: `urgent` → spawn now (
 `slot_freed` / `new_claude_work_this` → step 3; `design_ready` → close the design agent's tab and spawn
 the build; `pr_conflict` → nothing (step 2b); `pr_cap_reached` → report once; `qc_feedback` /
 `qc_complete` → resume the owning agent; `pr_merged` → check the issue and card; `stalled` → read the
-tail, nudge once or report; `agent_gone` → report; `usage_ceiling` → stop spawning, report;
+tail, nudge once or report; `stalled_long` → nudge once if it waits on nothing, and tell the manager; `agent_gone` → report; `usage_ceiling` → stop spawning, report;
 `closed_out` / `hibernated` / `hibernate_failed` / `event_hook_failed` / `claim_released` / hook events marked
 quiet → one informational line (close-out and the watcher's release take the claim label off; a hibernated
 agent still in progress keeps it); `claim_release_failed` → report it, and `pdo claim --release <repo> <n>`
@@ -170,8 +170,9 @@ ran still fire once, computed against the last saved snapshot.
 - **`orchestrator-system` issues** are work on the orchestration system, owned by the System Manager
   (workspace `SYSTEM_MANAGER_WORKSPACE`). The queue excludes them; never spawn one; point the human to
   the System Manager.
-- **`SELF_MANAGED_REPOS`** belong to another manager end to end; the queue and watcher skip them.
-  Never spawn, hibernate or rebase for them.
+- **`SELF_MANAGED_REPOS`** belong to another manager end to end; the queue skips them. The watcher only
+  closes out their finished agents (PR merged, issue closed) and reports long stalls with the owner,
+  under `self_managed_agents`. Never spawn, hibernate or rebase for them yourself.
 - **Epic phases.** Never spawn an `epic-phase` issue (the queue excludes them, `pdo spawn` refuses
   them). The unit of work is the parent Epic, spawned with `--route build`, whose build agent works
   every phase. If a design finished and its epic carries `route:build` with no build agent, spawn the

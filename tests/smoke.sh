@@ -690,8 +690,17 @@ eq "fleet: agent count" "$(jq -c '.system.agents | [.herdr_total, .claude, .proj
 eq "fleet: a self-managed repo's agent is not in the project's active" "$(jq -c '.projects[1].agents | [(.active | length), (.self_managed | map(.agent + ":" + .owner))]' <<<"$out" 2>/dev/null)" '[0,["lib#5:Lib Lead"]]'
 eq "fleet: ... nor in its advice" "$(jq -r '.advice.gamma.active' <<<"$out" 2>/dev/null)" 0
 eq "fleet: ... but in its memory estimate" "$(jq -r '.projects[1].est_agent_mb' <<<"$out" 2>/dev/null)" 400
-has "fleet text: self-managed line names the owner" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --project gamma 2>/dev/null)" "self-managed (owner: Lib Lead) 1: lib-5 owned work"
+has "fleet text: self-managed line names the owner" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --project gamma 2>/dev/null)" "self-managed (owner: Lib Lead) 1 live: lib-5 owned work"
 check "fleet: gbot's calls used its own token" grep -q "gh auth token -u gbot" "$SMOKE_LOG"
+# the watcher's idle reasons and long stalls; a hibernated self-managed agent is counted apart
+echo '{"agents":{"tool#4":{"idle_reason":"unpushed","idle_hours":30,"stalled_long":true,"git_hold":"8 commits not pushed to the PR branch"}}}' >"$FS/alpha-watch.json"
+echo '{"repo":"lib","number":8,"name":"lib-8 parked","branch":"feat/8","hibernated_at":1700000000}' >"$FS/agents/lib-8.json"
+out="$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --json 2>/dev/null)"
+eq "fleet: idle reason per agent" "$(jq -c '[.projects[0].agents.idle[] | "\(.agent):\(.why):\(.hours)"]' <<<"$out")" '["tool#4:unpushed:30"]'
+eq "fleet: a long stall leads the waiting list's second rank" "$(jq -c '[.waiting_on_you[] | select(.why | startswith("stalled")) | "\(.why) \(.item)"]' <<<"$out")" '["stalled 30h (unpushed) tool-4 other work"]'
+eq "fleet: hibernated self-managed agents counted apart" "$(jq -c '[(.projects[1].agents.self_managed_hibernated | map(.agent + ":" + .owner)), (.projects[1].agents.hibernated | length), .system.agents.self_managed_hibernated]' <<<"$out")" '[["lib#8:Lib Lead"],0,1]'
+has "fleet text: the idle line" "$("${F[@]}" PDO_FLEET_MEM_AVAIL_MB=20000 "$BIN/fleet" --project alpha 2>/dev/null)" "idle: tool-4 other work (unpushed, 30h)"
+rm -f "$FS/alpha-watch.json" "$FS/agents/lib-8.json"
 eq "fleet: claimed count per manager" "$(jq -c '[.claims[] | "\(.slug)=\(.count):\(.manager)"]' <<<"$out" 2>/dev/null)" '["orchestrator-alpha=3:Orchestrator (alpha)","docs-team=1:null"]'
 eq "fleet: a claim with no live or in-progress agent is stale" "$(jq -c '[.stale_claims[] | "\(.project):\(.ref)"]' <<<"$out" 2>/dev/null)" '["alpha:alpha/tool#30"]'
 eq "fleet: project claims" "$(jq -c '.projects[0].claims | [.label, (.claimed | length), .stale_known]' <<<"$out" 2>/dev/null)" '["managed-by:orchestrator-alpha",3,true]'
@@ -901,6 +910,48 @@ ag = {"a": agent(1, [w.QC_DONE], True), "b": agent(2, [w.QC_DONE], True, status=
 print(sorted((e["agent"], e["type"]) for e in w.auto_hibernate("acme", ag)))
 PY
 )" "[('a', 'closed_out'), ('e', 'hibernated')]"
+eq "watch: idle reasons and long stalls" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+def agent(labels=(), state="OPEN", status="idle", mins=60, **kw):
+    a = {"status": status, "question_pending": False, "unchanged_min": mins, "issue_state": "open",
+         "pr": {"state": state, "labels": list(labels)} if state else None}
+    a.update(kw); w.classify(a); return a
+cases = [agent(status="working"), agent(question_pending=True), agent(state="MERGED"),
+         agent(state=None, issue_state="closed"), agent(git_hold="2 commits not pushed to the PR branch"),
+         agent(ux_gate=True), agent([w.QC_READY]), agent([w.QC_DONE]), agent([w.MERGE_READY]),
+         agent([w.QC_ESCALATED]), agent(state=None, likely_fixed=True), agent(state=None, on_hold=True),
+         agent(state=None, stalled=True), agent()]
+print([a["idle_reason"] for a in cases])
+long = [agent(state=None, stalled=True, mins=24 * 60), agent(git_hold="1 commit not pushed", mins=24 * 60),
+        agent([w.QC_READY], mins=48 * 60), agent(state=None, stalled=True, mins=23 * 60),
+        agent(state=None, question_pending=True, mins=48 * 60), agent(state="MERGED", mins=48 * 60)]
+print([a["stalled_long"] for a in long])
+prev = {"agents": {}, "queue": [], "pr_cap": {}}
+cur = {"agents": {"x#1": dict(long[1], repo="x", number=1, parked=False, merged=False, stalled=False, workspace="x-1 w", design_ready=False)},
+       "self_managed_agents": {"g#2": dict(long[0], repo="g", workspace="g-2 w")},
+       "queue": [], "pr_cap": {}, "usage_over_ceiling": False, "free_slots": 0}
+print(sorted((e["type"], e["agent"], bool(e.get("quiet"))) for e in w.events(prev, cur) if e["type"] == "stalled_long"))
+print([e["type"] for e in w.events(cur, cur) if e["type"] == "stalled_long"])
+PY
+)" "[None, 'question', 'finished-should-close', 'finished-should-close', 'unpushed', 'UX gate', 'waiting on QC', 'waiting on UX review', 'waiting on merge', 'QC escalated', 'confirm likely-fixed', 'on hold', 'stalled', 'idle']
+[True, True, False, False, False, False]
+[('stalled_long', 'g#2', True), ('stalled_long', 'x#1', False)]
+[]"
+eq "watch: self-managed agents are only closed out, never parked" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys, types
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+w.subprocess = types.SimpleNamespace(run=lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="ok", stderr=""))
+w.CFG["repo_manager"] = {"gov": "Repo Manager (gov)"}
+def agent(n, state, labels=(), issue="open"):
+    return {"repo": "gov", "number": n, "status": "idle", "question_pending": False, "session_id": "s", "unchanged_min": 30,
+            "wrapup_done": False, "issue_state": issue, "pr": {"state": state, "labels": list(labels)} if state else None}
+ag = {"m": agent(1, "MERGED"), "q": agent(2, "OPEN", [w.QC_READY]), "c": agent(3, None, issue="closed")}
+print(sorted((e["agent"], e["type"], e["owner"]) for e in w.auto_hibernate("acme", ag, closeout_only=True)))
+PY
+)" "[('c', 'closed_out', 'Repo Manager (gov)'), ('m', 'closed_out', 'Repo Manager (gov)')]"
 # feedback took the pass labels off; agent QC escalates; then a direct no-UX pass fires once
 mkprs '["QC escalated"]' '[]' >"$T/prs.json"
 out="$(W)"
