@@ -199,6 +199,14 @@ def spawn_meta(repo, num):
         return {}
 
 
+def foreign_claim(meta):
+    """Another manager's agent: its managed-by claim is still on and isn't this project's. When a repo
+    moves to its own project, the old manager's in-flight agents stay untouched (no events, pauses,
+    conflict prompts or slot count) until their claim is handed over: claim --release, then claim."""
+    own, lbl = (CFG.get("claim_label") or "").lower(), (meta.get("claim_label") or "").lower()
+    return bool(own and lbl and lbl != own and not meta.get("claim_released_at"))
+
+
 FIXED_NAMES = {"intake": "intake"}  # workspace label -> herdr agent name
 
 
@@ -229,7 +237,8 @@ def agents(org, repos, prev):
             continue
         repo, num, brief = m.group(1), int(m.group(2)), m.group(3)
         key = f"{repo}#{num}"
-        if key in out:  # one agent per issue: a tab (sorted first) wins over an old-layout workspace
+        # one agent per issue: a tab (sorted first) wins over an old-layout workspace
+        if key in out or foreign_claim(spawn_meta(repo, num)):
             continue
         a = w.get("agent") or {}
         pane = a.get("pane_id")
@@ -306,7 +315,7 @@ def hibernated_agents(org, repos, seen):
             continue
         repo, num = meta.get("repo"), meta.get("number")
         key = f"{repo}#{num}"
-        if not meta.get("hibernated_at") or repo not in repos or key in seen or meta.get("done_tracking"):
+        if not meta.get("hibernated_at") or repo not in repos or key in seen or meta.get("done_tracking") or foreign_claim(meta):
             continue
         pr = dict(PR_INDEX[(repo, meta["branch"])]) if (repo, meta.get("branch")) in PR_INDEX else None
         issue = json.loads(run(["gh", "api", f"repos/{org}/{repo}/issues/{num}", "--jq",
@@ -557,7 +566,7 @@ def release_finished_claims(project, repos):
             meta = json.load(open(os.path.join(d, f), encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if (meta.get("repo") not in repos or not meta.get("claim_label") or meta.get("claim_released_at")
+        if (meta.get("repo") not in repos or not meta.get("claim_label") or meta.get("claim_released_at") or foreign_claim(meta)
                 or not (meta.get("closed_out") or meta.get("done_tracking"))):
             continue
         key = f"{meta['repo']}#{meta.get('number')}"

@@ -703,6 +703,19 @@ ME="$T/cfg-me"; mkdir -p "$ME/projects"; cp "$FC/projects/gamma.env" "$ME/projec
 printf 'ORG="gamma"\ndeclare -A REPO_ROOT=([lib]="%s")\nMANAGER="Lib Lead"\nCONFLICT_RESOLUTION=merge\n' "$T/repos/widget.git" >"$ME/projects/libteam.env"
 eq "managed_elsewhere: lib is libteam's now, not gamma's" "$(PDO_CONFIG_DIRS="$ME" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pdo_config as c; print(sorted(c.managed_elsewhere(c.try_load("gamma")[0])), sorted(c.managed_elsewhere(c.try_load("libteam")[0])))' "$BIN")" "['lib'] []"
 eq "CONFLICT_RESOLUTION: merge, default rebase" "$(PDO_CONFIG_DIRS="$ME" "$BIN/pdo-config" --project libteam --json | jq -r .conflict_resolution) $(PDO_CONFIG_DIRS="$ME" "$BIN/pdo-config" --project gamma --json | jq -r .conflict_resolution)" "merge rebase"
+# ... and the old manager's in-flight agents stay its own until their claim is handed over
+eq "watch: another manager's live claim is left alone; a released or own claim is not" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+w.CFG.update(claim_label="managed-by:libteam")
+print([w.foreign_claim(m) for m in ({"claim_label": "managed-by:gamma"}, {"claim_label": "managed-by:gamma", "claim_released_at": 1},
+                                    {"claim_label": "Managed-by:LibTeam"}, {})])
+w.CFG["claim_label"] = None
+print(w.foreign_claim({"claim_label": "managed-by:gamma"}))
+PY
+)" "[True, False, False, False]
+False"
 # the watcher's idle reasons and long stalls; a hibernated self-managed agent is counted apart
 echo '{"agents":{"tool#4":{"idle_reason":"unpushed","idle_hours":30,"stalled_long":true,"git_hold":"8 commits not pushed to the PR branch"}}}' >"$FS/alpha-watch.json"
 echo '{"repo":"lib","number":8,"name":"lib-8 parked","branch":"feat/8","hibernated_at":1700000000}' >"$FS/agents/lib-8.json"
