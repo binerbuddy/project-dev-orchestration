@@ -233,11 +233,14 @@ watcher).
 - **Paused for the human.** `bin/hibernate --pause question|ux-gate|decision|blocked|parked` (`--blocked`,
   `--ux-gate`) hibernates an agent that waits on the human: the session and worktree stay, the dev stack
   stops, the slot frees, NOTIFY_CMD runs, and metadata `paused` records the reason, the question text or the
-  gate (`bin/gate enter`) and the blockers. The watcher pauses agents after `PAUSE_GRACE_MIN` (10) idle on a
-  question menu, a gate label, `likely-fixed` / `on-hold`, or open native blockers (gates wait for a push),
+  gate (`bin/gate enter`) and the blockers. The watcher pauses agents after `PAUSE_GRACE_MIN` (10) idle at a
+  gate label, `likely-fixed` / `on-hold`, or open native blockers (gates wait for a push),
   then watches for the reply: the gate or parked label removed, the last blocker closed, a trusted comment
   on the issue or PR, or `bin/answer`. That fires `reply_arrived` and lists the agent in `resume_queue`,
   which the orchestrator serves before any queue item; `bin/resume-agent` clears `paused`.
+  A plain question menu never pauses (2026-11-09): it stays live in its slot so the human sees it
+  quickly; `bin/questions` lists every live and paused question across projects with its text and
+  options (the transcript's unanswered AskUserQuestion) and how to answer it.
 - **Automatic.** The watcher (not under `--peek`) hibernates agents idle at `ready for QC` for 5+ min,
   and closes out finished ones (`--closed-out`): PR merged, or `QC complete` / `Ready for Merge` plus
   "wrap-up done" on screen,

@@ -444,9 +444,10 @@ def finished_marker(tail):
 
 def pause_reason(a):
     """The --pause reason for a live agent that has waited on the human PAUSE_GRACE_MIN, or None.
-    A question needs an unmistakable prompt (a menu, herdr's blocked status), never a turn that
-    merely ends in "?". Gates wait while the agent has unpushed work: its prototype must be on the
-    PR branch for the human to see it once its own dev stack is gone."""
+    A plain question never pauses: it keeps its slot so the human can answer it in the tab
+    (`bin/hibernate --pause question` still parks one by hand). Gates wait while the agent has
+    unpushed work: its prototype must be on the PR branch for the human to see it once its own dev
+    stack is gone."""
     if a.get("hibernated") or not a.get("session_id") or a["unchanged_min"] < PAUSE_GRACE_MIN or a.get("pause_refused"):
         return None
     gate = "ux-gate" if a.get("ux_gate") else "decision" if a.get("decision_gate") else None
@@ -454,8 +455,10 @@ def pause_reason(a):
         # an agent at a gate asks "reviewed it? good to proceed?" (that prompt is the human's
         # notification); unanswered, it pauses as the gate, and the label stays for later
         return None if a.get("git_hold") else gate
-    if a["question_pending"] and a["status"] in ("idle", "done", "blocked"):
-        return "question"
+    if a["question_pending"]:
+        # a plain question stays live in its slot, where the human answers it (pdo questions lists it);
+        # only gates pause unanswered
+        return None
     if a["status"] not in ("idle", "done") or finished(a):
         return None
     if a.get("likely_fixed") or a.get("on_hold"):

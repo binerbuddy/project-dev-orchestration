@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""questions — every question an agent is waiting on the human for, across projects (read-only).
+
+Usage: questions [--project P] [--json]
+
+For the human, or whoever relays to them (a CEO, an assistant agent): each agent whose tab shows a
+question (herdr status blocked, or the watcher's question_pending) and each agent paused on one
+(metadata paused.reason "question", not yet answered). Per question: the project, the agent's tab
+name, live or paused, how long it has waited, the issue link, the question text with its options
+(read from the agent's Claude Code transcript: the last AskUserQuestion with no answer yet; the
+last screen lines when there is none), and how to answer:
+  - live: in the agent's tab (only its question UI can answer a menu; nothing types into it);
+  - paused: `pdo answer <repo> <n> "<text>" --project P` (the orchestrator resumes it first).
+Standing agents (orchestrator, QC, manager) with a question on screen are listed too. Nothing is
+written; a missing herdr only drops the live half.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
+
+
+def read_json(path, default=None):
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def screen_tail(pane, n=8):
+    r = subprocess.run(["herdr", "pane", "read", pane], capture_output=True, text=True, timeout=15) if pane else None
+    lines = [ln for ln in (r.stdout if r and r.returncode == 0 else "").splitlines() if ln.strip()]
+    return "\n".join(lines[-n:])
+
+
+def collect(only=None, slots=None, now=None):
+    now = now or time.time()
+    try:
+        slots = pdo_herdr.slots() if slots is None else slots
+    except Exception:  # noqa: BLE001 - no herdr: paused questions only
+        slots = []
+    out, seen = [], set()
+    for p in [only] if only else pdo_config.projects():
+        cfg, _ = pdo_config.try_load(p)
+        if not cfg:
+            continue
+        repos = set(cfg.get("repo_root") or {}) - pdo_config.managed_elsewhere(cfg)
+        state = cfg["state_dir"]
+        snap = (read_json(os.path.join(state, f"{p}-watch.json"), {}) or {}).get("agents", {})
+        standing = {f"Orchestrator ({p})", f"Human Review ({p})", f"QC Agent ({p})", cfg.get("manager") or ""} - {""}
+        org = cfg.get("org")
+        for s in slots:
+            label, a = s.get("name") or "", s.get("agent") or {}
+            m = re.match(r"^(\S+)-(\d+) ", label)
+            mine = (m and m.group(1) in repos) or label in standing
+            if not mine or label in seen:
+                continue
+            key = f"{m.group(1)}#{m.group(2)}" if m and m.group(1) in repos else None
+            if not (s.get("status") == "blocked" or (key and (snap.get(key) or {}).get("question_pending"))):
+                continue
+            seen.add(label)
+            meta = read_json(os.path.join(state, "agents", f"{m.group(1)}-{m.group(2)}.json"), {}) if key else {}
+            sid = (meta or {}).get("session_id") or ((a.get("agent_session") or {}).get("value"))
+            q = pdo_config.pending_question(sid)
+            since = (q or {}).get("asked_at") or (time.time() - 60 * (snap.get(key) or {}).get("unchanged_min", 0) if key else None)
+            out.append({"project": p, "agent": key, "workspace": label, "state": "live",
+                        "hours": round((now - since) / 3600, 1) if since else None,
+                        "url": f"https://github.com/{org}/{m.group(1)}/issues/{m.group(2)}" if key else None,
+                        "questions": (q or {}).get("questions") or [], "screen": "" if q else screen_tail(s.get("pane_id")),
+                        "answer": f'in its tab "{label}"'})
+        d = os.path.join(state, "agents")
+        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            meta = read_json(os.path.join(d, f), {}) or {}
+            pz = meta.get("paused") or {}
+            repo, num = meta.get("repo"), meta.get("number")
+            if (repo not in repos or pz.get("reason") != "question" or not meta.get("hibernated_at")
+                    or pz.get("answer") or pz.get("reply") or meta.get("done_tracking") or meta.get("name") in seen):
+                continue
+            seen.add(meta.get("name"))
+            q = pdo_config.pending_question(meta.get("session_id"))
+            since = pz.get("since") or meta["hibernated_at"]
+            out.append({"project": p, "agent": f"{repo}#{num}", "workspace": meta.get("name"), "state": "paused",
+                        "hours": round((now - since) / 3600, 1),
+                        "url": f"https://github.com/{org}/{repo}/issues/{num}",
+                        "questions": (q or {}).get("questions") or [],
+                        "screen": "" if q else "\n".join((pz.get("detail") or "").strip().splitlines()[-8:]),
+                        "answer": f'pdo answer {repo} {num} "<text>" --project {p}'})
+    out.sort(key=lambda x: -(x["hours"] or 0))
+    return out
+
+
+def text(rows):
+    if not rows:
+        return "no agent is waiting on a question"
+    lines = []
+    for r in rows:
+        waited = f"{r['hours']:g}h" if r["hours"] is not None else "?"
+        lines.append(f"{r['workspace']} ({r['project']}, {r['state']}, waiting {waited})" + (f"  {r['url']}" if r["url"] else ""))
+        for q in r["questions"]:
+            lines.append(f"  Q: {q['question']}" + (" (several allowed)" if q["multiSelect"] else ""))
+            for i, o in enumerate(q["options"], 1):
+                lines.append(f"     {i}. {o['label']}" + (f": {o['description']}" if o["description"] else ""))
+        if not r["questions"] and r["screen"]:
+            lines += ["  screen: " + ln for ln in r["screen"].splitlines()]
+        lines.append(f"  answer: {r['answer']}")
+    return "\n".join(lines)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    rows = collect(a.project)
+    print(json.dumps({"questions": rows}, indent=1) if a.json else text(rows))
+
+
+if __name__ == "__main__":
+    main()

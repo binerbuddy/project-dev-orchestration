@@ -973,7 +973,7 @@ def agent(n, state, labels=(), issue="open"):
     return {"repo": "gov", "number": n, "status": "idle", "question_pending": False, "session_id": "s", "unchanged_min": 30,
             "wrapup_done": False, "issue_state": issue, "pr": {"state": state, "labels": list(labels)} if state else None}
 ag = {"m": agent(1, "MERGED"), "q": agent(2, "OPEN", [w.QC_READY]), "c": agent(3, None, issue="closed"),
-      "a": dict(agent(4, None), question_pending=True, status="blocked")}
+      "a": dict(agent(4, None), ux_gate=True), "b": dict(agent(5, None), question_pending=True, status="blocked")}
 print(sorted((e["agent"], e["type"], e["owner"]) for e in w.auto_hibernate("acme", ag, closeout_only=True)))
 PY
 )" "[('a', 'paused', 'Repo Manager (gov)'), ('c', 'closed_out', 'Repo Manager (gov)'), ('m', 'closed_out', 'Repo Manager (gov)')]"
@@ -1174,8 +1174,41 @@ cur = {"agents": {"r#1": {"repo": "r", "number": 1, "workspace": "r-1 w", "parke
 print([(e["type"], e["kind"], e["detail"]) for e in w.events(prev, cur) if e["type"] == "reply_arrived"], [e["type"] for e in w.events(cur, cur) if e["type"] == "reply_arrived"])
 PY
 )" "['gate cleared', None, 'gate cleared', None, 'unparked', None, 'answer', None, 'unblocked']
-['question', None, 'ux-gate', None, 'decision', 'parked', 'blocked', None, None, None, None, 'ux-gate']
+[None, None, 'ux-gate', None, 'decision', 'parked', 'blocked', None, None, None, None, 'ux-gate']
 [('reply_arrived', 'answer', 'yes')] []"
+# a plain question stays live; pdo questions reads it (and a paused one) from the transcript
+CC="$T/claude-cfg"; mkdir -p "$CC/projects/-w"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-11-08T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":{"questions":[{"question":"Old?","header":"o","options":[{"label":"A"}]}]}}]}}' \
+  '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"A"}]}}' \
+  '{"type":"assistant","timestamp":"2026-11-08T12:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t2","name":"AskUserQuestion","input":{"questions":[{"question":"Which order?","header":"Order","multiSelect":false,"options":[{"label":"Sort both (Recommended)","description":"stable"},{"label":"Accept"}]}]}}]}}' \
+  >"$CC/projects/-w/s-live.jsonl"
+head -2 "$CC/projects/-w/s-live.jsonl" >"$CC/projects/-w/s-done.jsonl"
+eq "questions: the transcript's unanswered AskUserQuestion, or none" "$(CLAUDE_CONFIG_DIR="$CC" python3 -c '
+import sys, json; sys.path.insert(0, sys.argv[1]); import pdo_config as c
+q = c.pending_question("s-live"); print(q["asked_at"], [(x["question"], [o["label"] for o in x["options"]]) for x in q["questions"]])
+print(c.pending_question("s-done"), c.pending_question("nope"), c.pending_question(None))' "$BIN")" "1794139200 [('Which order?', ['Sort both (Recommended)', 'Accept'])]
+None None None"
+QS="$T/qstate"; mkdir -p "$QS/agents"
+echo '{"repo":"widget","number":7,"name":"widget-7 paused one","session_id":"s-live","hibernated_at":1794139200,"paused":{"reason":"question","since":1794139200}}' >"$QS/agents/widget-7.json"
+echo '{"repo":"widget","number":8,"name":"widget-8 answered","session_id":"s-live","hibernated_at":1794139200,"paused":{"reason":"question","since":1794139200,"answer":"x"}}' >"$QS/agents/widget-8.json"
+echo '{"repo":"widget","number":9,"name":"widget-9 gate","session_id":"s-live","hibernated_at":1794139200,"paused":{"reason":"ux-gate","since":1794139200}}' >"$QS/agents/widget-9.json"
+echo '{"repo":"widget","number":5,"name":"widget-5 live one","session_id":"s-live"}' >"$QS/agents/widget-5.json"
+eq "questions: live and paused questions, with how to answer each" "$(CLAUDE_CONFIG_DIR="$CC" python3 - "$BIN" "$QS" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("questions", importlib.machinery.SourceFileLoader("questions", sys.argv[1] + "/questions"))
+q = importlib.util.module_from_spec(spec); spec.loader.exec_module(q)
+q.pdo_config.projects = lambda: ["acme"]
+q.pdo_config.try_load = lambda p: ({"project": p, "org": "o", "repo_root": {"widget": "/x"}, "state_dir": sys.argv[2]}, None)
+q.pdo_config.managed_elsewhere = lambda cfg: set()
+slots = [{"name": "widget-5 live one", "status": "blocked", "agent": {}, "pane_id": "p5"},
+         {"name": "widget-6 working", "status": "working", "agent": {}, "pane_id": "p6"},
+         {"name": "Orchestrator (acme)", "status": "idle", "agent": {}}]
+rows = q.collect(slots=slots, now=1794139200 + 7200)
+print([(r["agent"], r["state"], r["hours"], r["questions"][0]["question"], r["answer"]) for r in rows])
+print(q.text(rows).splitlines()[:4])
+PY
+)" "[('widget#5', 'live', 2.0, 'Which order?', 'in its tab \"widget-5 live one\"'), ('widget#7', 'paused', 2.0, 'Which order?', 'pdo answer widget 7 \"<text>\" --project acme')]
+['widget-5 live one (acme, live, waiting 2h)  https://github.com/o/widget/issues/5', '  Q: Which order?', '     1. Sort both (Recommended): stable', '     2. Accept']"
 out="$("$BIN/answer" widget 79 "go with the second layout" --project acme 2>&1)"
 has "answer: a paused agent's reply is recorded for the orchestrator" "$out" '"answer": "recorded"'
 eq "answer: ... in its metadata" "$(jq -r .paused.answer "$T/state/agents/widget-79.json")" "go with the second layout"

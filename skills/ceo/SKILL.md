@@ -68,6 +68,9 @@ unless the human points you at one.
    mean that part is unknown, not fine. A project whose `watch_snapshot_age_min` is stale or missing
    (no orchestrator watcher; typically all repos self-managed) leaves finished agents open: run
    `pdo watch --project <p> --closeout` for it (token-free; it skips a project whose watcher runs).
+   **Questions:** `pdo questions` lists every agent waiting on a question across projects, with the
+   question, its options and how to answer (live: in its tab; paused: `pdo answer`). Relay them to
+   the human with that text; plain questions stay live in their slots and are never auto-paused.
 2. **Each project's lessons and its manager list.** For every project in the snapshot: its
    lessons file (the overlay's and the engine's `docs/lessons-learned.md`), its `MANAGER`, its
    `SELF_MANAGED_REPOS` and their `REPO_MANAGER` entries (`pdo project-env --project <p>`). Skim

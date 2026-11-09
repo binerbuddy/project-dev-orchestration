@@ -412,7 +412,9 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
             owned.append(dict(row, owner=(cfg.get("repo_manager") or {}).get(m.group(1)), parked=is_parked))
             continue
         if status == "blocked" or sa.get("question_pending"):
-            questions.append({"workspace": label, "agent": key, "why": "question"})
+            q = pdo_config.pending_question(meta.get("session_id"))  # its text: `pdo questions` has the options
+            questions.append({"workspace": label, "agent": key, "why": "question",
+                              "question": q["questions"][0]["question"] if q else ""})
         if sa.get("stalled") and status in ("idle", "done"):
             stalled.append(row)
         (parked if is_parked else active).append(row)
@@ -832,7 +834,8 @@ def waiting_list(views, inboxes):
             out.append({"rank": 2, "why": "UX review", "project": p,
                         "item": f"{x['repo']}#{x['number']}", "title": x["title"], "url": x["url"]})
         for x in v["questions"]:
-            out.append({"rank": 1, "why": "question", "project": p, "item": x["workspace"], "title": "", "url": None})
+            out.append({"rank": 1, "why": "question", "project": p, "item": x["workspace"],
+                        "title": (x.get("question") or "")[:120], "url": None})
         for x in v["ux_gates"]:
             out.append({"rank": 1, "why": ("UX gate" if x.get("kind", "ux") == "ux" else "decision gate")
                         + (" (paused)" if x.get("paused") else ""), "project": p, "item": f"{x['repo']}#{x['number']}",

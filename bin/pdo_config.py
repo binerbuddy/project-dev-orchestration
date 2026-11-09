@@ -198,3 +198,46 @@ def managed_elsewhere(cfg):
                 out |= (set(o.get("repo_root") or {}) - set(o.get("self_managed_repos") or [])) & mine
         _ELSEWHERE[p] = out
     return _ELSEWHERE[p]
+
+
+def pending_question(session_id, config_dir=None):
+    """The agent's unanswered AskUserQuestion, read from its Claude Code transcript
+    (<config dir>/projects/*/<session>.jsonl; CLAUDE_CONFIG_DIR, else ~/.claude): the last call with
+    no tool_result yet, as {"questions": [{question, header, options: [{label, description}],
+    multiSelect}], "asked_at": epoch or None}. None when there is no transcript or nothing pending
+    (another agent CLI, or the question was answered or dismissed)."""
+    import calendar
+    import glob
+    if not session_id:
+        return None
+    root = config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    files = glob.glob(os.path.join(root, "projects", "*", f"{session_id}.jsonl"))
+    if not files:
+        return None
+    last, answered = None, set()
+    with open(max(files, key=os.path.getmtime), encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if "AskUserQuestion" not in line and "tool_result" not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            content = (rec.get("message") or {}).get("content")
+            for c in content if isinstance(content, list) else []:
+                if c.get("type") == "tool_use" and c.get("name") == "AskUserQuestion":
+                    last = (c.get("id"), c.get("input") or {}, rec.get("timestamp"))
+                elif c.get("type") == "tool_result":
+                    answered.add(c.get("tool_use_id"))
+    if not last or last[0] in answered:
+        return None
+    asked = None
+    if last[2]:
+        try:
+            asked = calendar.timegm(time.strptime(last[2][:19], "%Y-%m-%dT%H:%M:%S"))  # transcript times are UTC
+        except ValueError:
+            pass
+    qs = [{"question": q.get("question", ""), "header": q.get("header", ""), "multiSelect": bool(q.get("multiSelect")),
+           "options": [{"label": o.get("label", ""), "description": o.get("description", "")} for o in q.get("options") or []]}
+          for q in last[1].get("questions") or []]
+    return {"questions": qs, "asked_at": asked} if qs else None
