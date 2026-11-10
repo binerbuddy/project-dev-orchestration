@@ -704,6 +704,27 @@ printf 'ORG="gamma"\ndeclare -A REPO_ROOT=([lib]="%s")\nMANAGER="Lib Lead"\nCONF
 eq "managed_elsewhere: lib is libteam's now, not gamma's" "$(PDO_CONFIG_DIRS="$ME" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pdo_config as c; print(sorted(c.managed_elsewhere(c.try_load("gamma")[0])), sorted(c.managed_elsewhere(c.try_load("libteam")[0])))' "$BIN")" "['lib'] []"
 eq "CONFLICT_RESOLUTION: merge, default rebase" "$(PDO_CONFIG_DIRS="$ME" "$BIN/pdo-config" --project libteam --json | jq -r .conflict_resolution) $(PDO_CONFIG_DIRS="$ME" "$BIN/pdo-config" --project gamma --json | jq -r .conflict_resolution)" "merge rebase"
 # ... and the old manager's in-flight agents stay its own until their claim is handed over
+eq "watch: per-repo slots: each repo its own cap; full repos' queue rows don't auto-spawn" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+ag = {f"a#{i}": {"repo": "a"} for i in range(3)} | {"b#1": {"repo": "b"}, "c#1": {"repo": "c"}}
+active = list(ag)
+w.CFG.update(max_active=None, max_active_per_repo=3, max_active_by_repo={"c": 1})
+sl = w.repo_slots(ag, active, {"a", "b", "c"})
+print(sl, w.free_slots(ag, active, {"a", "b", "c"}, sl))
+w.CFG["max_active"] = 4; w.MAX_ACTIVE = 4
+print(w.free_slots(ag, active, {"a", "b", "c"}, sl))
+w.CFG.update(max_active=None, max_active_per_repo=None, max_active_by_repo={}); w.MAX_ACTIVE = 3
+print(w.repo_slots(ag, active, {"a", "b"}), w.free_slots(ag, active, {"a", "b"}, {}))
+q = w.mark_pr_capped([{"repo": "a", "auto_spawn": True}, {"repo": "b", "auto_spawn": True}], {"capped": []}, {"a"})
+print([(r["repo"], r["auto_spawn"], r.get("repo_full")) for r in q],
+      [(r["repo"], r["auto_spawn"], r.get("repo_full")) for r in w.mark_pr_capped(q, {"capped": []}, set())])
+PY
+)" "{'a': {'active': 3, 'max': 3, 'free': 0}, 'b': {'active': 1, 'max': 3, 'free': 2}, 'c': {'active': 1, 'max': 1, 'free': 0}} 2
+0
+{} 0
+[('a', False, True), ('b', True, None)] [('a', True, None), ('b', True, None)]"
 eq "watch: another manager's live claim is left alone; a released or own claim is not" "$(python3 - "$BIN/watch" <<'PY'
 import importlib.machinery, importlib.util, sys
 spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))

@@ -217,6 +217,13 @@ pdo_finalize() {
   AGENT_MB="${AGENT_MB:-}"                        # override the profile's MB per active agent
   AGENT_USAGE_WEIGHT="${AGENT_USAGE_WEIGHT:-}"    # override the profile's usage weight
   FLEET_ADVICE="${FLEET_ADVICE:-ignore}"          # honour | ignore (fleet-advice.json in queue/watch)
+  # slots per repo (bin/watch): MAX_ACTIVE_BY_REPO[<repo>], else MAX_ACTIVE_PER_REPO, else none (the
+  # project's MAX_ACTIVE only). With per-repo caps an unset MAX_ACTIVE means no project-wide cap.
+  MAX_ACTIVE_PER_REPO="${MAX_ACTIVE_PER_REPO:-}"
+  # machine-wide spawn gate (bin/mem-gate): refuse a spawn or relaunch that would leave less than this
+  # much MemAvailable once the new agent's RESOURCE_PROFILE MB (and recent spawns' MB) are counted
+  SPAWN_MEM_FLOOR_MB="${SPAWN_MEM_FLOOR_MB:-3072}"
+  SPAWN_MEM_RESERVE_MIN="${SPAWN_MEM_RESERVE_MIN:-10}"   # how long a spawn's MB stays reserved while it grows
   export ORG PRIMARY_REPO
 }
 
@@ -367,7 +374,10 @@ pdo_slug() {
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
   local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}" aqc_notes_by_repo="{}" deps_dirs="{}" deps_cmd="{}"
-  local spec_repo="{}" spec_scope="{}" review_guard="[]"
+  local spec_repo="{}" spec_scope="{}" review_guard="[]" max_by_repo="{}"
+  if declare -p MAX_ACTIVE_BY_REPO >/dev/null 2>&1; then
+    for k in "${!MAX_ACTIVE_BY_REPO[@]}"; do max_by_repo="$(jq -c --arg k "$k" --arg v "${MAX_ACTIVE_BY_REPO[$k]}" '. + {($k): ($v | tonumber)}' <<<"$max_by_repo")"; done
+  fi
   if declare -p REPO_ROOT >/dev/null 2>&1; then
     for k in "${!REPO_ROOT[@]}"; do roots="$(jq -c --arg k "$k" --arg v "${REPO_ROOT[$k]}" '. + {($k): $v}' <<<"$roots")"; done
   fi
@@ -420,7 +430,8 @@ pdo_config_json() {
     --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --argjson aqc_notes_by_repo "$aqc_notes_by_repo" --arg aqc_skill "$AGENT_QC_SKILL" \
     --arg aqc_review_hook "$AGENT_QC_REVIEW_HOOK" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
-    --arg max_active "${MAX_ACTIVE:-}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
+    --arg max_active "${MAX_ACTIVE:-}" --arg max_per_repo "${MAX_ACTIVE_PER_REPO:-}" --argjson max_by_repo "$max_by_repo" \
+    --arg mem_floor "${SPAWN_MEM_FLOOR_MB:-3072}" --arg mem_hold "${SPAWN_MEM_RESERVE_MIN:-10}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
     --arg manager "${MANAGER:-}" --arg manager_slug "${MANAGER_SLUG:-}" --arg claim_assigns "${CLAIM_ASSIGNS:-0}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
     --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
     --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
@@ -448,6 +459,8 @@ pdo_config_json() {
       carry_labels: ($carry | (if test(",") then split(",") else split(" ") end) | map(gsub("^\\s+|\\s+$"; "") | select(length > 0))),
       screenshot_dir: $shots,
       max_active: ($max_active | if . == "" then null else tonumber end),
+      max_active_per_repo: ($max_per_repo | if . == "" then null else tonumber end), max_active_by_repo: $max_by_repo,
+      spawn_mem_floor_mb: ($mem_floor | tonumber? // 3072), spawn_mem_reserve_min: ($mem_hold | tonumber? // 10),
       weekly_ceiling: ($weekly | if . == "" then null else tonumber end),
       five_hour_ceiling: ($five | if . == "" then null else tonumber end),
       manager: $manager, manager_slug: $manager_slug, claim_assigns: ($claim_assigns == "1"),

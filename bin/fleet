@@ -70,9 +70,7 @@ import pdo_herdr  # noqa: E402
 HERE = pdo_config.ENGINE_HOME
 WARN = []
 
-# RESOURCE_PROFILE defaults: RAM one active agent holds (agent CLI, MCP servers, dev servers,
-# browser) and its relative draw on the shared usage budget. AGENT_MB / AGENT_USAGE_WEIGHT override.
-PROFILES = {"light": (400, 0.5), "medium": (900, 1.0), "heavy": (1800, 2.0)}
+PROFILES = pdo_config.PROFILES  # RESOURCE_PROFILE: (MB per active agent, usage weight)
 PR_CAP_DEFAULT = 10
 STALL_MIN = 45
 QUESTION_MARKERS = ("Enter to select", "Do you want to proceed")
@@ -333,6 +331,9 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
     agent_qc = set(cfg.get("agent_qc_repos") or []) if cfg.get("agent_qc_ports") else set()
     prof, agent_mb, weight = profile_of(cfg)
     max_active = cfg.get("max_active") or 3
+    by, per = cfg.get("max_active_by_repo") or {}, cfg.get("max_active_per_repo")
+    if (by or per is not None) and cfg.get("max_active") is None:  # per-repo caps: the repos' slots added up
+        max_active = sum(by.get(r, per) if (r in by or per is not None) else 3 for r in managed)
 
     # PR index by (repo, branch), and what waits on the human
     pr_by_branch, qc_ready, qc_done, gates, open_total, awaiting = {}, [], [], [], 0, 0

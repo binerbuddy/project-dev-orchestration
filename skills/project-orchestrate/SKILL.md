@@ -88,6 +88,10 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling, or when every repo
 
 - **PR cap is per repo.** Skip any item whose repo is in `pr_cap.capped` (snapshot rows already carry
   `pr_capped: true`; rows from a fresh `pdo queue` don't, so check the repo). The urgent bypass is unaffected.
+- **Agent slots per repo**, when the project sets them (`MAX_ACTIVE_PER_REPO` / `MAX_ACTIVE_BY_REPO`):
+  `repo_slots` gives each repo's `free`; repos don't share slots. Spawn at most that many for a repo
+  this tick, counting your own spawns, and skip its rows once it is full (snapshot rows carry
+  `repo_full: true`; fresh `pdo queue` rows don't). `free_slots` is their sum. The urgent bypass is unaffected.
 
 - **Speak only P-levels and CWT** ("Claude Work This", or the project's queue status). The queue
   ranks CWT first, then P1 → P4; within a level Security, then Bugs. Never say "tier". Each item's `p`

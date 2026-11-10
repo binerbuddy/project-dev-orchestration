@@ -241,3 +241,13 @@ def pending_question(session_id, config_dir=None):
            "options": [{"label": o.get("label", ""), "description": o.get("description", "")} for o in q.get("options") or []]}
           for q in last[1].get("questions") or []]
     return {"questions": qs, "asked_at": asked} if qs else None
+
+
+# RESOURCE_PROFILE defaults: RAM one active agent holds (agent CLI, MCP servers, dev servers,
+# browser) and its relative draw on the shared usage budget. AGENT_MB / AGENT_USAGE_WEIGHT override.
+PROFILES = {"light": (400, 0.5), "medium": (900, 1.0), "heavy": (1800, 2.0)}
+
+
+def agent_mb(cfg):
+    """MB one active agent of this project holds: AGENT_MB, else its RESOURCE_PROFILE's (medium if unknown)."""
+    return int(cfg.get("agent_mb") or PROFILES.get((cfg.get("resource_profile") or "medium").lower(), PROFILES["medium"])[0])
