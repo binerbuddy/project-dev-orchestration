@@ -503,7 +503,7 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
                    "standing": standing, "self_managed": owned, "self_managed_hibernated": owned_hibernated,
                    "idle": idle, "stalled_long": stalled_long, "paused": paused},
         # memory this project's live agents hold, self-managed ones included (they still use the machine)
-        "est_agent_mb": (len(active) + len(parked) + len(owned)) * agent_mb,
+        "est_agent_mb": sum(pdo_config.agent_mb(cfg, r["agent"].split("#")[0]) for r in active + parked + owned),
         "questions": questions, "qc_ready": qc_ready, "qc_done": qc_done, "ux_gates": gates,
         "merge_ready": merge_ready, "qc_escalated": escalated,
         "claims": {"label": cfg.get("claim_label"), "claimed": claimed, "stale": stale,

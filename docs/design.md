@@ -241,6 +241,13 @@ watcher).
   A plain question menu never pauses (2026-11-09): it stays live in its slot so the human sees it
   quickly; `bin/questions` lists every live and paused question across projects with its text and
   options (the transcript's unanswered AskUserQuestion) and how to answer it.
+- **Slots per repo and the memory gate (2026-11-10).** `MAX_ACTIVE_PER_REPO` / `MAX_ACTIVE_BY_REPO` give each
+  repo its own agent slots (snapshot `repo_slots`; queue rows of a full repo carry `repo_full`). Slots are no
+  longer the memory limit: every agent start (`bin/spawn`, `bin/resume-agent`'s relaunch) passes `bin/mem-gate`,
+  one lock for the whole machine. It refuses (exit 4) when MemAvailable minus the MB of every start of the last
+  `SPAWN_MEM_RESERVE_MIN` (10) minutes minus this agent's MB (`AGENT_MB_BY_REPO`, `AGENT_MB`, the
+  `RESOURCE_PROFILE`) is below `SPAWN_MEM_FLOOR_MB` (3072). Counting recent starts matters: a new agent takes
+  minutes to grow, so a lock alone would let several watchers read the same free memory.
 - **Automatic.** The watcher (not under `--peek`) hibernates agents idle at `ready for QC` for 5+ min,
   and closes out finished ones (`--closed-out`): PR merged, or `QC complete` / `Ready for Merge` plus
   "wrap-up done" on screen,

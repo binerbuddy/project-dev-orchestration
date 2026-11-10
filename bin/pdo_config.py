@@ -248,6 +248,10 @@ def pending_question(session_id, config_dir=None):
 PROFILES = {"light": (400, 0.5), "medium": (900, 1.0), "heavy": (1800, 2.0)}
 
 
-def agent_mb(cfg):
-    """MB one active agent of this project holds: AGENT_MB, else its RESOURCE_PROFILE's (medium if unknown)."""
+def agent_mb(cfg, repo=None):
+    """MB one active agent holds: AGENT_MB_BY_REPO[repo], else AGENT_MB, else the project's
+    RESOURCE_PROFILE's (medium if unknown)."""
+    by = cfg.get("agent_mb_by_repo") or {}
+    if repo in by:
+        return int(by[repo])
     return int(cfg.get("agent_mb") or PROFILES.get((cfg.get("resource_profile") or "medium").lower(), PROFILES["medium"])[0])

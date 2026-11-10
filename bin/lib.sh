@@ -215,6 +215,8 @@ pdo_finalize() {
   PORTFOLIO_PRIORITY="${PORTFOLIO_PRIORITY:-3}"   # 1 = highest
   RESOURCE_PROFILE="${RESOURCE_PROFILE:-medium}"  # light | medium | heavy (bin/fleet has the weights)
   AGENT_MB="${AGENT_MB:-}"                        # override the profile's MB per active agent
+  # AGENT_MB_BY_REPO[<repo>]: MB per agent of one repo (a project whose repos differ, e.g. one runs a
+  # full app stack and the others don't); fleet's estimate and bin/mem-gate use it before AGENT_MB
   AGENT_USAGE_WEIGHT="${AGENT_USAGE_WEIGHT:-}"    # override the profile's usage weight
   FLEET_ADVICE="${FLEET_ADVICE:-ignore}"          # honour | ignore (fleet-advice.json in queue/watch)
   # slots per repo (bin/watch): MAX_ACTIVE_BY_REPO[<repo>], else MAX_ACTIVE_PER_REPO, else none (the
@@ -374,7 +376,10 @@ pdo_slug() {
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
   local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}" aqc_notes_by_repo="{}" deps_dirs="{}" deps_cmd="{}"
-  local spec_repo="{}" spec_scope="{}" review_guard="[]" max_by_repo="{}"
+  local spec_repo="{}" spec_scope="{}" review_guard="[]" max_by_repo="{}" mb_by_repo="{}"
+  if declare -p AGENT_MB_BY_REPO >/dev/null 2>&1; then
+    for k in "${!AGENT_MB_BY_REPO[@]}"; do mb_by_repo="$(jq -c --arg k "$k" --arg v "${AGENT_MB_BY_REPO[$k]}" '. + {($k): ($v | tonumber)}' <<<"$mb_by_repo")"; done
+  fi
   if declare -p MAX_ACTIVE_BY_REPO >/dev/null 2>&1; then
     for k in "${!MAX_ACTIVE_BY_REPO[@]}"; do max_by_repo="$(jq -c --arg k "$k" --arg v "${MAX_ACTIVE_BY_REPO[$k]}" '. + {($k): ($v | tonumber)}' <<<"$max_by_repo")"; done
   fi
@@ -433,7 +438,7 @@ pdo_config_json() {
     --arg max_active "${MAX_ACTIVE:-}" --arg max_per_repo "${MAX_ACTIVE_PER_REPO:-}" --argjson max_by_repo "$max_by_repo" \
     --arg mem_floor "${SPAWN_MEM_FLOOR_MB:-3072}" --arg mem_hold "${SPAWN_MEM_RESERVE_MIN:-10}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
     --arg manager "${MANAGER:-}" --arg manager_slug "${MANAGER_SLUG:-}" --arg claim_assigns "${CLAIM_ASSIGNS:-0}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
-    --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
+    --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --argjson mb_by_repo "$mb_by_repo" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
     --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
     --arg deps_cache "${DEPS_CACHE_DIR:-}" --arg deps_days "${DEPS_CACHE_DAYS:-14}" --argjson deps_dirs "$deps_dirs" --argjson deps_cmd "$deps_cmd" \
     --argjson spec_repo "$spec_repo" --argjson spec_scope "$spec_scope" --argjson review_guard "$review_guard" \
@@ -465,7 +470,7 @@ pdo_config_json() {
       five_hour_ceiling: ($five | if . == "" then null else tonumber end),
       manager: $manager, manager_slug: $manager_slug, claim_assigns: ($claim_assigns == "1"),
       claim_label: (if $manager_slug == "" then null else "managed-by:" + $manager_slug end), repo_manager: $repo_mgr, portfolio_priority: ($prio | tonumber? // 3),
-      resource_profile: $profile, agent_mb: ($agent_mb | if . == "" then null else (tonumber? // null) end),
+      resource_profile: $profile, agent_mb: ($agent_mb | if . == "" then null else (tonumber? // null) end), agent_mb_by_repo: $mb_by_repo,
       agent_usage_weight: ($weight | if . == "" then null else (tonumber? // null) end),
       fleet_advice: $fleet, usage_cache: $usage_cache,
       deps_cache_dir: $deps_cache, deps_cache_days: ($deps_days | tonumber? // 14), deps_link_dirs: $deps_dirs, deps_npm_cmd: $deps_cmd,

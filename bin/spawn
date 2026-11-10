@@ -164,6 +164,11 @@ if [[ $DRY -eq 1 ]]; then
   exit 0
 fi
 
+# --- memory gate (machine-wide, bin/mem-gate): exit 4, and not a spawn failure (no 24h skip) ---
+set +e; GATE="$("$HERE/bin/mem-gate" reserve --project "$PDO_PROJECT" --repo "$REPO" --agent "$REPO-$NUM" 2>&1 >/dev/null)"; rc=$?; set -e
+if [[ $rc -eq 4 ]]; then echo "spawn: $GATE" >&2; exit 4; fi
+[[ $rc -eq 0 ]] || echo "spawn: warning: the memory gate failed ($GATE); starting anyway" >&2
+
 # --- worktree (rolled back, with the agent's tab, if a later step fails) ---
 WS_ID="" TAB_ID=""
 rollback() {

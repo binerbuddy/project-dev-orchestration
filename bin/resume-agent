@@ -63,7 +63,10 @@ if [[ -n "$WS_ID" && -n "$PANE_ID" ]]; then
   exit 0
 fi
 
-# --- gone: rebuild its place ---
+# --- gone: rebuild its place, if the machine has the memory (bin/mem-gate; exit 4) ---
+set +e; GATE="$("$HERE/bin/mem-gate" reserve --project "$PDO_PROJECT" --repo "$REPO" --agent "$REPO-$NUM" 2>&1 >/dev/null)"; rc=$?; set -e
+[[ $rc -ne 4 ]] || die "$GATE" 4
+[[ $rc -eq 0 ]] || echo "resume-agent: warning: the memory gate failed ($GATE); starting anyway" >&2
 ROOT="${REPO_ROOT[$REPO]}"
 CWD="$(m cwd)"; CWD="${CWD:-$(m worktree)}"
 BRANCH="$(m branch)"

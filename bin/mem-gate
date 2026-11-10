@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""mem-gate — the machine-wide memory gate every agent start passes (bin/spawn, bin/resume-agent).
+
+Usage: mem-gate reserve --project P [--repo R] [--agent NAME]   check; on yes reserve its MB (exit 4: refused)
+       mem-gate status [--json]                                  what is free and reserved now
+
+A new agent needs its repo's AGENT_MB_BY_REPO, else its project's AGENT_MB or RESOURCE_PROFILE MB
+(light 400, medium 900, heavy 1800), but takes minutes to grow into it, so a plain MemAvailable reading
+lets several watchers start agents at once and run the machine out of RAM. reserve therefore runs under one lock for the whole machine (every
+project and watcher, whatever its state dir) and counts every start of the last SPAWN_MEM_RESERVE_MIN
+(10) minutes as already used:
+
+  MemAvailable - reserved MB - this agent's MB >= SPAWN_MEM_FLOOR_MB (3072)
+
+On yes it records the reservation and exits 0; on no it prints the numbers and exits 4, and nothing is
+recorded. The floor and the hold time are the project's (config.env sets them install-wide). The
+lock and the reservations live in $PDO_GATE_DIR (default $XDG_RUNTIME_DIR/pdo-gate, else
+/tmp/pdo-gate-<uid>). Test override: PDO_MEM_AVAIL_MB.
+"""
+import argparse
+import fcntl
+import json
+import os
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+REFUSED = 4
+
+
+def gate_dir():
+    d = os.environ.get("PDO_GATE_DIR") or (os.path.join(os.environ["XDG_RUNTIME_DIR"], "pdo-gate")
+                                           if os.environ.get("XDG_RUNTIME_DIR") else f"/tmp/pdo-gate-{os.getuid()}")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def mem_available_mb():
+    if os.environ.get("PDO_MEM_AVAIL_MB"):
+        return int(os.environ["PDO_MEM_AVAIL_MB"])
+    with open("/proc/meminfo", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024
+    raise RuntimeError("no MemAvailable in /proc/meminfo")
+
+
+def live(reservations, now):
+    return [r for r in reservations if r.get("until", 0) > now]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("action", choices=("reserve", "status"))
+    ap.add_argument("--project")
+    ap.add_argument("--repo")
+    ap.add_argument("--agent", default="")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    d = gate_dir()
+    path = os.path.join(d, "reservations.json")
+    with open(os.path.join(d, "lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # one decision at a time, machine-wide
+        try:
+            res = json.load(open(path, encoding="utf-8"))
+        except (OSError, ValueError):
+            res = []
+        now = int(time.time())
+        res = live(res, now)
+        avail = mem_available_mb()
+        reserved = sum(r.get("mb", 0) for r in res)
+        if a.action == "status":
+            out = {"avail_mb": avail, "reserved_mb": reserved, "reservations": res}
+            print(json.dumps(out) if a.json else f"MemAvailable {avail} MB, reserved {reserved} MB by "
+                  + (", ".join(f"{r['agent'] or r['project']} {r['mb']} MB" for r in res) or "nothing"))
+            return 0
+        cfg = pdo_config.load(a.project, "mem-gate")
+        need, floor = pdo_config.agent_mb(cfg, a.repo), int(cfg.get("spawn_mem_floor_mb") or 3072)
+        left = avail - reserved - need
+        verdict = {"ok": left >= floor, "avail_mb": avail, "reserved_mb": reserved, "need_mb": need,
+                   "floor_mb": floor, "left_mb": left}
+        if not verdict["ok"]:
+            print(f"mem-gate: refused {a.agent or cfg['project']}: MemAvailable {avail} MB - reserved {reserved} MB"
+                  f" - this agent {need} MB = {left} MB, below the {floor} MB floor", file=sys.stderr)
+            print(json.dumps(verdict))
+            return REFUSED
+        hold = int(cfg.get("spawn_mem_reserve_min") or 10) * 60
+        res.append({"project": cfg["project"], "agent": a.agent, "mb": need, "at": now, "until": now + hold})
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(res, f)
+        os.replace(path + ".tmp", path)
+        print(json.dumps(verdict))
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

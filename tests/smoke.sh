@@ -22,6 +22,7 @@ export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_STATE_HOME="$T/home/
 mkdir -p "$HOME"
 export PDO_CONFIG_DIRS="$T/cfg-a:$T/cfg-b" PDO_STATE_DIR="$T/state" PYTHONDONTWRITEBYTECODE=1
 export TMP_SWEEP_ROOT="$T/tmproot"  # the watcher and hibernate run tmp-sweep: never the real /tmp
+export PDO_GATE_DIR="$T/gate" PDO_MEM_AVAIL_MB=64000  # the memory gate: never the machine's real lock or RAM
 unset PDO_INBOX INTAKE_INBOX PDO_PROJECT PDO_SKILL_PREFIX GH_USER GH_TOKEN
 export GIT_AUTHOR_NAME=smoke GIT_AUTHOR_EMAIL=smoke@example.com GIT_COMMITTER_NAME=smoke GIT_COMMITTER_EMAIL=smoke@example.com
 export GIT_CONFIG_GLOBAL="$T/gitconfig" GIT_CONFIG_NOSYSTEM=1
@@ -1197,6 +1198,16 @@ PY
 )" "['gate cleared', None, 'gate cleared', None, 'unparked', None, 'answer', None, 'unblocked']
 [None, None, 'ux-gate', None, 'decision', 'parked', 'blocked', None, None, None, None, 'ux-gate']
 [('reply_arrived', 'answer', 'yes')] []"
+# the machine-wide memory gate: recent starts count as used; a refusal reserves nothing
+G="$T/gate-test"
+gate() { PDO_GATE_DIR="$G" PDO_MEM_AVAIL_MB="$1" "$BIN/mem-gate" reserve --project acme --agent "$2" >/dev/null 2>&1; echo $?; }
+eq "mem-gate: reserve until the floor, then refuse (exit 4)" "$(gate 5000 a; gate 5000 b; gate 5000 c; gate 9000 d)" "0
+0
+4
+0"
+eq "mem-gate: status counts the live reservations" "$(PDO_GATE_DIR="$G" PDO_MEM_AVAIL_MB=9000 "$BIN/mem-gate" status --json | jq -c '[.reserved_mb, [.reservations[].agent]]')" '[2700,["a","b","d"]]'
+eq "mem-gate: AGENT_MB_BY_REPO before the profile" "$(PDO_CONFIG_DIRS="$ME" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pdo_config as c
+print(c.agent_mb({"resource_profile": "heavy", "agent_mb_by_repo": {"docs": 500}}, "docs"), c.agent_mb({"resource_profile": "heavy"}, "docs"), c.agent_mb({"resource_profile": "x", "agent_mb": 700}))' "$BIN")" "500 1800 700"
 # a plain question stays live; pdo questions reads it (and a paused one) from the transcript
 CC="$T/claude-cfg"; mkdir -p "$CC/projects/-w"
 printf '%s\n' '{"type":"assistant","timestamp":"2026-11-08T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":{"questions":[{"question":"Old?","header":"o","options":[{"label":"A"}]}]}}]}}' \
