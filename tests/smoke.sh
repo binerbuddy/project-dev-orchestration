@@ -1241,6 +1241,69 @@ print(q.text(rows).splitlines()[:4])
 PY
 )" "[('widget#5', 'live', 2.0, 'Which order?', 'in its tab \"widget-5 live one\"'), ('widget#7', 'paused', 2.0, 'Which order?', 'pdo answer widget 7 \"<text>\" --project acme')]
 ['widget-5 live one (acme, live, waiting 2h)  https://github.com/o/widget/issues/5', '  Q: Which order?', '     1. Sort both (Recommended): stable', '     2. Accept']"
+# Design Lead: one per project (DESIGN_LEAD=1); active once its intent doc is on its home repo's origin/main
+DLR="$T/dl-repo"; git init -q "$DLR"; git -C "$DLR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$DLR" update-ref refs/remotes/origin/main HEAD
+eq "design-lead: off by default" "$("$BIN/pdo-config" --project acme | jq -c .design_lead)" "null"
+eq "design-lead: DESIGN_LEAD=1 defaults its name and scope" "$(DESIGN_LEAD=1 "$BIN/pdo-config" --project acme | jq -c '[.design_lead.name, (.design_lead.repos | index("widget") != null), .design_lead.escalate_hours, .design_lead.live_answer]')" '["Design Lead (acme)",true,2,false]'
+eq "design-lead: its home repo is the primary when in scope, else the first" "$(DESIGN_LEAD=1 DESIGN_LEAD_REPOS="docs widget" DESIGN_LEAD_NAME="Design Lead (docs)" "$BIN/pdo-config" --project acme | jq -c '[.design_lead.name, .design_lead.repos, .design_lead.home_repo]'; DESIGN_LEAD=1 DESIGN_LEAD_REPOS="docs" "$BIN/pdo-config" --project acme | jq -r .design_lead.home_repo)" '["Design Lead (docs)",["docs","widget"],"widget"]
+docs'
+check "design-lead: status refuses a project without one" bash -c '! "$0/design-lead" status --project acme' "$BIN"
+DLC='{"project": "acme", "state_dir": "'"$T"'/dlstate", "repo_root": {"widget": "'"$DLR"'"}, "design_lead": {"name": "Design Lead (acme)", "repos": ["widget"], "home_repo": "widget", "intent": "docs/intent.md", "escalate_hours": 2}}'
+DLPY='import sys, json; sys.path.insert(0, sys.argv[1]); import pdo_config as c; cfg = json.loads(sys.argv[2])'
+eq "design-lead: inactive until the intent doc is on main" "$(python3 -c "$DLPY"'
+print(c.design_lead_active(cfg), c.design_lead_route(cfg, "widget", 5, 0.1))' "$BIN" "$DLC")" "False ('human', None)"
+mkdir -p "$DLR/docs"; echo "# Intent" >"$DLR/docs/intent.md"; git -C "$DLR" add docs
+git -C "$DLR" -c user.email=t@t -c user.name=t commit -q -m intent; git -C "$DLR" update-ref refs/remotes/origin/main HEAD
+mkdir -p "$T/dlstate/design-lead"; echo '{"escalated": {"widget#6": {"reason": "costs money", "at": 1}}}' >"$T/dlstate/design-lead/acme.json"
+eq "design-lead: active questions are its own; escalated, waiting 2h, or out of scope go to the human" "$(python3 -c "$DLPY"'
+print(c.design_lead_active(cfg)); print(c.design_lead_route(cfg, "widget", 5, 0.5)); print(c.design_lead_route(cfg, "widget", 6, 0.5))
+print(c.design_lead_route(cfg, "widget", 5, 2.0)); print(c.design_lead_route(cfg, "other", 5, 0.5))' "$BIN" "$DLC")" "True
+('design-lead', None)
+('human', 'the Design Lead escalated it: costs money')
+('human', \"the Design Lead hasn't answered it in 2h\")
+('human', None)"
+echo '{"repo":"widget","number":79,"name":"widget-77 x","hibernated_at":1,"paused":{"reason":"question","since":1}}' >"$T/state/agents/widget-77.json"
+out="$(DESIGN_LEAD=1 "$BIN/answer" widget 77 "x" --project acme --design-lead 2>&1)"; rc=$?
+eq "answer --design-lead: refused (exit 3) before the intent doc is approved" "$rc $(grep -c "isn't approved yet" <<<"$out")" "3 1"
+out="$("$BIN/answer" widget 77 "x" --project acme --design-lead 2>&1)"; rc=$?
+eq "answer --design-lead: refused without a Design Lead" "$rc $(grep -c "has no Design Lead" <<<"$out")" "3 1"
+rm -f "$T/state/agents/widget-77.json"
+out="$(DESIGN_LEAD=1 "$BIN/design-lead" ask widget 12 "which layout?" --project acme 2>&1)"; rc=$?
+eq "design-lead ask: refused (exit 3) before approval, so the worker asks the human" "$rc $(grep -c "ask the human" <<<"$out")" "3 1"
+check "design-lead ask: refused for a repo out of scope" bash -c '! DESIGN_LEAD=1 DESIGN_LEAD_REPOS=docs "$0/design-lead" ask widget 12 "q?" --project acme' "$BIN"
+eq "design-lead: escalate, then reply clears the hold and the escalation" "$(DESIGN_LEAD=1 "$BIN/design-lead" escalate widget 12 "outward-facing" --project acme >/dev/null
+DESIGN_LEAD=1 "$BIN/design-lead" status --project acme --json | jq -c '[.active, (.escalated | keys), .address]'
+DESIGN_LEAD=1 "$BIN/design-lead" reply widget 12 answered "B" --project acme >/dev/null
+DESIGN_LEAD=1 "$BIN/design-lead" status --project acme --json | jq -c '[.held, .escalated]')" '[false,["widget#12"],null]
+[{},{}]'
+echo '{"repo":"widget","number":4,"name":"widget-4 at a gate","hibernated_at":1794139200,"gate":{"kind":"decision","name":"layout","since":1794139200}}' >"$QS/agents/widget-4.json"
+echo '{"repo":"widget","number":3,"name":"widget-3 asked it","session_id":"s-done"}' >"$QS/agents/widget-3.json"
+mkdir -p "$QS/design-lead"; echo '{"held": {"widget#3": {"question": "Grid or list?", "asked_at": 1794139200}}}' >"$QS/design-lead/acme.json"
+eq "questions: a paused gate and a held question are listed; an active Design Lead's rows route to it" "$(CLAUDE_CONFIG_DIR="$CC" python3 - "$BIN" "$QS" "$DLR" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("questions", importlib.machinery.SourceFileLoader("questions", sys.argv[1] + "/questions"))
+q = importlib.util.module_from_spec(spec); spec.loader.exec_module(q)
+q.pdo_config.projects = lambda: ["acme"]
+q.pdo_config.try_load = lambda p: ({"project": p, "org": "o", "repo_root": {"widget": sys.argv[3]}, "state_dir": sys.argv[2],
+                                    "design_lead": {"name": "Design Lead (acme)", "repos": ["widget"], "home_repo": "widget",
+                                                    "intent": "docs/intent.md", "escalate_hours": 3}}, None)
+q.pdo_config.managed_elsewhere = lambda cfg: set()
+rows = q.collect(slots=[], now=1794139200 + 7200, only_repo="widget")
+print([(r["agent"], r["state"], r["route"], r["answer"]) for r in rows])
+print(q.text(rows).splitlines()[0])
+PY
+)" "[('widget#4', 'paused', 'design-lead', 'Design Lead (acme) answers it'), ('widget#7', 'paused', 'design-lead', 'Design Lead (acme) answers it'), ('widget#3', 'held', 'design-lead', 'Design Lead (acme) answers it (held: asked by peer message)')]
+widget-4 at a gate (acme, paused, waiting 2h)  https://github.com/o/widget/issues/4 → Design Lead"
+eq "watch: a question held by the Design Lead is its own idle reason, never stalled or paused" "$(python3 - "$BIN" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1] + "/watch"))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+a = {"status": "idle", "question_pending": False, "design_lead_held": True, "unchanged_min": 2000, "session_id": "s", "stalled": False}
+w.classify(a); print(a["idle_reason"], a["stalled_long"], w.pause_reason(a))
+PY
+)" "design lead question False None"
+rm -f "$QS/agents/widget-4.json" "$QS/agents/widget-3.json" "$QS/design-lead/acme.json"
 out="$("$BIN/answer" widget 79 "go with the second layout" --project acme 2>&1)"
 has "answer: a paused agent's reply is recorded for the orchestrator" "$out" '"answer": "recorded"'
 eq "answer: ... in its metadata" "$(jq -r .paused.answer "$T/state/agents/widget-79.json")" "go with the second layout"

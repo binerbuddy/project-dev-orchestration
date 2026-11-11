@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """questions — every question an agent is waiting on the human for, across projects (read-only).
 
-Usage: questions [--project P] [--json]
+Usage: questions [--project P] [--repo R] [--json]
 
 For the human, or whoever relays to them (a CEO, an assistant agent): each agent whose tab shows a
-question (herdr status blocked, or the watcher's question_pending) and each agent paused on one
-(metadata paused.reason "question", not yet answered). Per question: the project, the agent's tab
-name, live or paused, how long it has waited, the issue link, the question text with its options
-(read from the agent's Claude Code transcript: the last AskUserQuestion with no answer yet; the
-last screen lines when there is none), and how to answer:
+question (herdr status blocked, or the watcher's question_pending), each agent paused on one
+(metadata paused.reason "question", not yet answered), and each agent paused at an open UX or
+decision gate (bin/gate). Per question: the project, the agent's tab name, live or paused, how
+long it has waited, the issue link, the question text with its options (read from the agent's
+Claude Code transcript: the last AskUserQuestion with no answer yet; the last screen lines when
+there is none), and how to answer:
   - live: in the agent's tab (only its question UI can answer a menu; nothing types into it);
-  - paused: `pdo answer <repo> <n> "<text>" --project P` (the orchestrator resumes it first).
+  - paused: `pdo answer <repo> <n> "<text>" --project P` (the orchestrator resumes it first);
+  - paused at a gate: `pdo gate clear <repo> <n> --note "<text>" --project P`.
 Standing agents (orchestrator, QC, manager) with a question on screen are listed too. Nothing is
 written; a missing herdr only drops the live half.
+
+A repo with an active Design Lead (bin/design-lead): its agents' questions carry route "design-lead"
+and are its to answer, not the human's, unless it escalated one or it has waited
+DESIGN_LEAD_ESCALATE_HOURS; then route "human" with the reason in route_why. Questions a worker handed
+to the Design Lead by peer message (`design-lead ask`) are listed as state "held". `command` (JSON) is
+always the raw way to answer. --repo R lists only R's.
 """
 import argparse
 import json
@@ -41,7 +49,7 @@ def screen_tail(pane, n=8):
     return "\n".join(lines[-n:])
 
 
-def collect(only=None, slots=None, now=None):
+def collect(only=None, slots=None, now=None, only_repo=None):
     now = now or time.time()
     try:
         slots = pdo_herdr.slots() if slots is None else slots
@@ -81,6 +89,17 @@ def collect(only=None, slots=None, now=None):
             meta = read_json(os.path.join(d, f), {}) or {}
             pz = meta.get("paused") or {}
             repo, num = meta.get("repo"), meta.get("number")
+            gate = meta.get("gate") or {}
+            if (repo in repos and gate.get("since") and not gate.get("cleared_at") and meta.get("hibernated_at")
+                    and not meta.get("done_tracking") and meta.get("name") not in seen):
+                seen.add(meta.get("name"))
+                out.append({"project": p, "agent": f"{repo}#{num}", "workspace": meta.get("name"), "state": "paused",
+                            "hours": round((now - gate["since"]) / 3600, 1),
+                            "url": gate.get("link") or f"https://github.com/{org}/{repo}/issues/{num}",
+                            "questions": [], "gate": {"kind": gate.get("kind"), "name": gate.get("name")},
+                            "screen": f"{gate.get('kind')} gate: {gate.get('name')}",
+                            "answer": f'pdo gate clear {repo} {num} --note "<text>" --project {p}'})
+                continue
             if (repo not in repos or pz.get("reason") != "question" or not meta.get("hibernated_at")
                     or pz.get("answer") or pz.get("reply") or meta.get("done_tracking") or meta.get("name") in seen):
                 continue
@@ -93,6 +112,28 @@ def collect(only=None, slots=None, now=None):
                         "questions": (q or {}).get("questions") or [],
                         "screen": "" if q else "\n".join((pz.get("detail") or "").strip().splitlines()[-8:]),
                         "answer": f'pdo answer {repo} {num} "<text>" --project {p}'})
+        dl = cfg.get("design_lead")
+        held = (pdo_config.design_lead_state(cfg).get("held") or {}) if dl else {}
+        for key, h in held.items():
+            repo, num = key.split("#")
+            meta = read_json(os.path.join(state, "agents", f"{repo}-{num}.json"), {}) or {}
+            if repo not in repos or meta.get("done_tracking") or meta.get("name") in seen:
+                continue
+            seen.add(meta.get("name"))
+            out.append({"project": p, "agent": key, "workspace": meta.get("name") or key, "state": "held",
+                        "hours": round((now - h.get("asked_at", now)) / 3600, 1),
+                        "url": f"https://github.com/{org}/{repo}/issues/{num}",
+                        "questions": [{"question": h.get("question") or "", "multiSelect": False, "options": []}],
+                        "screen": "", "answer": f'pdo answer {repo} {num} "<text>" --project {p}'})
+    for r in out:
+        cfg, _ = pdo_config.try_load(r["project"])
+        r["route"], r["route_why"] = ("human", None) if not (r["agent"] and cfg) else \
+            pdo_config.design_lead_route(cfg, r["agent"].split("#")[0], int(r["agent"].split("#")[1]), r["hours"])
+        r["command"] = r["answer"]
+        if r["route"] == "design-lead":
+            r["answer"] = f'{cfg["design_lead"]["name"]} answers it' + (" (held: asked by peer message)" if r["state"] == "held" else "")
+    if only_repo:
+        out = [r for r in out if r["agent"] and r["agent"].split("#")[0] == only_repo]
     out.sort(key=lambda x: -(x["hours"] or 0))
     return out
 
@@ -103,7 +144,10 @@ def text(rows):
     lines = []
     for r in rows:
         waited = f"{r['hours']:g}h" if r["hours"] is not None else "?"
-        lines.append(f"{r['workspace']} ({r['project']}, {r['state']}, waiting {waited})" + (f"  {r['url']}" if r["url"] else ""))
+        lines.append(f"{r['workspace']} ({r['project']}, {r['state']}, waiting {waited})" + (f"  {r['url']}" if r["url"] else "")
+                     + (" → Design Lead" if r.get("route") == "design-lead" else ""))
+        if r.get("route_why"):
+            lines.append(f"  for the human: {r['route_why']}")
         for q in r["questions"]:
             lines.append(f"  Q: {q['question']}" + (" (several allowed)" if q["multiSelect"] else ""))
             for i, o in enumerate(q["options"], 1):
@@ -117,9 +161,10 @@ def text(rows):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project")
+    ap.add_argument("--repo")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
-    rows = collect(a.project)
+    rows = collect(a.project, only_repo=a.repo)
     print(json.dumps({"questions": rows}, indent=1) if a.json else text(rows))
 
 

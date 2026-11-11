@@ -248,6 +248,27 @@ watcher).
   `SPAWN_MEM_RESERVE_MIN` (10) minutes minus this agent's MB (`AGENT_MB_BY_REPO`, `AGENT_MB`, the
   `RESOURCE_PROFILE`) is below `SPAWN_MEM_FLOOR_MB` (3072). Counting recent starts matters: a new agent takes
   minutes to grow, so a lock alone would let several watchers read the same free memory.
+- **Design Lead (2026-11-11).** `DESIGN_LEAD=1` gives a project one standing tab (`DESIGN_LEAD_NAME`, default
+  "Design Lead (<project>)"; `bin/start-design-lead`, skill project-design-lead, `DESIGN_LEAD_MODEL`) that answers
+  the product and design questions and gates of the agents in its scope (`DESIGN_LEAD_REPOS`, default every repo)
+  in the human's place. It sits beside the project's manager: the manager runs workers and slots, and on product
+  and design the Design Lead's word wins. Its authority comes from an intent doc the human approves by merging it
+  (`DESIGN_LEAD_INTENT` on the home repo's origin/main: `bin/design-lead` reports `active`); before that it only
+  drafts and interviews, and the engine refuses its answers.
+  - Questions travel agent to agent, so nothing waits on a menu: the dispatch brief tells a worker in scope to
+    run `design-lead ask` (it holds the question and prints the Design Lead's peer address, its Claude Code
+    socket found from its pane), send the question by SendMessage and end its turn. The watcher shows that
+    agent as `design lead question` (no stall nudge, no pause). The Design Lead replies by message and records
+    `design-lead reply … answered|escalated`; an escalated question goes to the human through the worker's own
+    question menu, with the recommendation.
+  - `bin/questions` lists held questions, menus and paused gates, and routes them (`route`) to the Design Lead,
+    except escalated ones and any older than `DESIGN_LEAD_ESCALATE_HOURS` (2): those are the human's.
+  - With `DESIGN_LEAD_LIVE_ANSWER=1` it may also answer a menu still on a worker's screen (`answer
+    --design-lead`: Esc, then the answer; only a transcript-confirmed AskUserQuestion, never a permission
+    prompt or a person's draft). This is the one exception to "never type into a pane with a question
+    pending", so it is the human's switch.
+  - Each repo's `AGENTS.md` must say its Design Lead's answers count as the human's; nothing in the engine
+    can say it for them.
 - **Automatic.** The watcher (not under `--peek`) hibernates agents idle at `ready for QC` for 5+ min,
   and closes out finished ones (`--closed-out`): PR merged, or `QC complete` / `Ready for Merge` plus
   "wrap-up done" on screen,

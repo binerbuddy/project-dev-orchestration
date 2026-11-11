@@ -255,3 +255,55 @@ def agent_mb(cfg, repo=None):
     if repo in by:
         return int(by[repo])
     return int(cfg.get("agent_mb") or PROFILES.get((cfg.get("resource_profile") or "medium").lower(), PROFILES["medium"])[0])
+
+
+
+def design_lead_state_file(cfg):
+    return os.path.join(cfg["state_dir"], "design-lead", f"{cfg['project']}.json")
+
+
+def design_lead_state(cfg):
+    """The project's Design Lead state: {"held": {"<repo>#<n>": {question, asked_at}},
+    "escalated": {"<repo>#<n>": {reason, at}}}; {} when none."""
+    try:
+        return json.load(open(design_lead_state_file(cfg), encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def design_lead_write_state(cfg, st):
+    p = design_lead_state_file(cfg)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(st, f, indent=1)
+    os.replace(p + ".tmp", p)
+
+
+def design_lead_in_scope(cfg, repo):
+    dl = cfg.get("design_lead") or {}
+    return bool(dl) and repo in (dl.get("repos") or [])
+
+
+def design_lead_active(cfg):
+    """True when the project has a Design Lead (DESIGN_LEAD=1) and its intent doc is on its home repo's
+    local origin/main: the human approves the doc by merging it (bin/design-lead)."""
+    dl = cfg.get("design_lead") or {}
+    root = (cfg.get("repo_root") or {}).get(dl.get("home_repo") or "")
+    if not dl or not root:
+        return False
+    return subprocess.run(["git", "-C", root, "cat-file", "-e", f"refs/remotes/origin/main:{dl.get('intent') or 'docs/intent.md'}"],
+                          capture_output=True).returncode == 0
+
+
+def design_lead_route(cfg, repo, number, hours):
+    """Who answers a question from <repo>#<number> that has waited <hours>: ("design-lead", None), or
+    ("human", why), where why is None when no active Design Lead covers <repo>."""
+    if not design_lead_in_scope(cfg, repo) or not design_lead_active(cfg):
+        return "human", None
+    esc = (design_lead_state(cfg).get("escalated") or {}).get(f"{repo}#{number}")
+    if esc:
+        return "human", f"the Design Lead escalated it: {esc.get('reason')}"
+    limit = cfg["design_lead"].get("escalate_hours") or 2
+    if hours is not None and hours >= limit:
+        return "human", f"the Design Lead hasn't answered it in {limit:g}h"
+    return "design-lead", None

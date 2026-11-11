@@ -187,9 +187,16 @@ pdo_deps_link_bg "$REPO" "$WORKTREE" "$REPO-$NUM"   # node_modules from the shar
 
 # --- dispatch brief ---
 mkdir -p "$BRIEF_DIR"
+# a repo in the project's Design Lead's scope: product and design questions go to it by peer message
+DESIGNLEAD=""
+DL_NAME="$(pdo_config_json | jq -r --arg r "$REPO" '.design_lead | select(. != null and (.repos | index($r)) != null) | .name')"
+if [[ -n "$DL_NAME" ]]; then
+  DESIGNLEAD="- **Product and design questions go to \"$DL_NAME\", not the human** (it answers for the human once its intent doc is approved). Run \`$HERE/bin/design-lead ask $REPO $NUM \"<the question, its options and your recommendation>\"\`. On success it prints a JSON \`to\` address: send the question there with SendMessage, starting \"From $NAME:\", and end your turn. Its answer arrives as a message, and per the repo's \`AGENTS.md\` it counts as the human's on product and design. If it escalates, or \`ask\` exits 3 (not approved yet, or not running), ask the human with your question menu as usual, quoting any recommendation it gave. Gates work as above. Permission prompts, credentials and anything that isn't product or design always go to the human.
+"
+fi
 ENGINE="$HERE/bin" NUMBER="$NUM" REF="$ORG/$REPO#$NUM" URL="$(jq -r .html_url <<<"$ISSUE_JSON")" \
 NAME="$NAME" WORKTREE="$WORKTREE" BRANCH="$BRANCH" BASE="$BASE" ROUTE="$ROUTE" SKILL="$SKILL" \
-TITLE="$TITLE" TYPE="$TYPE" LABELS="${LABELS:-none}" BODY="$BODY" DIRECTIVES="$DIRECTIVES" \
+TITLE="$TITLE" TYPE="$TYPE" LABELS="${LABELS:-none}" BODY="$BODY" DIRECTIVES="$DIRECTIVES" DESIGNLEAD="$DESIGNLEAD" \
 python3 - "$BRIEF_TEMPLATE" "$BRIEF_FILE" <<'PY'
 import os, re, sys
 src, dst = sys.argv[1], sys.argv[2]

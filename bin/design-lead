@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""design-lead — a project's Design Lead: its state, its address, and the questions it holds.
+
+Usage: design-lead status [--project P] [--fetch] [--json]
+       design-lead address [--project P]                          its peer-message address
+       design-lead ask <repo> <issue#> "<question>" [--project P]   a worker hands it a question
+       design-lead reply <repo> <issue#> answered|escalated "<answer or reason>" [--project P]
+       design-lead escalate <repo> <issue#> "<reason>" [--project P]  hand a question back to the human
+
+DESIGN_LEAD=1 gives a project one standing tab, DESIGN_LEAD_NAME (default "Design Lead (<project>)",
+bin/start-design-lead), that answers the product and design questions of the agents in its scope
+(DESIGN_LEAD_REPOS, default every repo the project runs) in the human's place. It is *active* only
+once its intent doc (DESIGN_LEAD_INTENT) is on its home repo's origin/main: the human approves the doc
+by merging it. Before that every question stays the human's, and `ask` refuses.
+
+The primary path is agent to agent, so nothing waits on a question menu:
+  ask       the worker records the question as held and gets the Design Lead's address; it then
+            sends the question there by peer message (SendMessage) and ends its turn. The
+            watcher shows it as idle_reason "design lead question": no stall nudge, no pause.
+  reply     the Design Lead records its answer (it also sends it back by peer message) or that it
+            escalated; the hold is cleared. An escalated question is the human's: the worker asks
+            it with its own question menu, quoting the Design Lead's recommendation.
+A question held longer than DESIGN_LEAD_ESCALATE_HOURS (2) is the human's too: `pdo questions`
+lists held questions and routes those to the human, who answers with `pdo answer` (the worker is
+idle, so the answer is typed straight in).
+
+The Design Lead may also answer a question menu still on a worker's screen with `answer
+--design-lead` (DESIGN_LEAD_LIVE_ANSWER=1; never a permission or tool prompt). `escalate` hands one
+of those back.
+State: $PDO_STATE_DIR/design-lead/<project>.json. --fetch updates origin/main first (`pdo questions`
+reads the local ref and never fetches).
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
+
+
+def address(dl):
+    """The Design Lead's peer-message address: its Claude Code process's socket, found from its pane
+    (uds:<runtime dir>/cc-socks/<pid>.sock), or None when it isn't running."""
+    try:
+        slot = pdo_herdr.find(dl["name"])
+    except Exception:  # noqa: BLE001 - no herdr: not running, as far as we can tell
+        return None
+    if not slot or (slot.get("agent") or {}).get("agent") != "claude":
+        return None
+    r = subprocess.run(["herdr", "pane", "process-info", "--pane", slot["pane_id"]], capture_output=True, text=True, timeout=15)
+    try:
+        procs = json.loads(r.stdout)["result"]["process_info"]["foreground_processes"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    for p in procs:
+        sock = os.path.join(run, "cc-socks", f"{p.get('pid')}.sock")
+        if p.get("name") == "claude" and os.path.exists(sock):
+            return f"uds:{sock}"
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("action", choices=("status", "address", "ask", "reply", "escalate"))
+    ap.add_argument("args", nargs="*")
+    ap.add_argument("--project")
+    ap.add_argument("--fetch", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    cfg = pdo_config.load(a.project, "design-lead")
+    dl = cfg.get("design_lead")
+    if not dl:
+        sys.exit(f"design-lead: project {cfg['project']} has no Design Lead (DESIGN_LEAD=1)")
+    root = (cfg.get("repo_root") or {}).get(dl.get("home_repo") or "")
+    if a.fetch and root:
+        subprocess.run(["git", "-C", root, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main"],
+                       capture_output=True, timeout=60)
+    st = pdo_config.design_lead_state(cfg)
+    if a.action == "status":
+        out = {"name": dl["name"], "active": pdo_config.design_lead_active(cfg), "repos": dl["repos"],
+               "home_repo": dl["home_repo"], "worktree": os.path.join((cfg.get("worktree_parent") or {}).get(dl["home_repo"], ""), dl["worktree"]),
+               "branch": dl["branch"], "intent": dl["intent"], "log": dl["log"], "notes": dl.get("notes") or None,
+               "live_answer": dl.get("live_answer"), "address": address(dl),
+               **{k: st.get(k) or {} for k in ("held", "escalated")}}
+        if a.json:
+            print(json.dumps(out))
+        else:
+            print(f"{out['name']} ({' '.join(out['repos'])}): " + ("active" if out["active"] else "not active (intent doc not on main yet)")
+                  + f", live answering {'on' if out['live_answer'] else 'off'}, " + (out["address"] or "not running"))
+            for k in ("held", "escalated"):
+                for q, v in out[k].items():
+                    print(f"  {k} {q}: {v.get('question') or v.get('reason')}")
+        return 0
+    if a.action == "address":
+        addr = address(dl)
+        if not addr:
+            sys.exit(f"design-lead: {dl['name']} isn't running")
+        print(addr)
+        return 0
+    if len(a.args) < 2:
+        sys.exit(f"usage: design-lead {a.action} <repo> <issue#> ...")
+    repo, num = a.args[0], int(a.args[1].lstrip("#"))
+    key, rest = f"{repo}#{num}", a.args[2:]
+    if not pdo_config.design_lead_in_scope(cfg, repo):
+        sys.exit(f"design-lead: {repo} isn't in {dl['name']}'s scope ({' '.join(dl['repos'])}): ask the human")
+    now = int(time.time())
+    if a.action == "ask":
+        if not rest:
+            sys.exit('usage: design-lead ask <repo> <issue#> "<question>"')
+        if not pdo_config.design_lead_active(cfg):
+            print(f"design-lead: {dl['name']}'s intent doc isn't approved yet: ask the human with your question menu", file=sys.stderr)
+            return 3
+        addr = address(dl)
+        if not addr:
+            print(f"design-lead: {dl['name']} isn't running: ask the human with your question menu", file=sys.stderr)
+            return 3
+        st.setdefault("held", {})[key] = {"question": rest[0], "asked_at": now}
+        pdo_config.design_lead_write_state(cfg, st)
+        print(json.dumps({"held": key, "to": addr, "name": dl["name"],
+                          "next": "send the question with SendMessage to this address, signed with your workspace name, then end your turn"}))
+        return 0
+    if a.action == "reply":
+        if len(rest) < 2 or rest[0] not in ("answered", "escalated"):
+            sys.exit('usage: design-lead reply <repo> <issue#> answered|escalated "<answer or reason>"')
+        st.get("held", {}).pop(key, None)
+        if rest[0] == "escalated":
+            st.setdefault("escalated", {})[key] = {"reason": rest[1], "at": now}
+        else:
+            st.get("escalated", {}).pop(key, None)
+        pdo_config.design_lead_write_state(cfg, st)
+        print(json.dumps({rest[0]: key}))
+        return 0
+    if not rest:
+        sys.exit('usage: design-lead escalate <repo> <issue#> "<reason>"')
+    st.setdefault("escalated", {})[key] = {"reason": rest[0], "at": now}
+    pdo_config.design_lead_write_state(cfg, st)
+    print(json.dumps({a.action: key}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

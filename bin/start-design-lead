@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# start-design-lead — open a project's standing Design Lead tab (DESIGN_LEAD=1; DESIGN_LEAD_NAME, default
+# "Design Lead (<project>)"; agent name "design-lead-<project>") in the project's home, running
+# `/loop <DESIGN_LEAD_SKILL> project=<project>` (default ${PDO_SKILL_PREFIX}project-design-lead) on
+# DESIGN_LEAD_MODEL. It answers the product and design questions of the agents in its scope
+# (DESIGN_LEAD_REPOS) for the human, once the human approves its intent doc (bin/design-lead). It works in
+# its own worktree, <WORKTREE_PARENT of DESIGN_LEAD_HOME_REPO>/<DESIGN_LEAD_WORKTREE> on DESIGN_LEAD_BRANCH
+# (created from origin/main the first time), where it keeps the intent doc and its decision log. It
+# doesn't use a command-agent slot.
+#
+# Usage: start-design-lead [--project P] [--model M]
+# Already running: says so.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+die() { echo "start-design-lead: $*" >&2; exit 1; }
+# shellcheck source=lib.sh
+source "$HERE/bin/lib.sh"
+
+PROJECT="" MODEL=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+pdo_resolve_project "$PROJECT"
+# shellcheck source=/dev/null
+HERE="$PDO_ENV_DIR" source "$PDO_ENV_FILE"; pdo_finalize
+DL="$(pdo_config_json | jq -c .design_lead)"
+[[ "$DL" != null ]] || die "project $PROJECT has no Design Lead (set DESIGN_LEAD=1)"
+REPO="$(jq -r .home_repo <<<"$DL")" NAME="$(jq -r .name <<<"$DL")"
+ROOT="${REPO_ROOT[$REPO]:-}"
+[[ -n "$ROOT" ]] || die "no REPO_ROOT for the Design Lead's home repo '$REPO'"
+MODEL="${MODEL:-$DESIGN_LEAD_MODEL}" AGENT="design-lead-$(pdo_slug "$PROJECT")"
+WORKTREE="${WORKTREE_PARENT[$REPO]}/$DESIGN_LEAD_WORKTREE"
+if [[ ! -d "$WORKTREE" ]]; then
+  git -C "$ROOT" fetch -q origin "+refs/heads/main:refs/remotes/origin/main"
+  if git -C "$ROOT" ls-remote --exit-code --heads origin "$DESIGN_LEAD_BRANCH" >/dev/null 2>&1; then
+    git -C "$ROOT" fetch -q origin "+refs/heads/$DESIGN_LEAD_BRANCH:refs/remotes/origin/$DESIGN_LEAD_BRANCH"
+    git -C "$ROOT" worktree add -q "$WORKTREE" -B "$DESIGN_LEAD_BRANCH" "origin/$DESIGN_LEAD_BRANCH"
+  else
+    git -C "$ROOT" worktree add -q --no-track "$WORKTREE" -b "$DESIGN_LEAD_BRANCH" origin/main
+  fi
+  git -C "$WORKTREE" branch -q --unset-upstream 2>/dev/null || true
+fi
+CONTROL_DIR="$WORKTREE" pdo_standing "$NAME" "$(pdo_team_home)" || die "could not open a herdr tab for \"$NAME\""
+if (( STAND_ALIVE )); then
+  echo "$NAME already running in $STAND_WHERE"
+  exit 0
+fi
+LOOP="/loop $DESIGN_LEAD_SKILL project=$PROJECT"
+set +e; launch_agent "$STAND_PANE" "$WORKTREE" "$NAME" "$MODEL" "$LOOP"; rc=$?; set -e
+[[ $rc -eq 0 ]] || die "$NAME did not start cleanly (rc=$rc); see $STAND_WHERE"
+herdr agent rename "$STAND_PANE" "$AGENT" >/dev/null 2>&1 || true
+echo "$NAME running in $STAND_WHERE ($WORKTREE, $MODEL)"

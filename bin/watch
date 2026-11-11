@@ -230,6 +230,7 @@ def restore_agent_names(project, repos):
 
 def agents(org, repos, prev):
     out = {}
+    held = set((pdo_config.design_lead_state(CFG).get("held") or {}) if CFG.get("design_lead") else ())
     # both layouts: a tab labelled "<Repo>-<n> <brief>" in its manager's home, or (old) a workspace
     for w in sorted(pdo_herdr.slots(), key=lambda x: x["layout"] != "tab"):
         m = re.match(r"^(\S+)-(\d+) (.+)$", w["name"] or "")
@@ -297,6 +298,9 @@ def agents(org, repos, prev):
             "pause_refused": old.get("pause_refused") if old.get("digest") == digest else None,
         }
         a = out[key]
+        a["design_lead_held"] = key in held  # handed to the Design Lead by peer message (bin/design-lead ask)
+        if a["design_lead_held"]:
+            a["stalled"] = False
         if status in ("idle", "done"):
             a["git_hold"] = pdo_config.git_hold(a["worktree"], pr.get("head_sha") if pr and pr["state"] == "OPEN" else None)
         classify(a)
@@ -394,7 +398,7 @@ def finished(a):
 def classify(a):
     """Why a live agent is idle (idle_reason, idle_hours), and stalled_long: idle STALL_ESCALATE_MIN
     with commits it hasn't pushed, or with no question, no open PR and nothing finished. Reasons:
-    question, finished-should-close, unpushed, UX gate, QC escalated, waiting on merge, waiting on UX
+    question, design lead question, finished-should-close, unpushed, UX gate, QC escalated, waiting on merge, waiting on UX
     review, waiting on QC, confirm likely-fixed, on hold, handed off, stalled, idle."""
     a["idle_reason"], a["stalled_long"] = None, False
     if a["status"] not in ("idle", "done", "blocked"):
@@ -404,6 +408,8 @@ def classify(a):
     hold = a.get("git_hold")
     if a["question_pending"]:
         why = "question"
+    elif a.get("design_lead_held"):
+        why = "design lead question"
     elif finished(a):
         why = "finished-should-close"
     elif hold:
@@ -455,9 +461,9 @@ def pause_reason(a):
         # an agent at a gate asks "reviewed it? good to proceed?" (that prompt is the human's
         # notification); unanswered, it pauses as the gate, and the label stays for later
         return None if a.get("git_hold") else gate
-    if a["question_pending"]:
-        # a plain question stays live in its slot, where the human answers it (pdo questions lists it);
-        # only gates pause unanswered
+    if a["question_pending"] or a.get("design_lead_held"):
+        # a plain question stays live in its slot, where the human answers it (pdo questions lists it),
+        # and so does one handed to the Design Lead; only gates pause unanswered
         return None
     if a["status"] not in ("idle", "done") or finished(a):
         return None

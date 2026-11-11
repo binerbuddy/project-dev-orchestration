@@ -71,6 +71,9 @@ unless the human points you at one.
    **Questions:** `pdo questions` lists every agent waiting on a question across projects, with the
    question, its options and how to answer (live: in its tab; paused: `pdo answer`). Relay them to
    the human with that text; plain questions stay live in their slots and are never auto-paused.
+   Rows with `→ Design Lead` (a project with an active Design Lead) aren't the human's, held ones
+   included: leave them to that tab, and relay only the ones routed back to the human (escalated,
+   or held past 2h), with the Design Lead's recommendation.
 2. **Each project's lessons and its manager list.** For every project in the snapshot: its
    lessons file (the overlay's and the engine's `docs/lessons-learned.md`), its `MANAGER`, its
    `SELF_MANAGED_REPOS` and their `REPO_MANAGER` entries (`pdo project-env --project <p>`). Skim

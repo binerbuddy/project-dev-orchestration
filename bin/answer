@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """answer — give an agent the human's reply (a manager relaying it, or the human from a terminal).
 
-Usage: answer <repo> <issue#> "<text>" [--project P]
+Usage: answer <repo> <issue#> "<text>" [--project P] [--design-lead]
 
 A paused agent (bin/hibernate --pause): the reply is recorded (metadata paused.answer); the
 watcher reports reply_arrived and the orchestrator resumes it, ahead of all queue work, with the
 text as the human's answer. A live agent: the text is delivered now (bin/resume-agent), unless a
 question menu is on its screen, which only its tab can answer.
+
+--design-lead: the project's Design Lead answers for the human (the repo is in its scope and its
+intent doc is approved: bin/design-lead), and the agent is told who answered. With
+DESIGN_LEAD_LIVE_ANSWER=1 it may also answer a question menu on a live agent's screen: only an
+AskUserQuestion the agent's transcript shows unanswered, never a permission or tool prompt, and never
+over a person's unsent text. It presses Esc to close the menu, then types the answer.
 """
 import argparse
 import json
@@ -18,6 +24,38 @@ import time
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pdo_config  # noqa: E402
+import pdo_herdr  # noqa: E402
+
+REFUSED = 3
+
+
+def refuse(msg):
+    print(f"answer: {msg}", file=sys.stderr)
+    sys.exit(REFUSED)
+
+
+def dismiss_menu(cfg, meta, repo, number):
+    """For the Design Lead: Esc a live agent's unanswered AskUserQuestion menu so the answer can be
+    typed. Returns quietly when no menu is up; refuses anything else on screen."""
+    slot = pdo_herdr.find(meta.get("name") or "")
+    if not slot or (slot.get("agent") or {}).get("agent") != "claude" or not pdo_herdr.question_pending(slot):
+        return
+    if not (cfg.get("design_lead") or {}).get("live_answer"):
+        refuse(f"{repo}#{number} has a question menu up and live answering is off (DESIGN_LEAD_LIVE_ANSWER)")
+    tail = lambda: "\n".join(subprocess.run(["herdr", "pane", "read", slot["pane_id"]], capture_output=True,
+                                            text=True, timeout=15).stdout.splitlines()[-40:])
+    if "Do you want to proceed" in tail():
+        refuse(f"{repo}#{number} is at a permission prompt: that is the human's alone")
+    if pdo_herdr.draft_pending(slot):
+        refuse(f"{repo}#{number} has a person's unsent text in its input box")
+    if not pdo_config.pending_question(meta.get("session_id")):
+        refuse(f"{repo}#{number} shows a menu its transcript doesn't record as a question: answer it in its tab")
+    subprocess.run(["herdr", "pane", "send-keys", slot["pane_id"], "esc"], capture_output=True, timeout=15)
+    for _ in range(20):
+        time.sleep(0.5)
+        if "Enter to select" not in tail():
+            return
+    refuse(f"{repo}#{number}: its question menu didn't close after Esc; answer it in its tab")
 
 
 def main():
@@ -26,6 +64,7 @@ def main():
     ap.add_argument("number", type=lambda s: int(s.lstrip("#")))
     ap.add_argument("text")
     ap.add_argument("--project")
+    ap.add_argument("--design-lead", action="store_true")
     a = ap.parse_args()
     cfg = pdo_config.load(a.project, "answer")
     meta_file = os.path.join(cfg["state_dir"], "agents", f"{a.repo}-{a.number}.json")
@@ -33,15 +72,29 @@ def main():
         print(f"answer: no agent metadata for {a.repo}#{a.number}", file=sys.stderr)
         sys.exit(1)
     meta = json.load(open(meta_file, encoding="utf-8"))
+    who = "The human"
+    if a.design_lead:
+        dl = cfg.get("design_lead")
+        if not pdo_config.design_lead_in_scope(cfg, a.repo):
+            refuse(f"{a.repo} has no Design Lead (DESIGN_LEAD=1, DESIGN_LEAD_REPOS)")
+        if not pdo_config.design_lead_active(cfg):
+            refuse(f"{dl['name']}'s intent doc isn't approved yet: the human answers")
+        who = f"{dl['name']}, answering for the human,"
     if meta.get("paused") and meta.get("hibernated_at"):
-        meta["paused"].update(answer=a.text, answered_at=int(time.time()))
+        meta["paused"].update(answer=f"{who} answered: {a.text}" if a.design_lead else a.text, answered_at=int(time.time()))
         with open(meta_file + ".tmp", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=1)
         os.replace(meta_file + ".tmp", meta_file)
         print(json.dumps({"answer": "recorded", "next": "the orchestrator resumes it on its next tick, first in line"}))
         return
+    if a.design_lead:
+        dismiss_menu(cfg, meta, a.repo, a.number)
     r = subprocess.run([os.path.join(pdo_config.BIN, "resume-agent"), a.repo, str(a.number), "--project", cfg["project"],
-                        "--prompt", f"The human answered: {a.text}"], text=True)
+                        "--prompt", f"{who} answered: {a.text}"], text=True)
+    if a.design_lead and r.returncode == 0:
+        st = pdo_config.design_lead_state(cfg)
+        (st.get("held") or {}).pop(f"{a.repo}#{a.number}", None)  # answered
+        pdo_config.design_lead_write_state(cfg, st)
     sys.exit(r.returncode)
 
 

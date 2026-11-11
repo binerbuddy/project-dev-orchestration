@@ -146,7 +146,7 @@ pdo_finalize() {
   PDO_PROJECT="$PROJECT"
   export PDO_STATE_DIR PDO_INBOX PDO_PROJECT
   local k
-  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK NOTIFY_CMD BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES AGENT_QC_REVIEW_HOOK; do
+  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK NOTIFY_CMD BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES AGENT_QC_REVIEW_HOOK DESIGN_LEAD_NOTES; do
     [[ -n "${!k:-}" ]] && printf -v "$k" '%s' "$(_pdo_abs "${!k}")"
   done
   BRIEF_TEMPLATE="${BRIEF_TEMPLATE:-$(pdo_find_prompt dispatch-brief.md)}"
@@ -183,6 +183,22 @@ pdo_finalize() {
   QC_SKILL="${QC_SKILL:-${PDO_SKILL_PREFIX}project-human-review}"
   INTAKE_SKILL="${INTAKE_SKILL:-${PDO_SKILL_PREFIX}project-intake}"
   AGENT_QC_SKILL="${AGENT_QC_SKILL:-${PDO_SKILL_PREFIX}project-agent-qc}"
+  DESIGN_LEAD_SKILL="${DESIGN_LEAD_SKILL:-${PDO_SKILL_PREFIX}project-design-lead}"
+  # Design Lead (bin/start-design-lead, bin/design-lead): DESIGN_LEAD=1 gives the project one standing
+  # tab that answers its agents' product and design questions for the human (asked by peer message),
+  # from an intent doc the human approved
+  DESIGN_LEAD="${DESIGN_LEAD:-0}"
+  DESIGN_LEAD_NAME="${DESIGN_LEAD_NAME:-Design Lead ($PROJECT)}"
+  DESIGN_LEAD_REPOS="${DESIGN_LEAD_REPOS:-}"          # its scope (default: every repo the project runs)
+  DESIGN_LEAD_HOME_REPO="${DESIGN_LEAD_HOME_REPO:-}"  # holds its worktree, intent doc and log (default: PRIMARY_REPO if in scope, else the first)
+  DESIGN_LEAD_MODEL="${DESIGN_LEAD_MODEL:-$DEFAULT_MODEL}"
+  DESIGN_LEAD_WORKTREE="${DESIGN_LEAD_WORKTREE:-design-lead}"   # its worktree under the home repo's WORKTREE_PARENT
+  DESIGN_LEAD_BRANCH="${DESIGN_LEAD_BRANCH:-docs/design-lead}"
+  DESIGN_LEAD_INTENT="${DESIGN_LEAD_INTENT:-docs/intent.md}"   # approved = on the home repo's origin/main
+  DESIGN_LEAD_LOG="${DESIGN_LEAD_LOG:-docs/decisions.md}"
+  DESIGN_LEAD_NOTES="${DESIGN_LEAD_NOTES:-}"                   # optional: its start brief (a markdown file)
+  DESIGN_LEAD_ESCALATE_HOURS="${DESIGN_LEAD_ESCALATE_HOURS:-2}" # held unanswered this long: the human's
+  DESIGN_LEAD_LIVE_ANSWER="${DESIGN_LEAD_LIVE_ANSWER:-0}"       # 1 = it may also answer a question menu on screen (`answer --design-lead`)
   # board Status and label vocabulary (today's names are the defaults)
   CWT_STATUS="${CWT_STATUS:-Claude Work This}"
   QUEUE_LABEL="${QUEUE_LABEL-queue:work}"   # board-less projects (no PROJECT_NUMBER): the issue label that is the queue
@@ -434,6 +450,10 @@ pdo_config_json() {
     --arg aqc_ports "$AGENT_QC_PORTS" --arg aqc_repos "$AGENT_QC_REPOS" --arg aqc_wt "$AGENT_QC_WORKTREE" \
     --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --argjson aqc_notes_by_repo "$aqc_notes_by_repo" --arg aqc_skill "$AGENT_QC_SKILL" \
     --arg aqc_review_hook "$AGENT_QC_REVIEW_HOOK" \
+    --arg dl "$DESIGN_LEAD" --arg dl_name "$DESIGN_LEAD_NAME" --arg dl_repos "$DESIGN_LEAD_REPOS" --arg dl_home "$DESIGN_LEAD_HOME_REPO" \
+    --arg dl_model "$DESIGN_LEAD_MODEL" --arg dl_skill "$DESIGN_LEAD_SKILL" --arg dl_wt "$DESIGN_LEAD_WORKTREE" \
+    --arg dl_branch "$DESIGN_LEAD_BRANCH" --arg dl_intent "$DESIGN_LEAD_INTENT" --arg dl_log "$DESIGN_LEAD_LOG" \
+    --arg dl_notes "$DESIGN_LEAD_NOTES" --arg dl_hours "$DESIGN_LEAD_ESCALATE_HOURS" --arg dl_live "$DESIGN_LEAD_LIVE_ANSWER" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
     --arg max_active "${MAX_ACTIVE:-}" --arg max_per_repo "${MAX_ACTIVE_PER_REPO:-}" --argjson max_by_repo "$max_by_repo" \
     --arg mem_floor "${SPAWN_MEM_FLOOR_MB:-3072}" --arg mem_hold "${SPAWN_MEM_RESERVE_MIN:-10}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
@@ -456,6 +476,13 @@ pdo_config_json() {
       agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes,
       agent_qc_notes_by_repo: $aqc_notes_by_repo, agent_qc_skill: $aqc_skill,
       agent_qc_review_hook: $aqc_review_hook,
+      design_lead: (if $dl != "1" then null else
+        ($dl_repos | split(" ") | map(select(length > 0))) as $listed
+        | (if ($listed | length) > 0 then $listed else ($roots | keys) - $managed end) as $scope
+        | {name: $dl_name, repos: $scope,
+           home_repo: (if $dl_home != "" then $dl_home elif ($scope | index($primary)) != null then $primary else $scope[0] end),
+           model: $dl_model, skill: $dl_skill, worktree: $dl_wt, branch: $dl_branch, intent: $dl_intent, log: $dl_log,
+           notes: $dl_notes, escalate_hours: ($dl_hours | tonumber? // 2), live_answer: ($dl_live == "1")} end),
       system_manager_workspace: $sm, control_dir: $control, agent_layout: $layout, team_home: $team_home,
       cwt_status: $cwt, queue_label: $queue_label, p_labels: ($plabels | split(" ") | map(select(length > 0))),
       label_qc_ready: $qc_ready, label_qc_done: $qc_done, label_merge_ready: $merge_ready,

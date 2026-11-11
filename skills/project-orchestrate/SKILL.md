@@ -181,7 +181,8 @@ ran still fire once, computed against the last saved snapshot.
   no slot. Reach any parked agent with `pdo resume-agent`, never `herdr agent prompt`.
 - **An agent waiting on the human is paused automatically**, except on a plain question: a question
   menu stays live in its slot for the human to answer in the tab (`pdo questions` lists them all,
-  with their options). After 10 min idle at a gate (`awaiting-ux-gate`, `awaiting-decision`),
+  with their options). An agent with idle_reason `design lead question` has handed its question to the
+  project's Design Lead by peer message: leave it alone (no nudge); the answer arrives as a message. After 10 min idle at a gate (`awaiting-ux-gate`, `awaiting-decision`),
   `likely-fixed` / `on-hold`, or open GitHub blockers, the watcher runs `pdo hibernate --pause <reason>`: session and worktree kept, dev stack
   stopped, slot freed, the human notified (NOTIFY_CMD). It comes back through `reply_arrived` and
   `resume_queue`. A gate waits while the agent has unpushed work. A gated agent first asks the human
