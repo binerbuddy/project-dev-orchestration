@@ -248,6 +248,13 @@ watcher).
   `SPAWN_MEM_RESERVE_MIN` (10) minutes minus this agent's MB (`AGENT_MB_BY_REPO`, `AGENT_MB`, the
   `RESOURCE_PROFILE`) is below `SPAWN_MEM_FLOOR_MB` (3072). Counting recent starts matters: a new agent takes
   minutes to grow, so a lock alone would let several watchers read the same free memory.
+  - **External jobs (2026-11-11).** A process outside the engine, e.g. a CI runner's job-started hook running as
+    its own Unix user, reserves through the same gate: `mem-gate reserve --mb N --agent <label> [--hold-min M]
+    [--wait S]`, and `release --agent <label>` when the job ends. That mode needs only python3's stdlib, so a copy
+    (`/usr/local/bin/pdo-mem-gate`) runs where the engine checkout is hidden. Both sides share
+    `/var/lib/pdo-gate` when it exists (owner the engine's user, a group for the job's user, setgid 2770). Writes
+    replace files by rename and the lock is taken on a read-only descriptor, so neither side needs write access
+    to the other's files. A job's floor defaults to the one the engine last used.
 - **Design Lead (2026-11-11).** `DESIGN_LEAD=1` gives a project one standing tab (`DESIGN_LEAD_NAME`, default
   "Design Lead (<project>)"; `bin/start-design-lead`, skill project-design-lead, `DESIGN_LEAD_MODEL`) that answers
   the product and design questions and gates of the agents in its scope (`DESIGN_LEAD_REPOS`, default every repo)

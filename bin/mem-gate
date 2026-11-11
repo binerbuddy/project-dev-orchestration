@@ -2,6 +2,9 @@
 """mem-gate — the machine-wide memory gate every agent start passes (bin/spawn, bin/resume-agent).
 
 Usage: mem-gate reserve --project P [--repo R] [--agent NAME]   check; on yes reserve its MB (exit 4: refused)
+       mem-gate reserve --mb N --agent LABEL [--hold-min M] [--floor-mb F] [--wait S]
+                                                                 an external job (a CI runner's): no project
+       mem-gate release --agent LABEL                            drop LABEL's reservations (the job ended)
        mem-gate status [--json]                                  what is free and reserved now
 
 A new agent needs its repo's AGENT_MB_BY_REPO, else its project's AGENT_MB or RESOURCE_PROFILE MB
@@ -13,9 +16,20 @@ project and watcher, whatever its state dir) and counts every start of the last 
   MemAvailable - reserved MB - this agent's MB >= SPAWN_MEM_FLOOR_MB (3072)
 
 On yes it records the reservation and exits 0; on no it prints the numbers and exits 4, and nothing is
-recorded. The floor and the hold time are the project's (config.env sets them install-wide). The
-lock and the reservations live in $PDO_GATE_DIR (default $XDG_RUNTIME_DIR/pdo-gate, else
-/tmp/pdo-gate-<uid>). Test override: PDO_MEM_AVAIL_MB.
+recorded. The floor and the hold time are the project's (config.env sets them install-wide).
+
+External jobs (--mb): a process outside the engine, e.g. a CI runner's job-started hook, reserves its
+own MB under the same lock and formula, so agents and jobs see each other. Its floor is --floor-mb,
+else the floor the engine last used (recorded in the gate dir), else 3072; its hold is --hold-min
+(default 10). --wait S retries every 2 s for up to S seconds before exit 4; `release` (its
+job-completed hook) ends the hold early. This mode needs only python3's stdlib, so a copy outside the
+engine checkout runs as another user
+(`sudo install -m 755 bin/mem-gate /usr/local/bin/pdo-mem-gate`; reinstall after an engine update).
+
+The lock and the reservations live in $PDO_GATE_DIR, else /var/lib/pdo-gate when it exists (a gate
+shared with other Unix users: a group-writable setgid dir; files are replaced by rename and the lock is
+taken on a read-only descriptor, so it works across users without a shared umask), else
+$XDG_RUNTIME_DIR/pdo-gate, else /tmp/pdo-gate-<uid>. Test override: PDO_MEM_AVAIL_MB.
 """
 import argparse
 import fcntl
@@ -26,16 +40,35 @@ import time
 
 sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import pdo_config  # noqa: E402
 
 REFUSED = 4
+SHARED_DIR = "/var/lib/pdo-gate"
 
 
 def gate_dir():
-    d = os.environ.get("PDO_GATE_DIR") or (os.path.join(os.environ["XDG_RUNTIME_DIR"], "pdo-gate")
-                                           if os.environ.get("XDG_RUNTIME_DIR") else f"/tmp/pdo-gate-{os.getuid()}")
+    d = os.environ.get("PDO_GATE_DIR")
+    if not d and os.path.isdir(SHARED_DIR):
+        return SHARED_DIR
+    d = d or (os.path.join(os.environ["XDG_RUNTIME_DIR"], "pdo-gate")
+              if os.environ.get("XDG_RUNTIME_DIR") else f"/tmp/pdo-gate-{os.getuid()}")
     os.makedirs(d, mode=0o700, exist_ok=True)
     return d
+
+
+def write_json(path, data):
+    """Replace <path> by rename (dir write access is enough, whoever owns the old file); 0664."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.chmod(tmp, 0o664)
+    os.replace(tmp, path)
+
+
+def read_json(path, default):
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
 
 
 def mem_available_mb():
@@ -54,44 +87,83 @@ def live(reservations, now):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=("reserve", "status"))
+    ap.add_argument("action", choices=("reserve", "release", "status"))
     ap.add_argument("--project")
     ap.add_argument("--repo")
     ap.add_argument("--agent", default="")
+    ap.add_argument("--mb", type=int, help="an external job's MB (no project config)")
+    ap.add_argument("--hold-min", type=int)
+    ap.add_argument("--floor-mb", type=int)
+    ap.add_argument("--wait", type=int, default=0, help="seconds to retry a refusal before exit 4")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
+    if a.action == "reserve" and a.mb is None and not a.project:
+        ap.error("reserve needs --project, or --mb for an external job")
+    if a.mb is not None and not a.agent:
+        ap.error("--mb needs --agent LABEL (release drops it by that label)")
+    if a.action == "release" and not a.agent:
+        ap.error("release needs --agent LABEL")
+    cfg = None
+    if a.action == "reserve" and a.mb is None:
+        import pdo_config  # noqa: E402 - only the engine's own reserves read project config
+        cfg = pdo_config.load(a.project, "mem-gate")
+        need, floor = pdo_config.agent_mb(cfg, a.repo), int(cfg.get("spawn_mem_floor_mb") or 3072)
+        hold = int(cfg.get("spawn_mem_reserve_min") or 10) * 60
     d = gate_dir()
     path = os.path.join(d, "reservations.json")
-    with open(os.path.join(d, "lock"), "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)  # one decision at a time, machine-wide
-        try:
-            res = json.load(open(path, encoding="utf-8"))
-        except (OSError, ValueError):
-            res = []
+    if a.mb is not None:
+        need = a.mb
+        floor = a.floor_mb or int(read_json(os.path.join(d, "floor.json"), {}).get("floor_mb") or 3072)
+        hold = (a.hold_min or 10) * 60
+    deadline = time.time() + max(a.wait, 0)
+    while True:
+        rc = decide(a, cfg, d, path, need if a.action == "reserve" else 0, floor if a.action == "reserve" else 0,
+                    hold if a.action == "reserve" else 0, quiet=time.time() + 2 <= deadline)
+        if rc != REFUSED or time.time() + 2 > deadline:
+            return rc
+        time.sleep(2)
+
+
+def decide(a, cfg, d, path, need, floor, hold, quiet):
+    lp = os.path.join(d, "lock")
+    try:
+        fd = os.open(lp, os.O_RDONLY | os.O_CREAT, 0o664)
+    except PermissionError:
+        fd = os.open(lp, os.O_RDONLY)
+    with os.fdopen(fd) as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # one decision at a time, machine-wide (works on a read-only fd)
         now = int(time.time())
-        res = live(res, now)
+        res = live(read_json(path, []), now)
         avail = mem_available_mb()
         reserved = sum(r.get("mb", 0) for r in res)
         if a.action == "status":
-            out = {"avail_mb": avail, "reserved_mb": reserved, "reservations": res}
+            out = {"gate_dir": d, "avail_mb": avail, "reserved_mb": reserved, "reservations": res}
             print(json.dumps(out) if a.json else f"MemAvailable {avail} MB, reserved {reserved} MB by "
                   + (", ".join(f"{r['agent'] or r['project']} {r['mb']} MB" for r in res) or "nothing"))
             return 0
-        cfg = pdo_config.load(a.project, "mem-gate")
-        need, floor = pdo_config.agent_mb(cfg, a.repo), int(cfg.get("spawn_mem_floor_mb") or 3072)
+        if a.action == "release":
+            kept = [r for r in res if r.get("agent") != a.agent]
+            write_json(path, kept)
+            print(json.dumps({"released": a.agent, "mb": reserved - sum(r.get("mb", 0) for r in kept)}))
+            return 0
+        who = a.agent or (cfg or {}).get("project")
         left = avail - reserved - need
         verdict = {"ok": left >= floor, "avail_mb": avail, "reserved_mb": reserved, "need_mb": need,
                    "floor_mb": floor, "left_mb": left}
         if not verdict["ok"]:
-            print(f"mem-gate: refused {a.agent or cfg['project']}: MemAvailable {avail} MB - reserved {reserved} MB"
-                  f" - this agent {need} MB = {left} MB, below the {floor} MB floor", file=sys.stderr)
-            print(json.dumps(verdict))
+            if not quiet:
+                print(f"mem-gate: refused {who}: MemAvailable {avail} MB - reserved {reserved} MB"
+                      f" - this {'job' if a.mb is not None else 'agent'} {need} MB = {left} MB, below the {floor} MB floor",
+                      file=sys.stderr)
+                print(json.dumps(verdict))
             return REFUSED
-        hold = int(cfg.get("spawn_mem_reserve_min") or 10) * 60
-        res.append({"project": cfg["project"], "agent": a.agent, "mb": need, "at": now, "until": now + hold})
-        with open(path + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(res, f)
-        os.replace(path + ".tmp", path)
+        res.append({"project": (cfg or {}).get("project") or "external", "agent": a.agent, "mb": need, "at": now, "until": now + hold})
+        write_json(path, res)
+        if cfg is not None:  # external jobs default to the engine's floor
+            try:
+                write_json(os.path.join(d, "floor.json"), {"floor_mb": floor, "at": now})
+            except OSError:
+                pass
         print(json.dumps(verdict))
         return 0
 

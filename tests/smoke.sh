@@ -21,6 +21,7 @@ has() { if [[ "$2" == *"$3"* ]]; then ok "$1"; else bad "$1" "[$2] lacks [$3]"; 
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_STATE_HOME="$T/home/.local/state"
 mkdir -p "$HOME"
 export PDO_CONFIG_DIRS="$T/cfg-a:$T/cfg-b" PDO_STATE_DIR="$T/state" PYTHONDONTWRITEBYTECODE=1
+export PDO_GATE_DIR="$T/gate"   # never the machine's shared gate (/var/lib/pdo-gate)
 export TMP_SWEEP_ROOT="$T/tmproot"  # the watcher and hibernate run tmp-sweep: never the real /tmp
 export PDO_GATE_DIR="$T/gate" PDO_MEM_AVAIL_MB=64000  # the memory gate: never the machine's real lock or RAM
 unset PDO_INBOX INTAKE_INBOX PDO_PROJECT PDO_SKILL_PREFIX GH_USER GH_TOKEN
@@ -1288,6 +1289,18 @@ eq "mem-gate: reserve until the floor, then refuse (exit 4)" "$(gate 5000 a; gat
 4
 0"
 eq "mem-gate: status counts the live reservations" "$(PDO_GATE_DIR="$G" PDO_MEM_AVAIL_MB=9000 "$BIN/mem-gate" status --json | jq -c '[.reserved_mb, [.reservations[].agent]]')" '[2700,["a","b","d"]]'
+# external jobs (a CI runner's hooks): --mb with no project, counted with the agents', released by label
+XG="$T/gate-ext"; mkdir -p "$T/standalone"; cp "$BIN/mem-gate" "$T/standalone/pdo-mem-gate"
+xg() { PDO_GATE_DIR="$XG" PDO_MEM_AVAIL_MB="$1" "$T/standalone/pdo-mem-gate" "${@:2}" >/dev/null 2>&1; echo $?; }
+eq "mem-gate --mb: a standalone copy reserves an external job (no project config)" "$(xg 6000 reserve --mb 2000 --agent ci:x:1)" 0
+eq "mem-gate --mb: the engine's reserve counts the job" "$(PDO_GATE_DIR="$XG" PDO_MEM_AVAIL_MB=5000 "$BIN/mem-gate" reserve --project acme --agent a 2>/dev/null | jq -c '[.ok, .reserved_mb]')" '[false,2000]'
+eq "mem-gate --mb: the job's floor is the one the engine last used" "$(PDO_GATE_DIR="$XG" PDO_MEM_AVAIL_MB=99999 "$BIN/mem-gate" reserve --project acme --agent b >/dev/null; jq .floor_mb "$XG/floor.json"; PDO_GATE_DIR="$XG" PDO_MEM_AVAIL_MB=99999 "$T/standalone/pdo-mem-gate" reserve --mb 100 --agent ci:x:2 2>/dev/null | jq .floor_mb)" "3072
+3072"
+start=$(date +%s); rc="$(xg 4000 reserve --mb 9999999 --agent ci:test --wait 3)"
+eq "mem-gate --wait: retries, then exit 4 when it never fits" "$rc $(( $(date +%s) - start >= 2 && $(date +%s) - start <= 6 ))" "4 1"
+eq "mem-gate release: drops the label's reservations only" "$(xg 6000 release --agent ci:x:1; PDO_GATE_DIR="$XG" PDO_MEM_AVAIL_MB=6000 "$BIN/mem-gate" status --json | jq -c '[.reservations[].agent]')" '0
+["b","ci:x:2"]'
+check "mem-gate --mb: needs a label" bash -c '! PDO_GATE_DIR="$0" "$1" reserve --mb 5 2>/dev/null' "$XG" "$BIN/mem-gate"
 eq "mem-gate: AGENT_MB_BY_REPO before the profile" "$(PDO_CONFIG_DIRS="$ME" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pdo_config as c
 print(c.agent_mb({"resource_profile": "heavy", "agent_mb_by_repo": {"docs": 500}}, "docs"), c.agent_mb({"resource_profile": "heavy"}, "docs"), c.agent_mb({"resource_profile": "x", "agent_mb": 700}))' "$BIN")" "500 1800 700"
 # a plain question stays live; pdo questions reads it (and a paused one) from the transcript
