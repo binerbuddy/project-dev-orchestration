@@ -307,3 +307,14 @@ def design_lead_route(cfg, repo, number, hours):
     if hours is not None and hours >= limit:
         return "human", f"the Design Lead hasn't answered it in {limit:g}h"
     return "design-lead", None
+
+
+def lane_bucket(cfg, repo, base):
+    """The repo whose PR cap and slots a PR or agent counts against: BASE_LANE[<repo>:<base>] for a
+    lane branch, else <repo>."""
+    return (cfg.get("base_lane") or {}).get(f"{repo}:{(base or '').removeprefix('origin/')}") or repo
+
+
+def lane_label(labels):
+    """The lane branch an issue targets (its `base:<branch>` label), or None."""
+    return next((l.split(":", 1)[1] for l in labels or [] if l.lower().startswith("base:")), None)

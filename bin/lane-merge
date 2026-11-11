@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""lane-merge — merge a PR into a lane branch (BASE_LANE) after its agent QC passed, and nothing else.
+
+Usage: lane-merge <repo> <pr#> [--project P] [--by "<who>"] [--dry-run]
+
+Written for a Design Lead, which merges gap PRs into a long-lived lane branch (e.g. an API branch
+that reaches the default branch later as one PR the human approves). Its permission rule can name
+this command alone (`Bash(pdo lane-merge:*)`), because the checks live here, read from GitHub now:
+  - the PR is open, not a draft, and its base is a BASE_LANE branch of <repo> (<repo>:<base>), never
+    the default branch;
+  - agent QC passed: LABEL_MERGE_READY or LABEL_QC_DONE, without LABEL_QC_ESCALATED;
+  - GitHub says it is MERGEABLE.
+It merges with a merge commit whose subject starts "<by> merge:" (default "Design Lead"), so the
+history says who merged it, and comments the same on the PR. Exit 3: refused (the reason is printed).
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True  # keep the engine checkout free of __pycache__
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import pdo_config  # noqa: E402
+
+REFUSED = 3
+
+
+def refuse(msg):
+    print(f"lane-merge: refused: {msg}", file=sys.stderr)
+    sys.exit(REFUSED)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("repo")
+    ap.add_argument("number", type=lambda s: int(s.lstrip("#")))
+    ap.add_argument("--project")
+    ap.add_argument("--by", default="Design Lead")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+    cfg = pdo_config.load(a.project, "lane-merge")
+    slug = f"{cfg['org']}/{a.repo}"
+    r = subprocess.run(["gh", "pr", "view", str(a.number), "-R", slug, "--json",
+                        "number,title,state,isDraft,baseRefName,headRefOid,mergeable,labels,url"], capture_output=True, text=True)
+    if r.returncode != 0:
+        refuse(f"can't read {slug}#{a.number}: {r.stderr.strip()}")
+    pr = json.loads(r.stdout)
+    labels = {l["name"] for l in pr["labels"]}
+    lanes = cfg.get("base_lane") or {}
+    if pr["state"] != "OPEN" or pr["isDraft"]:
+        refuse(f"#{a.number} is {pr['state'].lower()}{' (draft)' if pr['isDraft'] else ''}")
+    if f"{a.repo}:{pr['baseRefName']}" not in lanes:
+        refuse(f"#{a.number}'s base is {pr['baseRefName']}, not a lane branch "
+               f"({', '.join(k for k in lanes if k.startswith(a.repo + ':')) or 'no lanes in ' + a.repo})")
+    d = subprocess.run(["gh", "api", f"repos/{slug}", "--jq", ".default_branch"], capture_output=True, text=True)
+    if d.returncode != 0 or not d.stdout.strip() or d.stdout.strip() == pr["baseRefName"]:
+        refuse(f"#{a.number} targets the default branch ({d.stdout.strip() or 'unknown'}): only the human merges there")
+    passed = {cfg["label_merge_ready"], cfg["label_qc_done"]} & labels
+    if not passed or cfg["label_qc_escalated"] in labels:
+        refuse(f"#{a.number}'s agent QC hasn't passed (labels: {', '.join(sorted(labels)) or 'none'})")
+    if pr["mergeable"] != "MERGEABLE":
+        refuse(f"#{a.number} isn't mergeable ({pr['mergeable']})")
+    subject = f"{a.by} merge: {pr['title']} (#{a.number})"
+    if a.dry_run:
+        print(json.dumps({"would_merge": pr["url"], "into": pr["baseRefName"], "subject": subject}))
+        return 0
+    # --match-head-commit: refuse if the branch moved since these checks
+    r = subprocess.run(["gh", "pr", "merge", str(a.number), "-R", slug, "--merge", "--subject", subject,
+                        "--match-head-commit", pr["headRefOid"]], capture_output=True, text=True)
+    if r.returncode != 0:
+        refuse(f"gh pr merge failed: {r.stderr.strip()}")
+    subprocess.run(["gh", "pr", "comment", str(a.number), "-R", slug, "--body",
+                    f"**{a.by} merge** into `{pr['baseRefName']}` after agent QC passed ({', '.join(sorted(passed))}). "
+                    f"Not the human's merge: they approve the lane's final PR to the default branch."],
+                   capture_output=True, text=True)
+    print(json.dumps({"merged": pr["url"], "into": pr["baseRefName"], "subject": subject}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -44,6 +44,10 @@ case "$*" in
   "api -X DELETE repos/acme/widget/issues/"*"/labels/managed-by%3A"*) ;;
   "api repos/acme/widget/issues/"*"/comments -f body="*) echo 9001 ;;
   "issue edit"*) ;;
+  # lane-merge: the PR in $SMOKE_DIR/lane-pr.json; acme/widget's default branch is main
+  "pr view "*" -R acme/widget --json number,title,state,isDraft,baseRefName"*) cat "$SMOKE_DIR/lane-pr.json" ;;
+  "api repos/acme/widget --jq .default_branch") echo main ;;
+  "pr merge "*" -R acme/widget "*) ;;
   "pr list -R acme/widget --state open"*) echo feat/61 ;;
   "pr list -R acme/widget --head feat/77"*) echo '[{"number":77,"labels":[{"name":"ready for QC"}],"state":"OPEN","isDraft":false}]' ;;
   "api repos/acme/widget/issues/77 --jq"*) echo '{"state":"open","labels":[]}' ;;
@@ -409,6 +413,14 @@ eq "BRANCH_PREFIX default entry" "$(BRANCH_PREFIX="default=work" "$BIN/spawn" wi
 jq '.type = {name: "Feature"} | .labels = [{name: "bug"}]' "$T/issue12-nt.json" >"$T/issue12.json"
 eq "the type is matched before labels" "$(BRANCH_PREFIX="feature=feat bug=fix" "$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "feat/12-widget-crash-save"
 eq "a typed issue's labels are not read (a bug label on a Feature stays feat/)" "$("$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .branch)" "feat/12-widget-crash-save"
+echo 'if [[ -n "${SMOKE_LANE:-}" ]]; then declare -A BASE_LANE=([widget:feat/api]="docs" [widget:main]="docs"); fi' >>"$T/cfg-a/projects/acme.env"
+# a base:<branch> label spawns on that lane (BASE_LANE), once the branch exists on origin
+jq '.labels = [{name: "P2-high"}, {name: "base:feat/api"}]' "$T/issue12-typed.json" >"$T/issue12.json"
+has "spawn: a base: label that isn't a BASE_LANE is refused" "$("$BIN/spawn" widget 12 --dry-run 2>&1)" "BASE_LANE has no widget:feat/api"
+has "spawn: ... and a lane missing on origin" "$(SMOKE_LANE=1 "$BIN/spawn" widget 12 --dry-run 2>&1)" "no branch feat/api on origin"
+git -C "$T/origin.git" branch -q feat/api main
+eq "spawn: a lane issue is based on the lane" "$(SMOKE_LANE=1 "$BIN/spawn" widget 12 --dry-run 2>/dev/null | jq -r .base)" "origin/feat/api"
+cp "$T/issue12-typed.json" "$T/issue12.json"
 cp "$T/issue12-typed.json" "$T/issue12.json"
 eq "branch_prefix in the JSON config" "$("$BIN/pdo-config" --project acme --json | jq -c .branch_prefix)" '{"bug":"fix","default":"feat"}'
 GH_USER=octo SMOKE_TOKEN_LOG="$T/tokens.log" "$BIN/spawn" widget 12 --dry-run >/dev/null 2>&1
@@ -726,6 +738,72 @@ PY
 0
 {} 0
 [('a', False, True), ('b', True, None)] [('a', True, None), ('b', True, None)]"
+eq "watch: lane PRs, agents and issues count against the lane's bucket repo" "$(python3 - "$BIN/watch" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+w.CFG.update(base_lane={"api:feat/x": "cli"}, max_active=None, max_active_per_repo=2, max_active_by_repo={})
+ag = {"api#1": {"repo": "api"}, "api#2": {"repo": "api", "lane": "feat/x"}, "api#3": {"repo": "api", "lane": "feat/x"}}
+sl = w.repo_slots(ag, list(ag), {"api", "cli"}); print(sl)
+q = w.mark_pr_capped([{"repo": "api", "auto_spawn": True}, {"repo": "api", "base": "feat/x", "auto_spawn": True}], {"capped": []}, {k for k, v in sl.items() if v["free"] == 0})
+print([(r.get("base"), r["auto_spawn"]) for r in q])
+w.AWAITING_HUMAN = {"ready for QC"}
+w.PR_INDEX = {("api", "a"): {"state": "OPEN", "labels": ["ready for QC"], "base": "main"},
+              ("api", "b"): {"state": "OPEN", "labels": ["ready for QC"], "base": "feat/x"}}
+w.STATE_DIR = "/nonexistent"
+print(w.pr_cap("acme", "o", {"api", "cli"})["by_repo"])
+import pdo_config as c
+print(c.lane_label(["P2-high", "base:feat/x"]), c.lane_label(["P2"]), c.lane_bucket(w.CFG, "api", "origin/feat/x"), c.lane_bucket(w.CFG, "api", "main"))
+w.CFG.update(base_lane={}, max_active_per_repo=None)
+PY
+)" "{'api': {'active': 1, 'max': 2, 'free': 1}, 'cli': {'active': 2, 'max': 2, 'free': 0}}
+[(None, True), ('feat/x', False)]
+{'api': 1, 'cli': 1}
+feat/x None cli api"
+LR="$T/lane-origin.git"; git init -q --bare "$LR"; LC="$T/lane-clone"; git clone -q "$LR" "$LC" 2>/dev/null
+git -C "$LC" -c user.email=t@t -c user.name=t commit -q --allow-empty -m one; git -C "$LC" push -q origin HEAD:refs/heads/feat/x 2>/dev/null
+printf '#!/usr/bin/env bash\necho "$@" >"%s/lane-hook-ran"\n' "$T" >"$T/lane-hook"; chmod +x "$T/lane-hook"
+eq "watch: a lane's first head is recorded; a move fires lane_moved and starts LANE_HOOK" "$(python3 - "$BIN/watch" "$LC" "$T" <<'PY'
+import importlib.machinery, importlib.util, subprocess, sys, time, os
+spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+w.CFG.update(base_lane={"api:feat/x": "cli"}, repo_root={"api": sys.argv[2]}, lane_hook=sys.argv[3] + "/lane-hook")
+w.STATE_DIR = sys.argv[3] + "/lanestate"
+cur = {}; print(w.lanes_moved("acme", {}, cur), sorted(cur["lanes"]))
+prev = cur; first = cur["lanes"]["api:feat/x"]
+g = ["git", "-C", sys.argv[2], "-c", "user.email=t@t", "-c", "user.name=t"]
+subprocess.run(g + ["commit", "-q", "--allow-empty", "-m", "two"], check=True)
+subprocess.run(["git", "-C", sys.argv[2], "push", "-q", "origin", "HEAD:refs/heads/feat/x"], check=True, capture_output=True)
+cur = {}; ev = w.lanes_moved("acme", prev, cur)
+print([(e["type"], e["branch"], e["prev"] == first, e["quiet"]) for e in ev], w.lanes_moved("acme", cur, {}))
+for _ in range(50):
+    if os.path.exists(sys.argv[3] + "/lane-hook-ran"): break
+    time.sleep(0.1)
+print(open(sys.argv[3] + "/lane-hook-ran").read().split()[:2])
+w.CFG.update(base_lane={}, lane_hook="")
+PY
+)" "[] ['api:feat/x']
+[('lane_moved', 'feat/x', True, True)] []
+['api', 'feat/x']"
+# lane-merge: only into a BASE_LANE branch, only after agent QC passed
+lane_pr() { printf '{"number":501,"title":"G1 gap","state":"OPEN","isDraft":false,"baseRefName":"%s","headRefOid":"abc","mergeable":"%s","labels":[%s],"url":"u"}' "$1" "$2" "$3" >"$T/lane-pr.json"; }
+lane_try() { local out rc; out="$(SMOKE_LANE=1 "$BIN/lane-merge" widget 501 --project acme 2>&1)"; rc=$?; echo "$rc ${out#lane-merge: refused: }"; }
+eq "BASE_LANE in the config" "$(SMOKE_LANE=1 "$BIN/pdo-config" --project acme | jq -cS .base_lane)" '{"widget:feat/api":"docs","widget:main":"docs"}'
+lane_pr feat/other MERGEABLE '{"name":"Ready for Merge"}'
+has "lane-merge: refuses a base that isn't a lane" "$(lane_try)" "3 #501's base is feat/other, not a lane branch"
+lane_pr main MERGEABLE '{"name":"Ready for Merge"}'
+has "lane-merge: refuses the default branch, even listed as a lane" "$(lane_try)" "3 #501 targets the default branch (main)"
+lane_pr feat/api MERGEABLE '{"name":"ready for QC"}'
+has "lane-merge: refuses before agent QC passed" "$(lane_try)" "3 #501's agent QC hasn't passed"
+lane_pr feat/api MERGEABLE '{"name":"QC complete - ready to review"},{"name":"QC escalated"}'
+has "lane-merge: refuses an escalated PR" "$(lane_try)" "3 #501's agent QC hasn't passed"
+lane_pr feat/api CONFLICTING '{"name":"Ready for Merge"}'
+has "lane-merge: refuses an unmergeable PR" "$(lane_try)" "3 #501 isn't mergeable (CONFLICTING)"
+lane_pr feat/api MERGEABLE '{"name":"QC complete - ready to review"}'
+: >"$SMOKE_LOG"; out="$(lane_try)"
+has "lane-merge: merges into the lane, named as the Design Lead's merge" "$out" '0 {"merged": "u", "into": "feat/api", "subject": "Design Lead merge: G1 gap (#501)"}'
+check "lane-merge: ... a merge commit pinned to the checked head" grep -q "gh pr merge 501 -R acme/widget --merge --subject Design Lead merge: G1 gap (#501) --match-head-commit abc" "$SMOKE_LOG"
+check "lane-merge: ... and says so on the PR" grep -q "gh pr comment 501 -R acme/widget --body \*\*Design Lead merge\*\* into" "$SMOKE_LOG"
 eq "watch: another manager's live claim is left alone; a released or own claim is not" "$(python3 - "$BIN/watch" <<'PY'
 import importlib.machinery, importlib.util, sys
 spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))

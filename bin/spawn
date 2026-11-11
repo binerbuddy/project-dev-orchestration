@@ -77,6 +77,13 @@ TITLE="$(jq -r .title <<<"$ISSUE_JSON")"
 TYPE="$(jq -r '.type.name // "none"' <<<"$ISSUE_JSON")"
 LABELS="$(jq -r '[.labels[].name] | join(", ")' <<<"$ISSUE_JSON")"
 BODY="$(jq -r '.body // ""' <<<"$ISSUE_JSON")"
+# a `base:<branch>` label: the issue targets a long-lived lane branch (BASE_LANE), not the default branch
+LANE="$(jq -r '[.labels[].name | select(ascii_downcase | startswith("base:")) | .[5:]][0] // ""' <<<"$ISSUE_JSON")"
+if [[ -n "$LANE" ]]; then
+  [[ -n "${BASE_LANE[$REPO:$LANE]:-}" ]] || die "$REPO#$NUM has base:$LANE, but BASE_LANE has no $REPO:$LANE"
+  git -C "$ROOT" ls-remote --exit-code --heads origin "$LANE" >/dev/null || die "base:$LANE: no branch $LANE on origin"
+  [[ -n "$BASE" ]] || BASE="origin/$LANE"
+fi
 # Human directives: comments starting with "Claude" / "@claude", from trusted authors only
 # (OWNER/MEMBER/COLLABORATOR), so an outside commenter can't steer a command agent.
 DIRECTIVES="$(gh api "repos/$ORG/$REPO/issues/$NUM/comments" --paginate --jq '.[]
@@ -188,6 +195,9 @@ pdo_deps_link_bg "$REPO" "$WORKTREE" "$REPO-$NUM"   # node_modules from the shar
 # --- dispatch brief ---
 mkdir -p "$BRIEF_DIR"
 # a repo in the project's Design Lead's scope: product and design questions go to it by peer message
+LANEBRIEF=""
+[[ -z "$LANE" ]] || LANEBRIEF="- **Your PR targets \`$LANE\`, not the default branch** (the issue's \`base:$LANE\` label: a long-lived branch that merges to the default branch later, as one PR). Open it with \`gh pr create --base $LANE\`, keep it based on \`origin/$LANE\`, and never retarget it. Your changes reach the default branch only with that final PR.
+"
 DESIGNLEAD=""
 DL_NAME="$(pdo_config_json | jq -r --arg r "$REPO" '.design_lead | select(. != null and (.repos | index($r)) != null) | .name')"
 if [[ -n "$DL_NAME" ]]; then
@@ -196,7 +206,7 @@ if [[ -n "$DL_NAME" ]]; then
 fi
 ENGINE="$HERE/bin" NUMBER="$NUM" REF="$ORG/$REPO#$NUM" URL="$(jq -r .html_url <<<"$ISSUE_JSON")" \
 NAME="$NAME" WORKTREE="$WORKTREE" BRANCH="$BRANCH" BASE="$BASE" ROUTE="$ROUTE" SKILL="$SKILL" \
-TITLE="$TITLE" TYPE="$TYPE" LABELS="${LABELS:-none}" BODY="$BODY" DIRECTIVES="$DIRECTIVES" DESIGNLEAD="$DESIGNLEAD" \
+TITLE="$TITLE" TYPE="$TYPE" LABELS="${LABELS:-none}" BODY="$BODY" DIRECTIVES="$DIRECTIVES" DESIGNLEAD="$DESIGNLEAD" LANE="$LANEBRIEF" \
 python3 - "$BRIEF_TEMPLATE" "$BRIEF_FILE" <<'PY'
 import os, re, sys
 src, dst = sys.argv[1], sys.argv[2]
@@ -220,7 +230,9 @@ trap - EXIT
 write_meta "$REPO" "$NUM" "$(jq -n --arg repo "$REPO" --argjson num "$NUM" --arg route "$ROUTE" \
   --arg branch "$BRANCH" --arg worktree "$WORKTREE" --arg ws "$WS_ID" --arg pane "$PANE_ID" \
   --arg tab "$TAB_ID" --arg home "$HOME_WS" --arg name "$NAME" --arg session "$(session_of "$PANE_ID")" \
+  --arg base "${BASE#origin/}" --arg lane "$LANE" \
   '{repo: $repo, number: $num, route: $route, branch: $branch, worktree: $worktree, cwd: $worktree,
+    base: $base, lane: (if $lane == "" then null else $lane end),
     name: $name, workspace_id: $ws, tab_id: $tab, home: $home, pane_id: $pane, session_id: $session,
     spawned_at: (now | floor), hibernated_at: null}')"
 

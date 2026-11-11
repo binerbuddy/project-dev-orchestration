@@ -269,6 +269,16 @@ watcher).
     pending", so it is the human's switch.
   - Each repo's `AGENTS.md` must say its Design Lead's answers count as the human's; nothing in the engine
     can say it for them.
+- **Lane branches (2026-11-11).** `BASE_LANE[<repo>:<branch>]=<bucket repo>` declares a long-lived branch that collects
+  one effort's PRs and reaches the default branch later as one PR the human approves. An issue labelled
+  `base:<branch>` is spawned on it (`bin/spawn`; the brief says to target it and never retarget), and its open PRs and
+  agents count against the bucket repo's PR cap and slots (`pdo_config.lane_bucket`), so a busy repo's cap doesn't stall
+  the effort. The watcher reads each lane's head with `git ls-remote` (no API cost) and, when it moves, starts
+  `LANE_HOOK <repo> <branch> <sha>` in the background (e.g. redeploying a shared stack on the lane) and reports a quiet
+  `lane_moved`. `bin/lane-merge` merges a PR only into a lane, never the default branch, and only after agent QC passed
+  and with GitHub saying it's mergeable (pinned to the checked head), so a Design Lead's permission rule can name that
+  one command. Keeping the lane in sync with the default branch is a project decision: `ORCHESTRATOR_NOTES` holds the
+  project's standing instructions for its orchestrator, read every session.
 - **Automatic.** The watcher (not under `--peek`) hibernates agents idle at `ready for QC` for 5+ min,
   and closes out finished ones (`--closed-out`): PR merged, or `QC complete` / `Ready for Merge` plus
   "wrap-up done" on screen,

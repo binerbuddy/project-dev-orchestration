@@ -38,7 +38,8 @@ It also reports weekly/5-hour usage from the oh-my-claudecode HUD cache, and the
 Events are transitions against the previous snapshot (state file), so each fires once:
   slot_freed, urgent, qc_feedback, pr_conflict, pr_cap_reached, design_ready, qc_complete, pr_merged, agent_gone, stalled, stalled_long, reply_arrived, new_claude_work_this,
   usage_ceiling, heartbeat. Quiet events (hibernated, closed_out, hibernate_failed,
-  event_hook_failed, and any hook event marked "quiet") ride along with the next wake and never
+  event_hook_failed, lane_moved (a BASE_LANE branch's head changed; LANE_HOOK was started), and any
+  hook event marked "quiet") ride along with the next wake and never
   end --until-event on their own.
 
 QC handoff is label- and review-based. 'ready for QC' (LABEL_QC_READY) means the PR waits for QC
@@ -293,7 +294,7 @@ def agents(org, repos, prev):
             "session_id": meta.get("session_id"), "hibernated": False,
             "wrapup_done": finished_marker(tail), "issue_state": issue.get("state"),
             "worktree": meta.get("worktree") or meta.get("cwd"), "on_hold": "on-hold" in issue_labels,
-            "decision_gate": decision_gate, "gate": meta.get("gate"),
+            "decision_gate": decision_gate, "gate": meta.get("gate"), "lane": meta.get("lane"),
             # a refused --pause isn't retried until the screen changes
             "pause_refused": old.get("pause_refused") if old.get("digest") == digest else None,
         }
@@ -816,7 +817,8 @@ def pr_cap(project, org, repos):
     by_repo = {r: 0 for r in sorted(repos)}
     for (repo, _b), p in PR_INDEX.items():
         if p["state"] == "OPEN" and AWAITING_HUMAN & set(p["labels"]):
-            by_repo[repo] = by_repo.get(repo, 0) + 1
+            r = pdo_config.lane_bucket(CFG, repo, p.get("base"))  # a lane's PRs count against its bucket repo
+            by_repo[r] = by_repo.get(r, 0) + 1
     capped = sorted(r for r, n in by_repo.items() if n >= cap)
     return {"open_awaiting_human": sum(by_repo.values()), "cap": cap, "per_repo": True, "by_repo": by_repo,
             "capped": capped, "reached": bool(by_repo) and len(capped) == len(by_repo)}
@@ -833,9 +835,10 @@ def mark_pr_capped(queue, cap, full=()):
         own = r.pop("auto_spawn_uncapped", r.get("auto_spawn"))
         r.pop("pr_capped", None)
         r.pop("repo_full", None)
-        if r.get("repo") in capped or r.get("repo") in full:
+        b = pdo_config.lane_bucket(CFG, r.get("repo"), r.get("base"))  # a lane issue counts against its bucket repo
+        if b in capped or b in full:
             r.update(auto_spawn=False, auto_spawn_uncapped=own)
-            r.update({"pr_capped": True} if r.get("repo") in capped else {}, **({"repo_full": True} if r.get("repo") in full else {}))
+            r.update({"pr_capped": True} if b in capped else {}, **({"repo_full": True} if b in full else {}))
         else:
             r["auto_spawn"] = own
         out.append(r)
@@ -855,7 +858,7 @@ def repo_slots(ag, active, repos):
     for r in sorted(repos):
         cap = repo_cap(r)
         if cap is not None:
-            n = sum(1 for k in active if ag[k]["repo"] == r)
+            n = sum(1 for k in active if pdo_config.lane_bucket(CFG, ag[k]["repo"], ag[k].get("lane")) == r)
             out[r] = {"active": n, "max": cap, "free": max(0, cap - n)}
     return out
 
@@ -869,7 +872,7 @@ def free_slots(ag, active, repos, slots):
     room = None if CFG.get("max_active") is None else max(0, MAX_ACTIVE - len(active))
     free = sum(v["free"] for v in slots.values())
     if set(repos) - set(slots):  # repos without a cap of their own share the project's MAX_ACTIVE
-        free += max(0, MAX_ACTIVE - sum(1 for k in active if ag[k]["repo"] not in slots))
+        free += max(0, MAX_ACTIVE - sum(1 for k in active if pdo_config.lane_bucket(CFG, ag[k]["repo"], ag[k].get("lane")) not in slots))
     return free if room is None else min(free, room)
 
 
@@ -1137,6 +1140,49 @@ def arm_status(project):
     return "running" if mine else "none"
 
 
+def lane_heads():
+    """{"<repo>:<branch>": sha} for every BASE_LANE branch, read with git ls-remote (no API cost)."""
+    out = {}
+    for key in sorted(CFG.get("base_lane") or {}):
+        repo, branch = key.split(":", 1)
+        root = (CFG.get("repo_root") or {}).get(repo)
+        if not root:
+            continue
+        try:
+            r = subprocess.run(["git", "-C", root, "ls-remote", "origin", f"refs/heads/{branch}"],
+                               capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            continue
+        if r.returncode == 0 and r.stdout.split():
+            out[key] = r.stdout.split()[0]
+    return out
+
+
+def lanes_moved(project, prev, cur):
+    """Quiet lane_moved events for lane branches whose head changed since the last snapshot, after
+    starting LANE_HOOK <repo> <branch> <sha> for each in the background (e.g. redeploying a shared
+    stack that runs the lane). A lane seen for the first time is only recorded."""
+    heads, old = lane_heads(), prev.get("lanes") or {}
+    cur["lanes"] = {**old, **heads}  # a failed read keeps the last known head
+    ev, hook = [], CFG.get("lane_hook") or ""
+    for key, sha in heads.items():
+        if old.get(key) in (None, sha):
+            continue
+        repo, branch = key.split(":", 1)
+        e = {"type": "lane_moved", "quiet": True, "repo": repo, "branch": branch, "sha": sha, "prev": old[key]}
+        if hook:
+            log = os.path.join(STATE_DIR, "lane-hook", f"{project}.log")
+            os.makedirs(os.path.dirname(log), exist_ok=True)
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} {key} {sha}\n")
+                fh.flush()
+                subprocess.Popen([hook, repo, branch, sha], stdout=fh, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
+            e["hook"] = log
+        ev.append(e)
+    return ev
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project")
@@ -1196,6 +1242,7 @@ def main():
             quiet += fresh
             quiet += release_finished_claims(a.project, load_repos(a.project)[1])
             quiet += tmp_sweep(a.project)
+            quiet += lanes_moved(a.project, prev, cur)
         ev = (events(prev, cur) if prev else [{"type": "first_run"}]) + hook_wake  # the hook dedupes itself
         if not a.peek:
             tmp = state_file + ".tmp"

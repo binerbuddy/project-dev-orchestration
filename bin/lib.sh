@@ -146,7 +146,7 @@ pdo_finalize() {
   PDO_PROJECT="$PROJECT"
   export PDO_STATE_DIR PDO_INBOX PDO_PROJECT
   local k
-  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK NOTIFY_CMD BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES AGENT_QC_REVIEW_HOOK DESIGN_LEAD_NOTES; do
+  for k in IDENTITY_HOOK TEAM_UP_HOOK SYSREPORT_HOOK QC_HOOK WATCH_EVENT_HOOK NOTIFY_CMD BRIEF_TEMPLATE CONTROL_DIR AGENT_QC_NOTES AGENT_QC_REVIEW_HOOK DESIGN_LEAD_NOTES LANE_HOOK ORCHESTRATOR_NOTES; do
     [[ -n "${!k:-}" ]] && printf -v "$k" '%s' "$(_pdo_abs "${!k}")"
   done
   BRIEF_TEMPLATE="${BRIEF_TEMPLATE:-$(pdo_find_prompt dispatch-brief.md)}"
@@ -175,6 +175,15 @@ pdo_finalize() {
   AGENT_QC_REVIEW_HOOK="${AGENT_QC_REVIEW_HOOK:-}" # optional: run by `agent-qc verdict … pass-ux` with <repo> <pr#> (e.g. request a hosted preview)
   WATCH_EVENT_HOOK="${WATCH_EVENT_HOOK:-}"   # optional: bin/watch runs it each snapshot for project-specific events
   WATCH_EVENT_HOOK_TIMEOUT="${WATCH_EVENT_HOOK_TIMEOUT:-120}"  # seconds before the watcher gives up on it
+  # BASE_LANE[<repo>:<branch>]=<bucket repo>: a long-lived branch issues target with a `base:<branch>` label;
+  # its PRs and agents count against <bucket repo>'s PR cap and slots. LANE_HOOK runs (in the background)
+  # with <repo> <branch> <sha> when a lane's head moves; `pdo lane-merge` merges only into a lane.
+  if ! declare -p BASE_LANE >/dev/null 2>&1; then declare -gA BASE_LANE=()
+  elif [[ "$(declare -p BASE_LANE)" != "declare -A"* ]]; then
+    pdo_die "BASE_LANE must be a map: declare -A BASE_LANE=([<repo>:<branch>]=\"<bucket repo>\")"
+  fi
+  LANE_HOOK="${LANE_HOOK:-}"
+  ORCHESTRATOR_NOTES="${ORCHESTRATOR_NOTES:-}"   # optional: the project's standing instructions for its orchestrator (markdown)
   CONFLICT_RESOLUTION="${CONFLICT_RESOLUTION:-rebase}"   # rebase (force-with-lease) | merge (merge the base in; never force-push)
   NOTIFY_CMD="${NOTIFY_CMD:-}"   # optional: run with <title> <body> [<url>] when an agent pauses for the human or enters a gate
   SYSTEM_MANAGER_WORKSPACE="${SYSTEM_MANAGER_WORKSPACE:-System Manager}"
@@ -392,7 +401,10 @@ pdo_slug() {
 # pdo_config_json: the loaded project's config as JSON (python scripts read this via bin/pdo-config)
 pdo_config_json() {
   local k roots="{}" wt_parents="{}" routes="{}" managed="[]" repo_mgr="{}" fx_by_repo="{}" aqc_notes_by_repo="{}" deps_dirs="{}" deps_cmd="{}"
-  local spec_repo="{}" spec_scope="{}" review_guard="[]" max_by_repo="{}" mb_by_repo="{}"
+  local spec_repo="{}" spec_scope="{}" review_guard="[]" max_by_repo="{}" mb_by_repo="{}" lanes="{}"
+  if declare -p BASE_LANE >/dev/null 2>&1; then
+    for k in "${!BASE_LANE[@]}"; do lanes="$(jq -c --arg k "$k" --arg v "${BASE_LANE[$k]}" '. + {($k): $v}' <<<"$lanes")"; done
+  fi
   if declare -p AGENT_MB_BY_REPO >/dev/null 2>&1; then
     for k in "${!AGENT_MB_BY_REPO[@]}"; do mb_by_repo="$(jq -c --arg k "$k" --arg v "${AGENT_MB_BY_REPO[$k]}" '. + {($k): ($v | tonumber)}' <<<"$mb_by_repo")"; done
   fi
@@ -450,6 +462,7 @@ pdo_config_json() {
     --arg aqc_ports "$AGENT_QC_PORTS" --arg aqc_repos "$AGENT_QC_REPOS" --arg aqc_wt "$AGENT_QC_WORKTREE" \
     --arg aqc_rounds "$AGENT_QC_MAX_ROUNDS" --arg aqc_notes "$AGENT_QC_NOTES" --argjson aqc_notes_by_repo "$aqc_notes_by_repo" --arg aqc_skill "$AGENT_QC_SKILL" \
     --arg aqc_review_hook "$AGENT_QC_REVIEW_HOOK" \
+    --argjson lanes "$lanes" --arg lane_hook "${LANE_HOOK:-}" --arg orch_notes "${ORCHESTRATOR_NOTES:-}" \
     --arg dl "$DESIGN_LEAD" --arg dl_name "$DESIGN_LEAD_NAME" --arg dl_repos "$DESIGN_LEAD_REPOS" --arg dl_home "$DESIGN_LEAD_HOME_REPO" \
     --arg dl_model "$DESIGN_LEAD_MODEL" --arg dl_skill "$DESIGN_LEAD_SKILL" --arg dl_wt "$DESIGN_LEAD_WORKTREE" \
     --arg dl_branch "$DESIGN_LEAD_BRANCH" --arg dl_intent "$DESIGN_LEAD_INTENT" --arg dl_log "$DESIGN_LEAD_LOG" \
@@ -476,6 +489,7 @@ pdo_config_json() {
       agent_qc_max_rounds: ($aqc_rounds | tonumber? // 2), agent_qc_notes: $aqc_notes,
       agent_qc_notes_by_repo: $aqc_notes_by_repo, agent_qc_skill: $aqc_skill,
       agent_qc_review_hook: $aqc_review_hook,
+      base_lane: $lanes, lane_hook: $lane_hook, orchestrator_notes: $orch_notes,
       design_lead: (if $dl != "1" then null else
         ($dl_repos | split(" ") | map(select(length > 0))) as $listed
         | (if ($listed | length) > 0 then $listed else ($roots | keys) - $managed end) as $scope

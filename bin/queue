@@ -323,7 +323,7 @@ def main():
         row = {
             "ref": ref, "repo": repo, "number": n, "title": i["title"], "type": itype,
             "priority": next((l for l in labels if l in PRIORITIES), None), "security": security,
-            "route": route, "status": status, "p_level": p_level, "cwt": cwt, "parent_active": parent_active,
+            "route": route, "base": pdo_config.lane_label(labels), "status": status, "p_level": p_level, "cwt": cwt, "parent_active": parent_active,
             "bug": itype == "Bug",
             "created": origin_date(i), "url": i["html_url"], "excluded": reasons,
             "own_p_level": p_level, "own_cwt": cwt, "blocking": deps.get("blocking", 0), "unblocks": [],

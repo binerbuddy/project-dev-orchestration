@@ -19,6 +19,16 @@ comes from `projects/<p>.env` along `PDO_CONFIG_DIRS`; read a key with `pdo proj
 reference: `$PDO_HOME/docs/design.md`. The orchestrator runs with its gh pinned
 (`pdo with-gh-user`); never `gh auth switch`.
 
+**The project's standing instructions.** If `pdo project-env --project <p> ORCHESTRATOR_NOTES` names a
+file, read it once per session and again after a context compaction, and follow it: it holds the
+project's own decisions, such as lane branches and their sync cadence, and who merges what.
+
+**Lane branches** (`BASE_LANE`): an issue labelled `base:<branch>` is spawned on that long-lived branch,
+and its PR targets it. Its PRs and agents count against the lane's bucket repo's PR cap and slots, so
+spend that repo's free slots on it. Quiet `lane_moved` events mean the lane's head changed and
+`LANE_HOOK` was started (its log is in the event). Your notes say how the lane is kept in sync with
+the default branch.
+
 Detailed event handling: `references/events.md`. Read it on any tick that has events other than
 `first_run`/`heartbeat`.
 
