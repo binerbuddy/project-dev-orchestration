@@ -177,7 +177,8 @@ def _split_dim(line):
 def read_input(pane):
     """{"draft": text, "suggestion": text} in a Claude Code pane's input box, from the last ❯ line
     (earlier ❯ lines are sent messages in the scrollback) to the box's bottom rule. Dim text is
-    Claude Code's prompt suggestion; anything else is a person's unsent draft."""
+    Claude Code's prompt suggestion; anything else is a person's unsent draft. A ❯ on a numbered option
+    is a question menu's cursor, not the prompt: with a menu up there is no input box to read."""
     if not pane:
         return {"draft": "", "suggestion": ""}
     try:
@@ -188,7 +189,9 @@ def read_input(pane):
     lines = r.stdout.replace("\r", "").splitlines()[-60:]
     start = next((i for i in range(len(lines) - 1, -1, -1)
                   if CSI.sub("", lines[i]).lstrip().startswith(PROMPT)), None)
-    if start is None:
+    menu = start is not None and re.match(r"\d+\.\s", CSI.sub("", lines[start]).lstrip()[len(PROMPT):].lstrip()) \
+        and any("Enter to select" in CSI.sub("", l) for l in lines[start:])
+    if start is None or menu:
         return {"draft": "", "suggestion": ""}
     plain, dim = [], []
     for i, line in enumerate(lines[start:]):

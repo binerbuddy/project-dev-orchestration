@@ -367,6 +367,10 @@ PDO_INBOX="$T/bar-inbox" "$BIN/intake-submit" --checked 'maybe' ws "r" >/dev/nul
 R=$'\e[0m' DIM=$'\e[2m' GREY=$'\e[38;2;136;136;136m' RULE="────────────"
 printf '%s\n' "${R}${GREY}❯ /reload-plugins${R}" "${R}${GREY}${RULE}${R}" $'❯ '"${R}${DIM}go with your recommendations${R}" "${R}${GREY}${RULE}${R}" "  ${DIM}branch: main${R}" >"$T/screen-ghost"
 printf '%s\n' "${R}${GREY}${RULE}${R}" $'❯ '"merge it after lunch${R}" "${R}${GREY}${RULE}${R}" "  ${DIM}branch: main${R}" >"$T/screen-draft"
+printf '%s\n' "${R}${GREY}${RULE}${R}" " Which phases first?" $'❯ '"1. Phases 1–3 now (Recommended)${R}" "  2. Phase 1 only" "  3. Type something." "${R}${GREY}${RULE}${R}" " Enter to select · ↑/↓ to navigate · Esc to cancel" >"$T/screen-menu"
+eq "draft: a question menu's cursor is not the input box" "$(SMOKE_HERDR_SCREEN="$T/screen-menu" "$BIN/herdr-agent" draft --pane wX:p1; echo $?)" 1
+printf '%s\n' "${R}${GREY}${RULE}${R}" $'❯ '"1. merge it after lunch${R}" "${R}${GREY}${RULE}${R}" >"$T/screen-numdraft"
+eq "draft: a numbered draft with no menu is still a draft" "$(SMOKE_HERDR_SCREEN="$T/screen-numdraft" "$BIN/herdr-agent" draft --pane wX:p1)" "draft: 1. merge it after lunch"
 out="$(SMOKE_HERDR_SCREEN="$T/screen-ghost" "$BIN/herdr-agent" draft --pane wX:p1)"; rc=$?
 eq "draft: Claude Code's dim suggestion is not a draft" "$rc" 1
 eq "draft: the suggestion is reported as one" "$out" "suggestion: go with your recommendations"
