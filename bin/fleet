@@ -481,15 +481,17 @@ def project_view(cfg, workspaces, agents_by_ws, herdr_ok, gh_facts, run_queue):
         queue["error"] = "skipped (--no-queue)"
     else:
         env = gh_env(cfg.get("gh_user"))
-        raw = run([os.path.join(HERE, "bin", "queue"), "--project", p, "--json", "--limit", "1000"],
-                  timeout=240, env=env) if env is not None else None
+        rc, raw, err = run_full([os.path.join(HERE, "bin", "queue"), "--project", p, "--json", "--limit", "1000"],
+                                timeout=240, env=env) if env is not None else (127, "", "no gh login for its GH_USER")
         try:
-            q = json.loads(raw)
+            q = json.loads(raw) if rc == 0 else None
             queue.update(eligible=len(q["ranked"]), auto_spawn=sum(1 for r in q["ranked"] if r.get("auto_spawn")),
                          urgent=sum(1 for r in q["ranked"] if r.get("urgent_bypass")))
         except Exception:
-            queue["error"] = "queue failed"
-            warn(f"{p}: bin/queue failed; queue depth unknown")
+            # the reason, so a one-off failure can be told from a real one: its last stderr line, or the timeout
+            why = "timed out after 240s" if "timed out" in (err or "") else ((err or "").strip().splitlines() or [f"exit {rc}"])[-1][:160]
+            queue["error"] = f"queue failed: {why}"
+            warn(f"{p}: bin/queue failed ({why}); queue depth unknown")
 
     return {
         "project": p, "org": cfg["org"], "priority": cfg.get("portfolio_priority") or 3,
