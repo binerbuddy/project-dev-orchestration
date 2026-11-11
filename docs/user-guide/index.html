@@ -121,6 +121,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
   <a href="#github">Tracked on GitHub</a>
   <a class="role" href="workflow.html">Workflow deep dive &rarr;</a>
   <a class="role" href="#owner">Running the team</a>
+  <a class="role" href="#design-lead">The Design Lead</a>
   <a class="role" href="#reviewer">Reviewing PRs</a>
   <a class="role" href="#collaborator">Working with your own agent</a>
   <a href="#labels">Labels</a>
@@ -148,7 +149,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
     <li class="h"><div><span class="who">Anyone &middot; intake agent</span><b>An idea or bug becomes an issue.</b>Intake drafts a typed issue with a priority and route, checks for duplicates, and files it only after a person says OK.</div></li>
     <li class="h b"><div><span class="who">Intake &middot; owner</span><b>It gets a priority.</b>Usually set during intake: the draft suggests a P1&ndash;P4 label and the owner confirms it, or the owner adds one later. The labels order the queue, and the board's "Claude Work This" status jumps an issue to the front.</div></li>
     <li><div><span class="who">Orchestrator</span><b>An agent is started.</b>When a slot is free, the orchestrator claims the issue with a <code>managed-by:</code> label and starts one command agent in its own copy of the code, as a new tab in the project's herdr workspace.</div></li>
-    <li class="h"><div><span class="who">Command agent &middot; owner</span><b>The agent builds it and asks when unsure.</b>It explores, plans, builds, has its work reviewed by a panel of reviewer subagents, and opens a PR. Questions go straight to the owner.</div></li>
+    <li class="h"><div><span class="who">Command agent &middot; owner</span><b>The agent builds it and asks when unsure.</b>It explores, plans, builds, has its work reviewed by a panel of reviewer subagents, and opens a PR. Questions go straight to the owner, or, in a project with a <a href="#design-lead">Design Lead</a>, product and design questions go to it first.</div></li>
     <li><div><span class="who">Command agent</span><b>The PR is marked <code>ready for QC</code>.</b>It carries a QC checklist and links any test data. The agent then hibernates to free memory; it keeps its full context.</div></li>
     <li><div><span class="who">QC Agent (if the project runs one)</span><b>An agent tests it first.</b>Failures go back to the same command agent, which fixes them. A pass decides whether a person needs to look.</div></li>
     <li class="h"><div><span class="who">Reviewer or owner</span><b>A person reviews what users will see.</b>Feedback wakes the agent, which fixes and re-labels. A pass marks the PR <code>Ready for Merge</code>.</div></li>
@@ -251,6 +252,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
           <li><b>Orchestrator (acme)</b>: ranks the queue, starts command agents, routes events</li>
           <li><b>Human Review (acme)</b>: serves a PR on your machine for your own review</li>
           <li><b>QC Agent (acme)</b>: tests every <code>ready for QC</code> PR before you do</li>
+          <li><b>Design Lead (acme)</b>, if the project has one: answers the agents' product and design questions for you</li>
           <li><b>acme-245 export sort</b>, <b>acme-251 login timeout</b>, &hellip;: one command agent per issue</li>
         </ol>
       </div>
@@ -295,7 +297,9 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
         <tr><td>P1&ndash;P4 labels</td><td>Order the queue. Security issues and bugs go first within a level. An issue that blocks others runs at their priority.</td></tr>
         <tr><td>Claude Work This</td><td>A board status that puts an issue first. P1 + Claude Work This starts even when every slot is full.</td></tr>
         <tr><td>Spawn floor</td><td>Nothing below it starts on its own, not even Claude Work This. P4 never starts on its own anyway.</td></tr>
-        <tr><td>Slots</td><td>At most 3 agents working at once by default. Agents parked at QC or waiting on a sign-off don't count.</td></tr>
+        <tr><td>Slots</td><td>At most 3 agents working at once by default; a project can give each repo 3 of its own instead, so one busy repo never starves another. Agents parked at QC or waiting on a sign-off don't count.</td></tr>
+        <tr><td>Memory gate</td><td>Every agent start, in every project, passes one check for the whole machine: it waits while free memory, less what agents started in the last 10 minutes will grow into, would drop under 3 GB.</td></tr>
+        <tr><td>Lane branches</td><td>A long-lived branch, such as an API branch for one effort, that reaches <code>main</code> later as one PR you approve. Issues labelled <code>base:&lt;branch&gt;</code> are built on it, and count against the effort's own repo's slots and PR cap.</td></tr>
         <tr><td>Usage ceiling</td><td>New work stops at 90% of the weekly allowance and pauses at 90% of the 5-hour window.</td></tr>
         <tr><td>PR cap</td><td>When 10 PRs in one repo wait on people (the default), that repo starts nothing new until you catch up. Other repos carry on.</td></tr>
         <tr><td>Assign an issue</td><td>An assigned issue belongs to a person. No orchestrator will start it.</td></tr>
@@ -308,6 +312,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
   <div class="sub">
     <h3>Answering agents</h3>
     <p>Agents ask in their own tab, named <code>&lt;Repo&gt;-&lt;issue#&gt; &lt;brief&gt;</code>, in the project's home. herdr marks a waiting agent as blocked, and Remote Control mirrors every session to claude.ai and the phone app, so you can answer from anywhere. A question about business rules that could change results is a blocking gate: the agent waits for your explicit approval.</p>
+    <p>A plain question stays live in its tab: it never pauses the agent. <code>pdo questions</code> lists every question waiting across projects, with its options and how to answer it; the CEO relays them. In a project with a <a href="#design-lead">Design Lead</a>, the list marks the ones it is handling, and shows you only the ones it handed back.</p>
   </div>
 
   <div class="sub">
@@ -343,6 +348,44 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
       <li>Resuming an agent is always safe; it comes back with the same conversation.</li>
       <li>If the engine itself misbehaves, tell the System Manager. Traps already found are written down in the engine's <code>docs/lessons-learned.md</code>.</li>
     </ul>
+  </div>
+</section>
+
+<section id="design-lead">
+  <span class="eyebrow">Role &middot; agent, in your place</span>
+  <h2>The Design Lead</h2>
+  <p>A project can have a <b>Design Lead</b>: one standing agent that answers its agents' <b>product and design</b> questions for you, so fewer of them wait on you. It is a per-project switch (<code>DESIGN_LEAD=1</code>), optionally limited to some of the project's repos. Its authority comes from one document you approve, the <b>intent doc</b>: goals, non-goals, principles and an escalation list. Until you merge that doc, it decides nothing.</p>
+  <div class="tree" aria-label="Where the Design Lead sits">
+    <div class="ws"><span class="wl">The chain</span>
+      <ol>
+        <li><b>You</b>: approve the intent doc, review its decision log about daily, and overrule where you disagree.</li>
+        <li><b>CEO</b>: across projects.</li>
+        <li><b>Repo Manager (&lt;project&gt;)</b>: still runs the workers, the slots and the queue.</li>
+        <li><b>Design Lead (&lt;project&gt;)</b>: beside the Repo Manager. On product and design in its scope, its word wins.</li>
+        <li><b>Command agents</b>: ask it first, and treat its signed answers as yours on product and design.</li>
+      </ol>
+    </div>
+  </div>
+  <div class="sub">
+    <h3>How a question travels</h3>
+    <ol class="flow">
+      <li><div><span class="who">Command agent</span><b>It asks the Design Lead, not you.</b><code>pdo design-lead ask</code> records the question and gives the agent the Design Lead's address. The agent sends it as an agent-to-agent message and waits idle. No question menu waits on a pane, and the agent isn't nudged or paused meanwhile.</div></li>
+      <li><div><span class="who">Design Lead</span><b>It answers, or escalates.</b>It answers from the intent doc, citing the section, and logs the decision with its reasoning in <code>docs/decisions.md</code>. It can also clear decision and UX gates, and, where you allow it, answer a question menu still on an agent's screen.</div></li>
+      <li class="h"><div><span class="who">You</span><b>Escalated questions come back to you.</b>The agent asks you with its normal question menu, quoting the Design Lead's recommendation. A question it hasn't answered in 2 hours is yours too, and <code>pdo questions</code> shows it. Answer with <code>pdo answer</code> or in the agent's tab.</div></li>
+    </ol>
+  </div>
+  <div class="sub">
+    <h3>Always yours</h3>
+    <div class="never">
+      <div><b>Permission prompts and tool approvals.</b> The engine refuses to let it answer those.</div>
+      <div><b>Anything irreversible, outward-facing or costing money.</b></div>
+      <div><b>Security, credentials, permissions, hosting and compliance.</b></div>
+      <div><b>Merging to <code>main</code>.</b> Where you allow it, it merges only into a lane branch, after agent QC passes, through <code>pdo lane-merge</code>, which refuses anything else. You approve the lane's final PR.</div>
+    </div>
+  </div>
+  <div class="sub">
+    <h3>What to watch</h3>
+    <p>Its decision log keeps three numbers at the top: the questions it answered, the questions that reached you, and how often you overruled it. Your overrules go into the intent doc, so the same call doesn't come back.</p>
   </div>
 </section>
 
@@ -475,6 +518,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
       <tr><td><i class="sw" style="background:#fbca04"></i><code>likely-fixed</code></td><td>The agent thinks it's already done; a maintainer confirms and closes.</td><td>Command agent</td></tr>
       <tr><td><i class="sw" style="background:#bfd4f2"></i><code>has-follow-ups</code></td><td>The PR body lists follow-ups the agent didn't file (ideas, cleanup, test gaps). <code>/project-intake follow-ups</code> lists them so you can promote any to issues.</td><td>Command agent</td></tr>
       <tr><td><i class="sw" style="background:#c5def5"></i><code>epic-phase</code></td><td>One phase of an epic; worked only by the epic's build agent.</td><td>Design agent</td></tr>
+      <tr><td><i class="sw" style="background:#5319e7"></i><code>base:&lt;branch&gt;</code></td><td>The issue targets a long-lived lane branch, not <code>main</code>: its agent builds on the lane and its PR targets the lane.</td><td>Owner, Repo Manager</td></tr>
       <tr><td><i class="sw" style="background:#6a737d"></i><code>on-hold</code></td><td>Parked; never started.</td><td>Owner</td></tr>
       <tr><td><i class="sw" style="background:#0052cc"></i><code>client-requested</code></td><td>A client asked for it. Copied onto PRs.</td><td>Intake, owner</td></tr>
       <tr><td><i class="sw" style="background:#5a5a5a"></i><code>orchestrator-system</code></td><td>Work on the system itself, for the System Manager.</td><td>Owner</td></tr>
@@ -495,6 +539,9 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
     <dt>Human Review</dt><dd>The tab that serves a PR on the owner's machine for a person's own QC or UX review (<code>/project-human-review</code>).</dd>
     <dt>QC Agent</dt><dd>An agent that tests each PR before people do, on its own ports and data.</dd>
     <dt>System Manager</dt><dd>The session that builds and repairs the engine: scripts, skills and config. It doesn't run teams.</dd>
+    <dt>Design Lead</dt><dd>An optional standing agent per project that answers the agents' product and design questions in the owner's place, from an intent doc the owner approved. It escalates everything else.</dd>
+    <dt>Intent doc</dt><dd>The Design Lead's mandate: goals, non-goals, principles and its escalation list. The owner approves it by merging it.</dd>
+    <dt>Lane branch</dt><dd>A long-lived branch (e.g. <code>feat/mcp-api</code>) that collects one effort's PRs and reaches <code>main</code> as one PR the owner approves.</dd>
     <dt>Intake</dt><dd>The agent that turns reports into well-formed issues, after a person approves the draft. One serves every project.</dd>
     <dt>Claim</dt><dd>The <code>managed-by:</code> label and comment that mark an issue as taken by one manager's agents.</dd>
     <dt>Claude Work This</dt><dd>The board status that puts an issue at the front of the queue.</dd>
@@ -527,7 +574,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
 </section>
 
 <footer>
-  <span>Written for project-dev-orchestration v0.16 (October 2026). Its source is <code>docs/user-guide/</code> in the engine repo, next to the full manual, design notes and lessons learned in <code>docs/</code>.</span>
+  <span>Written for project-dev-orchestration v0.26 (November 2026). Its source is <code>docs/user-guide/</code> in the engine repo, next to the full manual, design notes and lessons learned in <code>docs/</code>.</span>
 </footer>
 </main>
 </div>
