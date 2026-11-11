@@ -128,7 +128,9 @@ Otherwise only when `free_slots > 0` (0 at the usage ceiling, or when every repo
      right now, counting every agent started in the last 10 minutes. Stop spawning and resuming for this
      tick and report it in one line (`memory gate: <its numbers>`); it isn't a spawn failure, so the
      issue isn't skipped. `pdo resume-agent` exits 4 the same way.
-  6. If spawn fails otherwise, **move on** to the next candidate in the same tick. Spawn logs the failure and the
+  6. **Exit 5 is an open native blocker** (GitHub "blocked by"), checked live: skip the issue this tick
+     without counting it as a failure; it comes back once its blockers close.
+  7. If spawn fails otherwise, **move on** to the next candidate in the same tick. Spawn logs the failure and the
      queue skips that issue for 24h. Try at most 5 candidates per tick; report each failure in one line.
 - Spawn at most `free_slots` agents per tick.
 - **Fleet advice.** When the project honours the fleet advice (`FLEET_ADVICE=honour`), `queue`

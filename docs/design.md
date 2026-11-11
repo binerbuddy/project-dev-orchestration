@@ -84,6 +84,10 @@ One herdr workspace per manager, one tab per agent (`AGENT_LAYOUT=tabs`, the def
   route's lifecycle skill as its first prompt. Then it claims the issue (`bin/claim`: the `managed-by:`
   label, a claim comment and the board status; see [Coordination between managers](#coordination-between-managers))
   and records metadata in `$PDO_STATE_DIR/agents/<Repo>-<n>.json`.
+  An issue with open native "blocked by" issues exits 5 before anything is created (2026-11-11: a
+  design → build handoff spawned a build on a blocked epic; `bin/queue` filters blockers, but the
+  handoff bypasses the queue). It isn't a logged failure, so the queue offers the issue again once the
+  blockers close; `--ignore-blockers` is the human's override.
 - It refuses duplicates (an open workspace, an existing worktree or branch), closed issues, pull requests,
   issues with an assignee (the human lock; with `CLAIM_ASSIGNS=1` the gh login's own assignment is a legacy
   claim and doesn't count), and issues carrying another manager's `managed-by:` label. It rolls back on failure. Every

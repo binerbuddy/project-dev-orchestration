@@ -2,13 +2,16 @@
 # spawn — start a command agent for one GitHub issue in a herdr tab of its manager's workspace.
 #
 # Usage: spawn <repo> <issue#> [--route small|design|build] [--brief "2-3 words"]
-#              [--base <ref>] [--model <alias>] [--project P] [--no-claim] [--allow-phase] [--dry-run]
+#              [--base <ref>] [--model <alias>] [--project P] [--no-claim] [--allow-phase]
+#              [--ignore-blockers] [--dry-run]
 #
 # Creates a dedicated git worktree under WORKTREE_PARENT[<repo>] (the bare root, or "<clone>-worktrees"
 # next to a plain clone), so each agent has its own cwd and OMC state; then
 # writes a dispatch brief, opens a herdr tab named "<Repo>-<n> <brief>" in its home (the project's workspace, or a self-managed repo's), and
 # starts the agent (AGENT_CLI, default claude) there with Remote Control on and the route's lifecycle skill as the
 # first prompt. On success, claims the issue (bin/claim: managed-by label, claim comment, board In Progress).
+# An issue with open native "blocked by" issues exits 5 (not a spawn failure: no 24h skip), so the
+# design → build handoff parks a blocked epic; bin/queue offers it again once its blockers close.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -27,7 +30,7 @@ die() {
 # shellcheck source=lib.sh
 source "$HERE/bin/lib.sh"
 
-PROJECT="" ROUTE="" BRIEF="" BASE="" MODEL="" DRY=0 CLAIM=1 ALLOW_PHASE=0
+PROJECT="" ROUTE="" BRIEF="" BASE="" MODEL="" DRY=0 CLAIM=1 ALLOW_PHASE=0 IGNORE_BLOCKERS=0
 [[ $# -ge 2 ]] || die "usage: spawn <repo> <issue#> [--route R] [--brief TEXT] [--base REF] [--model M] [--dry-run]"
 REPO="$1" NUM="${2#\#}"; shift 2
 while [[ $# -gt 0 ]]; do
@@ -40,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY=1; shift ;;
     --no-claim) CLAIM=0; shift ;;
     --allow-phase) ALLOW_PHASE=1; shift ;;
+    --ignore-blockers) IGNORE_BLOCKERS=1; shift ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -67,6 +71,16 @@ fi
 [[ -z "$OTHERS" ]] || die "$REPO#$NUM is assigned to $OTHERS (human/interactive lock)"
 HELD="$(jq -r --arg mine "managed-by:$MANAGER_SLUG" '[.labels[].name | select(startswith("managed-by:") and . != $mine)] | join(",")' <<<"$ISSUE_JSON")"
 [[ -z "$HELD" ]] || die "$REPO#$NUM is held by another manager ($HELD): coordinate through that manager"
+# Native "blocked by": an open blocker parks the issue (exit 5, logged as no failure). --ignore-blockers
+# is the human's override. GitHub not answering only warns: bin/queue already filtered on it.
+if [[ $IGNORE_BLOCKERS -eq 0 ]]; then
+  if BLOCKERS="$(gh api "repos/$ORG/$REPO/issues/$NUM/dependencies/blocked_by" --jq \
+      '[.[] | select(.state == "open") | (.repository_url | sub(".*/repos/"; "")) + "#" + (.number | tostring)] | join(", ")')"; then
+    if [[ -n "$BLOCKERS" ]]; then echo "spawn: $REPO#$NUM is blocked by $BLOCKERS (open); it spawns once they close" >&2; exit 5; fi
+  else
+    echo "spawn: warning: could not read $REPO#$NUM's blocked-by issues; starting anyway" >&2
+  fi
+fi
 # An epic-phase issue is worked by its parent Epic's build agent (the feature-build skill runs
 # every phase); dispatching it alone would fork the epic's branch and duplicate work.
 if [[ $ALLOW_PHASE -eq 0 ]] && jq -e '[.labels[].name | ascii_downcase] | index("epic-phase")' >/dev/null <<<"$ISSUE_JSON"; then

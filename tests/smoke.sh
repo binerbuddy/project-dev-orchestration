@@ -55,7 +55,10 @@ case "$*" in
   "api repos/acme/widget/issues/79 --jq"*) echo '{"state":"open","labels":["awaiting-ux-gate"]}' ;;
   "api repos/acme/widget/issues/8"[01]" --jq"*) echo '{"state":"open","labels":[]}' ;;
   "pr list -R acme/widget --head feat/"[78][019]*) echo '[]' ;;
+  "api repos/acme/widget/issues/80") cat "$SMOKE_DIR/issue80.json" ;;
+  "api repos/acme/widget/issues/80/dependencies/blocked_by --jq"*join*) echo 'acme/widget#5' ;;
   "api repos/acme/widget/issues/80/dependencies/blocked_by --jq"*) echo '["acme/widget#5"]' ;;
+  "api repos/acme/widget/issues/"*"/dependencies/blocked_by --jq"*join*) echo '' ;;
   "api repos/acme/widget/issues/"*"/dependencies/blocked_by --jq"*) echo '[]' ;;
   "label create awaiting-"*|"issue comment "*|"pr comment "*) ;;  # tmp-sweep: open PRs keep their agents' scratchpads
   # qc-fixture-push: the fixture release and its assets
@@ -93,7 +96,7 @@ case "$*" in
   "api graphql"*"query board"*)
     echo '{"data":{"organization":{"projectV2":{"id":"PVT_b7","number":7,"title":"Acme Board","field":{"id":"PVTSSF_s","options":[{"id":"o1","name":"Backlog"},{"id":"o2","name":"Claude Work This"}]}}}}}' ;;
   "api repos/acme/widget/issues/12") cat "$SMOKE_DIR/issue12.json" ;;
-  "api repos/acme/widget/issues/12/comments"*|"api repos/acme/docs/issues/12/comments"*) ;;
+  "api repos/acme/widget/issues/12/comments"*|"api repos/acme/widget/issues/80/comments"*|"api repos/acme/docs/issues/12/comments"*) ;;
   "api repos/acme/docs/issues/12") cat "$SMOKE_DIR/issue12.json" ;;
   "pr view 5 -R acme/widget"*) cat "$SMOKE_DIR/pr5.json" ;;
   "project item-list 9 --owner alpha"*) echo '{"items":[{"content":{"number":2},"repository":"alpha/tool","status":"Claude Work This"}]}' ;;
@@ -466,6 +469,12 @@ out="$("$BIN/claim" widget 13 2>&1)"; rc=$?
 eq "claim refuses another manager's label" "$rc" 1
 has "claim names the other manager's label" "$out" "held by another manager (managed-by:lib-lead)"
 out="$("$BIN/spawn" widget 13 --dry-run 2>&1)"; has "spawn refuses another manager's label" "$out" "held by another manager"
+jq -n '{number: 80, state: "open", title: "Blocked epic", node_id: "I_80", assignees: [], labels: []}' >"$T/issue80.json"
+out="$("$BIN/spawn" widget 80 --dry-run 2>&1)"; rc=$?
+eq "spawn parks an issue with an open blocker (exit 5)" "$rc" 5
+has "spawn names the open blocker" "$out" "blocked by acme/widget#5 (open)"
+out="$("$BIN/spawn" widget 80 --ignore-blockers --dry-run 2>&1)"; rc=$?
+eq "spawn --ignore-blockers passes the blocker check" "$rc" 0
 jq -n '{number: 14, state: "open", title: "Mine already", node_id: "I_14", assignees: [{login: "me"}], labels: [{name: "managed-by:orchestrator-acme"}]}' >"$T/issue14.json"
 out="$("$BIN/claim" widget 14 2>&1)"; rc=$?
 eq "CLAIM_ASSIGNS=0: any assignee is a human lock" "$rc" 1
