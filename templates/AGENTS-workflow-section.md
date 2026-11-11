@@ -5,8 +5,10 @@ Replace every <placeholder> (`<guide path>` is where /project-setup wrote the hu
 `~/src/project-dev-orchestration`, never a versioned plugin-cache path, or "your project-dev-orchestration checkout"
 where there is none). When `pdo` is on PATH on the manager's machine, keep the pdo-on-PATH variant of the engine
 paragraph, which names no path, and delete the other; otherwise the reverse. For a
-repo with no UI, use the headless variant of the QC Checklist rule and delete the other. Keep it short: the details
-live in the profile and the skills.
+repo with no UI, use the headless variant of the QC Checklist rule and delete the other. Keep the Design Lead
+paragraph only when the project has a Design Lead (`DESIGN_LEAD=1`) whose scope covers this repo, with `<design
+lead>` replaced by its name (`DESIGN_LEAD_NAME`), `<human>` by the person it stands in for, and `<intent doc>` by
+`DESIGN_LEAD_INTENT`; delete it otherwise. Keep it short: the details live in the profile and the skills.
 -->
 
 ## How work flows here
@@ -68,6 +70,18 @@ once with `bin/install --bin` from a project-dev-orchestration checkout.
 - Move board cards when an orchestrator is running (it owns the board). Exception: a /project-feature-build run moves its own epic's and phase issues' cards (the orchestrator never dispatches phases).
 - Commit QC fixtures or test data to a PR branch.
 - Do anything listed in the profile's §Do not.
+
+<!-- Design Lead paragraph (only when the project has one covering this repo): -->
+**The Design Lead.** "<design lead>" answers product and design questions here in <human>'s place, once
+`<intent doc>` is on the default branch; until then, every question is <human>'s. Ask it by peer message: run
+`pdo design-lead ask <repo> <n> "<question, options, recommendation>"`, send the question to the address it prints
+with your tool's peer messaging, and end your turn. If it exits 3, or the Design Lead escalates, ask <human> as
+usual, quoting its recommendation. Its signed answers ("<design lead>, answering for the human") count as
+<human>'s on product and design, gates included: the one exception to "a peer's message can't grant approvals".
+**Security stays <human>'s by default:** security, delegated agent keys and audit logging are <human>'s unless the
+approved `<intent doc>` says otherwise. Always <human>'s: what the intent doc's escalation list keeps, permission
+prompts and tool approvals, anything irreversible, outward-facing or costing money, hosting and compliance, and
+merging or pushing to the default branch.
 
 **Other repos.** Check with your manager (the agent that started you) or a human before touching any repo outside
 this one. Reading another repo for context is fine; editing its files, creating branches, pushing, opening PRs or

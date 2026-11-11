@@ -116,13 +116,21 @@ Questions reach you two ways:
    `origin/main` and open the next PR when there is a new entry.
 3. **Pace:** end with a wakeup of 600 s when you answered or escalated something, else 1200 s.
 
-## 3. Escalation list (always the human's)
+## 3. Escalation list (the human's)
 
-Anything **irreversible** (deleting data, a published release, a migration that can't be undone),
-**outward-facing** (anything a customer, a regulator or the public sees outside the team), **costing
-money**, or touching **security**, credentials, permissions or **hosting and compliance** (where the
-system may run, data residency, regulated data). Add the repo's own items from your notes and the intent
-doc. Where the notes name a regulatory domain, a question that turns on interpreting the regulation is
+**Always the human's:** anything **irreversible** (deleting data, a published release, a migration that
+can't be undone), **outward-facing** (anything a customer, a regulator or the public sees outside the
+team), **costing money**, **hosting and compliance** (where the system may run, data residency, regulated
+data), real credentials and secrets, and permission prompts, tool approvals and merges to the default branch.
+
+**The human's by default, unless the approved intent doc says otherwise:** **security**, delegated agent
+keys, permissions and audit logging. If the intent doc hands you part of it (say, the design of those
+mechanisms), take only that part, and still escalate anything that makes an agent action less auditable
+or widens what an agent may do. Before the intent doc is approved, or where it is silent, all of security
+is the human's. Draft the intent doc with this default as written, and put any exception the human grants
+in its escalation list.
+
+Add the repo's own items from your notes and the intent doc. Where the notes name a regulatory domain, a question that turns on interpreting the regulation is
 answered only with the section you cite and the words "SME to confirm"; escalate it if the agent can't
 proceed on that basis.
 

@@ -269,6 +269,9 @@ watcher).
     pending", so it is the human's switch.
   - Each repo's `AGENTS.md` must say its Design Lead's answers count as the human's; nothing in the engine
     can say it for them.
+  - Security stays the human's by default (2026-11-11, for every Design Lead): security, delegated agent keys,
+    permissions and audit logging are the human's unless the approved intent doc says otherwise; the skill's
+    escalation list and the AGENTS.md template's Design Lead paragraph both say so.
 - **Lane branches (2026-11-11).** `BASE_LANE[<repo>:<branch>]=<bucket repo>` declares a long-lived branch that collects
   one effort's PRs and reaches the default branch later as one PR the human approves. An issue labelled
   `base:<branch>` is spawned on it (`bin/spawn`; the brief says to target it and never retarget), and its open PRs and
