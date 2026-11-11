@@ -1,7 +1,7 @@
 ---
 name: project-pr-review
 description: Multi-agent consortium code review of a GitHub pull request in the current repo. Reads the PR in a temporary detached worktree, fans out Architect, Code Review, Security, Adversary (plus the profile's extra roles, e.g. a UI designer), keeps only findings a 3-judge majority confirms, and posts ONE review comment. Use when asked to review PR #N, run a PR review, or give a consortium review.
-argument-hint: "<PR#>"
+argument-hint: "<PR#> [extra=codex]"
 ---
 
 # PR review (multi-agent consortium)
@@ -52,10 +52,22 @@ Designer when the diff touches UI and the profile names none).
 Each reviewer gets: the PR title and description, the saved diff path, the worktree path (for
 surrounding code), its role prompt, the finding format and the hand-back rule from the reference.
 
+**Outside reviewers (opt-in only).** With `extra=codex` in the arguments, or `codex (opt-in)` under the
+profile's `## Review roles`, add one more reviewer: another vendor's model, run read-only with
+`pdo ext-review codex --worktree <review worktree> --diff <saved diff> --prompt-file <file> --out
+<scratchpad>/codex-round-1.md`, in parallel with the sub-agents. Its prompt file holds the four core
+role prompts together, verbatim. The wrapper keeps it read-only: no writes, no network for its
+commands, no GitHub credentials. It never posts, comments or merges. Never add an outside reviewer
+unasked. The diff goes to that vendor, so skip it, and say so, when the diff touches fixtures, seed
+data or anything the profile's §Do not or §QC data marks as real or sensitive data. Tag each of its
+findings `[codex]`, and tag every other finding with the role that raised it.
+
 ## 3. Consortium consensus
 
 1. **Dedupe and merge.** Collect all findings and merge duplicates, noting how many agents flagged
-   each. Multi-agent agreement is strong signal: auto-keep those.
+   each, and keep every source's tag on the merged finding. Multi-agent agreement is strong signal:
+   auto-keep those. An outside reviewer's finding never auto-keeps on its own tag alone: it needs a
+   second source, or the vote.
 2. **Majority vote** on every remaining candidate: spawn 3 judge sub-agents (same spawning rule and
    model as above). Each gets the full deduped list, the diff and the worktree path, and votes per
    finding REAL-AND-CONCERNING or REJECT with one line of reasoning. Judges verify against the actual
@@ -67,7 +79,8 @@ surrounding code), its role prompt, the finding format and the hand-back rule fr
 ## 4. Report and post
 
 1. Show the surviving findings in the terminal, grouped by severity, each with `file:line`,
-   description and suggested fix. Note how many raw findings consensus filtered out.
+   description, suggested fix and its source tags. Note how many raw findings consensus filtered
+   out, per source; with an outside reviewer, also how many survived that only it found.
 2. Post ONE review: `gh pr review <PR> --comment --body-file <file>`. Format: a short summary of the
    PR and the review process, findings grouped Critical → Low, an overall assessment. Only
    consensus-approved findings. If nothing survived, post a brief "no significant concerns" review.
