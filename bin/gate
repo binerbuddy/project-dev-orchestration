@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """gate — enter or clear a human gate (a UX sign-off or a design decision) for an issue's agent.
 
-Usage: gate enter <repo> <issue#> --kind ux|decision --name "<which gate>" [--link URL] [--desk] [--project P]
+Usage: gate enter <repo> <issue#> --kind ux|decision --name "<what is decided>" --question "<q> | <opt> | <opt (Recommended)>"...
+                  [--link URL] [--desk] [--project P]
+       gate ask <repo> <issue#> --question "<q> | <opt> | ..."... [--project P]
        gate desk <repo> <issue#> [--project P]
        gate clear <repo> <issue#> [--note TEXT] [--project P]
 
@@ -9,11 +11,19 @@ enter: the one way an agent stops at a gate, so the state is always set the same
 gate label to the issue and its open PR ('awaiting-ux-gate' for ux, 'awaiting-decision' for
 decision; created when the repo lacks it), posts one comment naming the gate, the link to look at
 and how to clear it, records metadata "gate" {kind, name, link, since}, and runs NOTIFY_CMD (if
-set). Its output tells the agent to ask "reviewed it? good to proceed?" with its question UI: that
+set). Its output tells the agent to ask the gate's questions with its question UI: that
 prompt is the human's notification (a remote session's push). The
 watcher then shows it (idle_reason "UX gate" / "decision gate", fleet's waiting list) and, after
 QUESTION_GRACE_MIN (default 60) idle, pauses the agent (bin/hibernate --pause); a pushed prototype
 stays viewable through the human review tab.
+
+--question (one or more, required): each question the human decides at the gate, as "<question> |
+<option> | <option> ...", with the recommended option marked "(Recommended)". They are recorded
+(metadata gate.questions), listed in the gate comment and shown by pdo questions, so the human can
+answer from the digest: `gate clear --note "Q1=2; Q2=1"`. A bare "reviewed it? good to proceed?" is
+not a question; a UX sign-off asks "Approve <what> as shown? | Approve (Recommended) | Changes needed".
+--name says what is being decided (e.g. "storage layout and sync model"); a generic name such as
+"design decisions" is refused. `gate ask` replaces the questions of a gate already open.
 
 --desk (or `gate desk` on a gate already entered): the gate needs the human live at the agent's tab
 (they say go there and approve each step). It is never paused, and pdo questions shows it as
@@ -27,6 +37,7 @@ the agent's tab before it pauses.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -37,6 +48,18 @@ import pdo_config  # noqa: E402
 
 LABELS = {"ux": ("awaiting-ux-gate", "An agent waits for a human's prototype sign-off (on the issue and its PR)"),
           "decision": ("awaiting-decision", "An agent waits for a human's design decision (on the issue and its PR)")}
+
+
+GENERIC = re.compile(r"^(the )?(design |ux |product )?(decisions?|gate|review|sign-?off|approval|prototype( review)?)$", re.I)
+
+
+def parse_question(spec):
+    """'<question> | <option> | <option (Recommended)>' as a pdo questions entry."""
+    parts = [x.strip() for x in spec.split("|")]
+    if len(parts) < 3 or not all(parts):
+        die(f"--question needs a question and at least two options, separated by '|': {spec!r}")
+    return {"question": parts[0], "header": "", "multiSelect": False,
+            "options": [{"label": o, "description": ""} for o in parts[1:]]}
 
 
 def gh(*a):
@@ -57,7 +80,7 @@ def write_meta(path, meta):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=("enter", "desk", "clear"))
+    ap.add_argument("action", choices=("enter", "ask", "desk", "clear"))
     ap.add_argument("repo")
     ap.add_argument("number", type=lambda s: int(s.lstrip("#")))
     ap.add_argument("--kind", choices=tuple(LABELS))
@@ -65,6 +88,7 @@ def main():
     ap.add_argument("--link")
     ap.add_argument("--note")
     ap.add_argument("--desk", action="store_true")
+    ap.add_argument("--question", action="append", default=[])
     ap.add_argument("--project")
     a = ap.parse_args()
     cfg = pdo_config.load(a.project, "gate")
@@ -76,6 +100,17 @@ def main():
     targets = [("issue", a.number)] + [("pr", p["number"]) for p in pr]
 
     grace = cfg.get("question_grace_min", 60)
+    questions = [parse_question(q) for q in a.question]
+    if a.action == "ask":
+        gate = meta.get("gate") or {}
+        if not gate.get("since") or gate.get("cleared_at") or not os.path.exists(meta_file):
+            die(f"{a.repo}#{a.number} has no open gate (gate enter starts one)")
+        if not questions:
+            die("ask needs --question")
+        gate["questions"] = questions
+        write_meta(meta_file, meta)
+        print(json.dumps({"gate": "asked", "name": gate.get("name"), "questions": len(questions)}))
+        return
     if a.action == "desk":
         gate = meta.get("gate") or {}
         if not gate.get("since") or gate.get("cleared_at") or not os.path.exists(meta_file):
@@ -89,6 +124,10 @@ def main():
     if a.action == "enter":
         if not a.kind or not a.name:
             die("enter needs --kind ux|decision and --name")
+        if GENERIC.match(a.name.strip()):
+            die(f"--name '{a.name}' doesn't say what is being decided (e.g. \"storage layout and sync model\")")
+        if not questions:
+            die('enter needs --question "<question> | <option> | <option (Recommended)>" (one per question)')
         label, desc = LABELS[a.kind]
         gh("label", "create", label, "-R", slug, "--color", "fbca04", "--description", desc)  # exists already: fine
         for kind, n in targets:
@@ -98,22 +137,24 @@ def main():
         body = (f"**{what}: {a.name}**. The agent has stopped and waits for you"
                 + (" at its tab (answer at the desk)." if a.desk else ".")
                 + (f"\n\nLook at: {a.link}" if a.link else "")
+                + "\n\n" + "\n".join(f"**Q{i}.** {q['question']}\n" + "\n".join(f"{j}. {o['label']}" for j, o in enumerate(q["options"], 1))
+                                    for i, q in enumerate(questions, 1))
+                + ("\n\nAnswer with one line, e.g. `Q1=2; Q2=1`." if len(questions) > 1 else "")
                 + f"\n\nTo let it continue: reply here (or in its tab), or remove the `{label}` label."
                 + " A paused agent resumes on its own, ahead of new work.")
         kind, n = targets[-1]
         gh(kind, "comment", str(n), "-R", slug, "--body", body)
         meta["gate"] = {"kind": a.kind, "name": a.name, "link": a.link, "since": int(time.time()),
-                        "notified_at": None, "cleared_at": None, "desk": a.desk}
+                        "notified_at": None, "cleared_at": None, "desk": a.desk, "questions": questions}
         if pdo_config.notify(cfg, f"{meta.get('name') or f'{a.repo}#{a.number}'}: {what}", a.name, a.link or (pr[0]["url"] if pr else None)):
             meta["gate"]["notified_at"] = int(time.time())
         if os.path.exists(meta_file):
             write_meta(meta_file, meta)
-        ask = (f"Have you reviewed the {'UX' if a.kind == 'ux' else 'decision'} gate ({a.name}"
-               + (f", {a.link}" if a.link else "") + ")? Am I good to proceed?")
         print(json.dumps({"gate": "entered", "label": label, "on": [f"{k} #{n}" for k, n in targets],
                           "notified": bool(meta["gate"]["notified_at"]),
-                          "next": f"ask the human with your question UI (AskUserQuestion): \"{ask}\" "
-                                  f"(options: Yes, proceed / Not yet). Yes: pdo gate clear {a.repo} {a.number}, then continue. "
+                          "next": "ask the human these same questions with your question UI (AskUserQuestion), each with "
+                                  "its options and the recommended one first; that is their notification. Once answered: "
+                                  f"pdo gate clear {a.repo} {a.number}, then continue. "
                                   + ("No answer: wait in your tab; a desk gate is never paused." if a.desk else
                                      f"No answer: wait; after {grace} idle minutes you are paused with the gate kept, and "
                                      "resumed when the human clears it.")}))

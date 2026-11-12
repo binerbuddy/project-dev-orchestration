@@ -148,9 +148,11 @@ For each phase:
 5. **Gates**: build the package first: a PR comment starting `<!-- ux-gate-phase-N -->` with a task-list of what to
    look at and confirm, the screenshots for the phase (paths, plus the line "Open them: `pdo shots <PR#>`"), the dev-server URL, and any decision the run needs. Leave the dev servers running. Ledger status →
    `gate pending`. Push first, then mark the gate with `pdo gate enter <repo> <issue#> --kind ux --name "phase N: <what>"
-   --link <PR comment URL>` (outside an engine install: add the `awaiting-ux-gate` label to the issue and PR by hand).
-   It labels the issue and PR and comments. Then ask with your question UI: "Have you reviewed the UX gate (<name>,
-   <link>)? Am I good to proceed?" (Yes, proceed / Not yet); that question is the human's notification. On yes,
+   --question "Approve phase N (<what>) as shown? | Approve (Recommended) | Changes needed" [--question ...] --link <PR
+   comment URL>`, one `--question` per open decision, each with its options and the recommended one (outside an engine
+   install: add the `awaiting-ux-gate` label to the issue and PR by hand). It labels the issue and PR and comments.
+   Then ask the same questions with your question UI; that is the human's notification. Never a bare "Have you
+   reviewed it? / Not yet": it decides nothing. Once approved,
    `pdo gate clear <repo> <issue#>` and go on. Unanswered for an hour (QUESTION_GRACE_MIN), the watcher pauses you (dev
    servers stopped, session kept, label left on) and resumes you when the human clears the gate or replies. A gate the
    human must answer live at your tab (approving each step there) takes `--desk`, and is never paused.

@@ -223,7 +223,7 @@ def main():
                     die("--pause question: no question is pending on its screen", 3)
             elif pane.get("agent_status") not in ("idle", "done") and not (asking and a.pause in ("ux-gate", "decision")):
                 die(f"agent is {pane.get('agent_status')}, not idle", 3)
-            elif asking and a.pause not in ("ux-gate", "decision"):  # at a gate it asks "good to proceed?"
+            elif asking and a.pause not in ("ux-gate", "decision"):  # at a gate it asks the gate's questions
                 die("a question is pending in the agent's workspace (--pause question keeps it for the human)", 3)
         elif a.pause == "question":
             die("--pause question needs the agent's live tab (the question is read from its screen)", 3)

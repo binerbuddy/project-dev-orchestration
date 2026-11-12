@@ -149,8 +149,10 @@ survivors are resolved by the lead with the code as arbiter and recorded as `pro
 ## 6. Decisions gate (the one human gate)
 
 Under an engine install, push the draft doc first and run `pdo gate enter <repo> <issue#> --kind decision --name
-"design decisions" --link <the doc on its branch>`, so the human sees which gate waits and where (your decision
-questions below are the human's notification); `pdo gate clear` once the answers are in. If the human doesn't answer within the hour (QUESTION_GRACE_MIN) you are paused; the answers then come back
+"<what is decided, e.g. storage layout, sync model>" --question "<D1's question> | <option> | <option (Recommended)>"
+[--question ...] --link <the doc on its branch>`, one `--question` per decision below, so the human can answer from
+the `pdo questions` digest (never just "design decisions" as the name; the same questions in your question UI are
+the human's notification); `pdo gate clear` once the answers are in. If the human doesn't answer within the hour (QUESTION_GRACE_MIN) you are paused; the answers then come back
 as a prompt (text, not your question UI): fold them in the same way. Until then, proceed until truly blocked (see the top of this skill).
 
 Present, batched with your tool's question UI (Claude Code `AskUserQuestion`: ≤4 questions per call, repeat as

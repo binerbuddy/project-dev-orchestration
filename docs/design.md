@@ -250,6 +250,10 @@ watcher).
   AskUserQuestion) and how to answer it. A desk gate (`bin/gate enter --desk`, or `gate desk` on an open gate) needs
   the human live at the tab and never pauses; the list says "answer at the desk". Agents proceed until truly
   blocked: while a question waits they keep to work every listed option keeps, in their own commits (the brief).
+  Gates carry their questions (2026-11-12): `gate enter` requires `--question "<q> | <option> | <option
+  (Recommended)>"` per decision and a name that says what is decided, so the digest can be answered on its own
+  (`gate clear --note "Q1=2; Q2=1"`, prefilled with the recommended options); a bare "reviewed it? / Not yet" is
+  dropped from the digest. Each row names its repo, issue and issue_url, and what its url points at (url_kind).
 - **Slots per repo and the memory gate (2026-11-10).** `MAX_ACTIVE_PER_REPO` / `MAX_ACTIVE_BY_REPO` give each
   repo its own agent slots (snapshot `repo_slots`; queue rows of a full repo carry `repo_full`). Slots are no
   longer the memory limit: every agent start (`bin/spawn`, `bin/resume-agent`'s relaunch) passes `bin/mem-gate`,

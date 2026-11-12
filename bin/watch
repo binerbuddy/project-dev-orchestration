@@ -474,7 +474,7 @@ def pause_reason(a):
     waited = a["unchanged_min"] >= QUESTION_GRACE_MIN
     gate = "ux-gate" if a.get("ux_gate") else "decision" if a.get("decision_gate") else None
     if gate and a["status"] in ("idle", "done", "blocked") and not finished(a):
-        # an agent at a gate asks "reviewed it? good to proceed?" (that prompt is the human's
+        # an agent at a gate asks the gate's questions (that prompt is the human's
         # notification); unanswered, it pauses as the gate, and the label stays for later
         return gate if waited and not a.get("git_hold") else None
     if a.get("design_lead_held"):

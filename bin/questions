@@ -15,14 +15,24 @@ there is none), and how to answer:
   - paused at a gate: `pdo gate clear <repo> <n> --note "<text>" --project P`;
   - a desk gate (`gate enter --desk`: the human must be at the tab): "answer at the desk", in its tab
     (resumed first with `pdo resume-agent` if it was paused before it was marked).
-Each row also carries `question` (the first question on one line) and `recommended` (the option
-labelled "(Recommended)", else null), so a relay can show age, question and recommendation in one line.
+JSON fields per row: project; repo and issue (null for a standing agent); issue_url (always the
+GitHub issue); url (what to look at: a gate's link, else the issue) and url_kind (issue, comment,
+pr, doc or artifact); state (live, paused, held) and live_state (live rows: "menu on screen" or
+"idle at its prompt"); hours waited; questions (every question in full, with options: a gate's own
+questions from `gate enter --question`, else the transcript's; a bare "reviewed it? / Not yet" is
+dropped); question (the first one, whole, on one line); recommended (one entry per question: the
+option labelled "(Recommended)", else null); gate ({kind, name} when the agent waits at a gate, else
+absent); desk (true for a desk gate, which never pauses: answer it at the tab); answer_format, with
+several questions "Q1=<option #>; Q2=..." (the answer command comes prefilled with the recommended
+options, "?" where there is none); route and route_why (below); answer (how to answer, in words) and
+command (the raw command).
 Standing agents (orchestrator, QC, manager) with a question on screen are listed too. Nothing is
 written; a missing herdr only drops the live half.
 
 A repo with an active Design Lead (bin/design-lead): its agents' questions carry route "design-lead"
 and are its to answer, not the human's, unless it escalated one or it has waited
-DESIGN_LEAD_ESCALATE_HOURS; then route "human" with the reason in route_why. Questions a worker handed
+DESIGN_LEAD_ESCALATE_HOURS; then route "human" with the reason in route_why (null when no Design Lead
+covers the repo, i.e. it was always the human's). Questions a worker handed
 to the Design Lead by peer message (`design-lead ask`) are listed as state "held". `command` (JSON) is
 always the raw way to answer. --repo R lists only R's.
 """
@@ -51,6 +61,32 @@ def screen_tail(pane, n=8):
     r = subprocess.run(["herdr", "pane", "read", pane], capture_output=True, text=True, timeout=15) if pane else None
     lines = [ln for ln in (r.stdout if r and r.returncode == 0 else "").splitlines() if ln.strip()]
     return "\n".join(lines[-n:])
+
+
+def filler(q):
+    """A bare "have you reviewed it? good to proceed?" with a "Not yet" option: it asks nothing to decide."""
+    return bool(re.search(r"reviewed|good to proceed", q.get("question") or "", re.I)
+                and any((o.get("label") or "").lower().startswith("not yet") for o in q.get("options") or []))
+
+
+def recommended(q):
+    """The option labelled "(Recommended)" of one question, or None."""
+    return next((o["label"] for o in q.get("options") or [] if "(recommended)" in o["label"].lower()), None)
+
+
+def url_kind(url):
+    """What a row's url points at: issue, comment, pr, doc or artifact (None without a url)."""
+    if not url:
+        return None
+    if "#issuecomment-" in url or "#discussion_r" in url or "#pullrequestreview-" in url:
+        return "comment"
+    if re.search(r"github\.com/[^/]+/[^/]+/pull/\d+", url):
+        return "pr"
+    if re.search(r"github\.com/[^/]+/[^/]+/issues/\d+", url):
+        return "issue"
+    if re.search(r"/(blob|tree)/|\.(md|html?|pdf)(#|$)", url):
+        return "doc"
+    return "artifact"
 
 
 def desk(meta):
@@ -94,6 +130,12 @@ def collect(only=None, slots=None, now=None, only_repo=None):
                         "url": f"https://github.com/{org}/{m.group(1)}/issues/{m.group(2)}" if key else None,
                         "questions": (q or {}).get("questions") or [], "screen": "" if q else screen_tail(s.get("pane_id")),
                         "desk": desk(meta), "answer": ("at the desk: " if desk(meta) else "") + f'in its tab "{label}"'})
+            g = (meta or {}).get("gate") or {}
+            out[-1]["live_state"] = "menu on screen" if s.get("status") == "blocked" else "idle at its prompt"
+            if g.get("since") and not g.get("cleared_at"):
+                out[-1]["gate"] = {"kind": g.get("kind"), "name": g.get("name")}
+                out[-1]["url"] = g.get("link") or out[-1]["url"]
+                out[-1]["questions"] = g.get("questions") or out[-1]["questions"]
         d = os.path.join(state, "agents")
         for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
             meta = read_json(os.path.join(d, f), {}) or {}
@@ -107,8 +149,9 @@ def collect(only=None, slots=None, now=None, only_repo=None):
                 out.append({"project": p, "agent": f"{repo}#{num}", "workspace": meta.get("name"), "state": "paused",
                             "hours": round((now - gate["since"]) / 3600, 1),
                             "url": gate.get("link") or f"https://github.com/{org}/{repo}/issues/{num}",
-                            "questions": (q or {}).get("questions") or [], "gate": {"kind": gate.get("kind"), "name": gate.get("name")},
-                            "screen": f"{gate.get('kind')} gate: {gate.get('name')}", "desk": desk(meta),
+                            "questions": gate.get("questions") or (q or {}).get("questions") or [],
+                            "gate": {"kind": gate.get("kind"), "name": gate.get("name")},
+                            "screen": "", "desk": desk(meta),
                             "answer": (f'at the desk: pdo resume-agent {repo} {num} --prompt "The human is at the desk." --project {p}, '
                                        f'then answer in its tab "{meta.get("name")}"') if desk(meta) else
                                       f'pdo gate clear {repo} {num} --note "<text>" --project {p}'})
@@ -139,12 +182,24 @@ def collect(only=None, slots=None, now=None, only_repo=None):
                         "questions": [{"question": h.get("question") or "", "multiSelect": False, "options": []}],
                         "screen": "", "answer": f'pdo answer {repo} {num} "<text>" --project {p}'})
     for r in out:
+        r["questions"] = [q for q in r["questions"] if not filler(q)]
         first = (r["questions"] or [{}])[0]
-        r["question"] = (first.get("question") or "").strip().splitlines()[0][:200] if first.get("question") else \
-            ((r.get("gate") or {}).get("name") or "")
-        r["recommended"] = next((o["label"] for o in first.get("options") or [] if "(recommended)" in o["label"].lower()), None)
+        r["question"] = " ".join((first.get("question") or (r.get("gate") or {}).get("name") or "").split())
+        r["repo"], r["issue"] = (r["agent"].split("#")[0], int(r["agent"].split("#")[1])) if r["agent"] else (None, None)
+        r["recommended"] = [recommended(q) for q in r["questions"]]
+        r["url_kind"] = url_kind(r.get("url"))
         r.setdefault("desk", False)
+        r.setdefault("live_state", None)
+        if len(r["questions"]) > 1:
+            r["answer_format"] = "Q<n>=<option number or your own words>, one per question, separated by '; '"
+            fill = "; ".join(f"Q{i}={pick or '?'}" for i, pick in enumerate(
+                (next((j for j, o in enumerate(q["options"], 1) if o["label"] == rec), None) for q, rec in zip(r["questions"], r["recommended"])), 1))
+        else:
+            r["answer_format"] = "an option number or your own words"
+            fill = "<text>"
+        r["answer"] = r["answer"].replace('"<text>"', f'"{fill}"')
         cfg, _ = pdo_config.try_load(r["project"])
+        r["issue_url"] = f"https://github.com/{cfg['org']}/{r['repo']}/issues/{r['issue']}" if cfg and r["repo"] else None
         r["route"], r["route_why"] = ("human", None) if not (r["agent"] and cfg) else \
             pdo_config.design_lead_route(cfg, r["agent"].split("#")[0], int(r["agent"].split("#")[1]), r["hours"])
         r["command"] = r["answer"]
@@ -162,18 +217,30 @@ def text(rows):
     lines = []
     for r in rows:
         waited = f"{r['hours']:g}h" if r["hours"] is not None else "?"
-        lines.append(f"{r['workspace']} ({r['project']}, {r['state']}, waiting {waited})" + (f"  {r['url']}" if r["url"] else "")
+        where = r["project"] + (f"/{r['repo']}" if r.get("repo") else "")
+        state = r["state"] + (f": {r['live_state']}" if r.get("live_state") else "")
+        lines.append(f"{r['workspace']} ({where}, {state}, waiting {waited})" + (f"  {r['issue_url']}" if r.get("issue_url") else "")
                      + (" → Design Lead" if r.get("route") == "design-lead" else ""))
-        if r.get("recommended"):
-            lines.append(f"  recommended: {r['recommended']}")
+        if r.get("gate"):
+            lines.append(f"  gate ({r['gate']['kind']}): {r['gate']['name']}" + ("  [answer at the desk]" if r.get("desk") else ""))
+        if r.get("url") and r["url"] != r.get("issue_url"):
+            lines.append(f"  look at ({r['url_kind']}): {r['url']}")
         if r.get("route_why"):
             lines.append(f"  for the human: {r['route_why']}")
-        for q in r["questions"]:
-            lines.append(f"  Q: {q['question']}" + (" (several allowed)" if q["multiSelect"] else ""))
+        many = len(r["questions"]) > 1
+        for n, (q, rec) in enumerate(zip(r["questions"], r["recommended"]), 1):
+            head = (f"Q{n}" if many else "Q") + (f" [{q['header']}]" if many and q.get("header") else "")
+            lines.append(f"  {head}: {q['question']}" + (" (several allowed)" if q.get("multiSelect") else ""))
             for i, o in enumerate(q["options"], 1):
-                lines.append(f"     {i}. {o['label']}" + (f": {o['description']}" if o["description"] else ""))
-        if not r["questions"] and r["screen"]:
+                lines.append(f"     {i}. {o['label']}" + (f": {o['description']}" if o.get("description") else ""))
+            if rec:
+                lines.append(f"     recommended: {rec}")
+        if r.get("gate") and not r["questions"]:
+            lines.append("  no questions recorded for this gate: read the link above")
+        elif not r["questions"] and r["screen"]:
             lines += ["  screen: " + ln for ln in r["screen"].splitlines()]
+        if many:
+            lines.append(f"  answer format: {r['answer_format']}")
         lines.append(f"  answer: {r['answer']}")
     return "\n".join(lines)
 

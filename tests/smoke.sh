@@ -1354,9 +1354,10 @@ print([(r["question"], r["recommended"], r["desk"]) for r in rows])
 print(q.text(rows).splitlines()[:5])
 PY
 )" "[('widget#5', 'live', 2.0, 'Which order?', 'in its tab \"widget-5 live one\"'), ('widget#7', 'paused', 2.0, 'Which order?', 'pdo answer widget 7 \"<text>\" --project acme')]
-[('Which order?', 'Sort both (Recommended)', False), ('Which order?', 'Sort both (Recommended)', False)]
-['widget-5 live one (acme, live, waiting 2h)  https://github.com/o/widget/issues/5', '  recommended: Sort both (Recommended)', '  Q: Which order?', '     1. Sort both (Recommended): stable', '     2. Accept']"
-echo '{"repo":"widget","number":6,"name":"widget-6 desk","session_id":"s-live","hibernated_at":1794139200,"gate":{"kind":"decision","name":"cutover","since":1794139200,"desk":true}}' >"$QS/agents/widget-6.json"
+[('Which order?', ['Sort both (Recommended)'], False), ('Which order?', ['Sort both (Recommended)'], False)]
+['widget-5 live one (acme/widget, live: menu on screen, waiting 2h)  https://github.com/o/widget/issues/5', '  Q: Which order?', '     1. Sort both (Recommended): stable', '     2. Accept', '     recommended: Sort both (Recommended)']"
+echo '{"repo":"widget","number":6,"name":"widget-6 desk","session_id":"s-live","hibernated_at":1794139200,"gate":{"kind":"decision","name":"cutover","link":"https://example.com/cutover","since":1794139200,"desk":true}}' >"$QS/agents/widget-6.json"
+echo '{"repo":"widget","number":10,"name":"widget-10 two","session_id":"s-none","hibernated_at":1794139200,"gate":{"kind":"decision","name":"rows and sync","link":"https://github.com/o/widget/pull/11","since":1794139200,"questions":[{"question":"Rows?","options":[{"label":"One (Recommended)"},{"label":"Many"}]},{"question":"Sync?","options":[{"label":"Push"},{"label":"Pull"}]},{"question":"Have you reviewed it? Good to proceed?","options":[{"label":"Yes, proceed"},{"label":"Not yet"}]}]}}' >"$QS/agents/widget-10.json"
 eq "questions: a desk gate says answer at the desk" "$(CLAUDE_CONFIG_DIR="$CC" python3 - "$BIN" "$QS" <<'PY'
 import importlib.machinery, importlib.util, sys
 spec = importlib.util.spec_from_loader("questions", importlib.machinery.SourceFileLoader("questions", sys.argv[1] + "/questions"))
@@ -1365,10 +1366,17 @@ q.pdo_config.projects = lambda: ["acme"]
 q.pdo_config.try_load = lambda p: ({"project": p, "org": "o", "repo_root": {"widget": "/x"}, "state_dir": sys.argv[2]}, None)
 q.pdo_config.managed_elsewhere = lambda cfg: set()
 r = [r for r in q.collect(slots=[], now=1794139200 + 3600) if r["agent"] == "widget#6"][0]
-print(r["desk"], r["answer"].startswith("at the desk: pdo resume-agent widget 6"), r["question"])
+print(r["desk"], r["answer"].startswith("at the desk: pdo resume-agent widget 6"), r["question"], r["repo"], r["issue"], r["issue_url"], r["url"])
+print([l for l in q.text([r]).splitlines() if l.startswith("  gate") or l.startswith("  look at") or l.startswith("  screen")])
+g = [r for r in q.collect(slots=[], now=1794139200 + 3600) if r["agent"] == "widget#10"][0]
+print([x["question"] for x in g["questions"]], g["recommended"], g["answer"], g["url_kind"])
+print([q.url_kind(u) for u in ("https://github.com/o/r/pull/3", "https://github.com/o/r/issues/3#issuecomment-9", "https://github.com/o/r/blob/b/docs/d.md", "https://claude.ai/artifact/x", None)])
 PY
-)" "True True Which order?"
-rm -f "$QS/agents/widget-6.json"
+)" "True True Which order? widget 6 https://github.com/o/widget/issues/6 https://example.com/cutover
+['  gate (decision): cutover  [answer at the desk]', '  look at (artifact): https://example.com/cutover']
+['Rows?', 'Sync?'] ['One (Recommended)', None] pdo gate clear widget 10 --note \"Q1=1; Q2=?\" --project acme pr
+['pr', 'comment', 'doc', 'artifact', None]"
+rm -f "$QS/agents/widget-6.json" "$QS/agents/widget-10.json"
 # Design Lead: one per project (DESIGN_LEAD=1); active once its intent doc is on its home repo's origin/main
 DLR="$T/dl-repo"; git init -q "$DLR"; git -C "$DLR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$DLR" update-ref refs/remotes/origin/main HEAD
@@ -1422,7 +1430,7 @@ print([(r["agent"], r["state"], r["route"], r["answer"]) for r in rows])
 print(q.text(rows).splitlines()[0])
 PY
 )" "[('widget#4', 'paused', 'design-lead', 'Design Lead (acme) answers it'), ('widget#7', 'paused', 'design-lead', 'Design Lead (acme) answers it'), ('widget#3', 'held', 'design-lead', 'Design Lead (acme) answers it (held: asked by peer message)')]
-widget-4 at a gate (acme, paused, waiting 2h)  https://github.com/o/widget/issues/4 → Design Lead"
+widget-4 at a gate (acme/widget, paused, waiting 2h)  https://github.com/o/widget/issues/4 → Design Lead"
 eq "watch: a question held by the Design Lead is its own idle reason, never stalled or paused" "$(python3 - "$BIN" <<'PY'
 import importlib.machinery, importlib.util, sys
 spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1] + "/watch"))
@@ -1436,7 +1444,14 @@ out="$("$BIN/answer" widget 79 "go with the second layout" --project acme 2>&1)"
 has "answer: a paused agent's reply is recorded for the orchestrator" "$out" '"answer": "recorded"'
 eq "answer: ... in its metadata" "$(jq -r .paused.answer "$T/state/agents/widget-79.json")" "go with the second layout"
 : >"$SMOKE_LOG"
-out="$(NOTIFY_CMD="$T/notify" "$BIN/gate" enter widget 81 --kind decision --name "storage layout" --link https://example.com/doc --project acme 2>&1)"
+check "gate enter: a generic name is refused" bash -c '! "$0" enter widget 81 --kind decision --name "design decisions" --question "a? | x | y" --project acme 2>/dev/null' "$BIN/gate"
+check "gate enter: refused without a question" bash -c '! "$0" enter widget 81 --kind decision --name "storage layout" --project acme 2>/dev/null' "$BIN/gate"
+out="$(NOTIFY_CMD="$T/notify" "$BIN/gate" enter widget 81 --kind decision --name "storage layout" --link https://example.com/doc \
+  --question "Where do rows live? | One table (Recommended) | A table per tenant" --question "Sync? | Push | Pull" --project acme 2>&1)"
+eq "gate enter: records each question with its options" "$(jq -c '[.gate.questions[] | [.question, [.options[].label]]]' "$T/state/agents/widget-81.json")" '[["Where do rows live?",["One table (Recommended)","A table per tenant"]],["Sync?",["Push","Pull"]]]'
+check "gate enter: the comment lists the questions and the answer format" bash -c 'grep -q "Q2.\*\* Sync?" "$0" && grep -q "Q1=2; Q2=1" "$0"' "$SMOKE_LOG"
+eq "gate ask: replaces the open gate's questions" "$("$BIN/gate" ask widget 81 --question "Only? | A | B (Recommended)" --project acme | jq -r .questions) $(jq -c '[.gate.questions[].question]' "$T/state/agents/widget-81.json")" '1 ["Only?"]'
+check "gate ask: a question needs two options" bash -c '! "$0" ask widget 81 --question "Only? | A" --project acme 2>/dev/null' "$BIN/gate"
 check "gate enter: labels the issue" grep -qx "gh issue edit 81 -R acme/widget --add-label awaiting-decision" "$SMOKE_LOG"
 check "gate enter: posts one comment naming the gate" grep -q "gh issue comment 81 -R acme/widget --body \*\*Design decision gate: storage layout\*\*" "$SMOKE_LOG"
 eq "gate enter: records it and notifies" "$(jq -c '[.gate.kind, .gate.name, (.gate.notified_at > 0)]' "$T/state/agents/widget-81.json")" '["decision","storage layout",true]'
