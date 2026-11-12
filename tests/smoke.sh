@@ -1299,6 +1299,34 @@ PY
 [None, 'question', None, None, 'ux-gate', None, 'decision', None, 'decision', None, 'parked', 'blocked', None, None, None, None, 'ux-gate']
 question
 [('reply_arrived', 'answer', 'yes')] []"
+# a standing loop that is down: an auth error in its latest reply, or no tick past its interval
+LD="$T/loopstate"; mkdir -p "$LD/agent-qc" "$LD/design-lead"
+touch -d '-3 hours' "$LD/acme-watch.json"; touch "$LD/agent-qc/heartbeat"; touch -d '-2 hours' "$LD/design-lead/acme.heartbeat"
+eq "loops: an auth error in the latest reply, a stale tick, old scrollback and a working loop" "$(python3 - "$BIN" "$LD" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import pdo_herdr as h
+cfg = {"project": "acme", "state_dir": sys.argv[2], "agent_qc_ports": [1], "design_lead": {"name": "Design Lead (acme)"},
+       "manager": "Repo Manager (acme)", "orchestrate_skill": "orch"}
+screens = {"p1": "● Login expired · Please run /login\n✻ Worked for 0s\n❯ ",
+           "p2": "● Login expired · Please run /login\n❯ /login\n● Login successful\n❯ ",
+           "p3": "● Nothing to answer.\n❯ ", "p4": "● I saw 'Login expired' in a log\n❯ ", "p5": ""}
+snap = [{"name": "QC Agent (acme)", "pane_id": "p1", "status": "done"}, {"name": "Repo Manager (acme)", "pane_id": "p2", "status": "idle"},
+        {"name": "Design Lead (acme)", "pane_id": "p3", "status": "idle"}, {"name": "intake", "pane_id": "p4", "status": "idle"},
+        {"name": "Orchestrator (acme)", "pane_id": "p5", "status": "working"}]
+rows = h.loops_down([cfg], snap, read=lambda pane: screens.get(pane, ""))
+print([(r["workspace"], r["reason"].split(" (")[0]) for r in rows])
+print(rows[0]["fix"].startswith("run /login in its tab"))
+snap[4]["status"] = "idle"
+print([r["workspace"] for r in h.loops_down([cfg], snap, read=lambda pane: screens.get(pane, ""))])
+PY
+)" "[('QC Agent (acme)', 'login or API auth failure on screen'), ('Design Lead (acme)', 'no tick for 2.0h')]
+True
+['Orchestrator (acme)', 'QC Agent (acme)', 'Design Lead (acme)']"
+check "fleet: a loop that is down leads the waiting list" python3 -c '
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("fleet", importlib.machinery.SourceFileLoader("fleet", sys.argv[1] + "/fleet"))
+f = importlib.util.module_from_spec(spec); spec.loader.exec_module(f)
+w = f.waiting_list([], {}, [{"project": "acme", "workspace": "QC Agent (acme)", "reason": "r", "fix": "x"}])
+assert w[0]["why"] == "loop down" and w[0]["item"] == "QC Agent (acme): r" and w[0]["title"] == "fix: x", w' "$BIN"
 # the machine-wide memory gate: recent starts count as used; a refusal reserves nothing
 G="$T/gate-test"
 gate() { PDO_GATE_DIR="$G" PDO_MEM_AVAIL_MB="$1" "$BIN/mem-gate" reserve --project acme --agent "$2" >/dev/null 2>&1; echo $?; }
@@ -1450,7 +1478,8 @@ out="$(NOTIFY_CMD="$T/notify" "$BIN/gate" enter widget 81 --kind decision --name
   --question "Where do rows live? | One table (Recommended) | A table per tenant" --question "Sync? | Push | Pull" --project acme 2>&1)"
 eq "gate enter: records each question with its options" "$(jq -c '[.gate.questions[] | [.question, [.options[].label]]]' "$T/state/agents/widget-81.json")" '[["Where do rows live?",["One table (Recommended)","A table per tenant"]],["Sync?",["Push","Pull"]]]'
 check "gate enter: the comment lists the questions and the answer format" bash -c 'grep -q "Q2.\*\* Sync?" "$0" && grep -q "Q1=2; Q2=1" "$0"' "$SMOKE_LOG"
-eq "gate ask: replaces the open gate's questions" "$("$BIN/gate" ask widget 81 --question "Only? | A | B (Recommended)" --project acme | jq -r .questions) $(jq -c '[.gate.questions[].question]' "$T/state/agents/widget-81.json")" '1 ["Only?"]'
+eq "gate ask: appends to the open gate's questions" "$("$BIN/gate" ask widget 81 --question "Third? | A | B (Recommended)" --project acme | jq -r .questions) $(jq -c '[.gate.questions[].question]' "$T/state/agents/widget-81.json")" '3 ["Where do rows live?","Sync?","Third?"]'
+eq "gate ask --replace: drops the old ones first" "$("$BIN/gate" ask widget 81 --replace --question "Only? | A | B (Recommended)" --project acme | jq -r .questions) $(jq -c '[.gate.questions[].question]' "$T/state/agents/widget-81.json")" '1 ["Only?"]'
 check "gate ask: a question needs two options" bash -c '! "$0" ask widget 81 --question "Only? | A" --project acme 2>/dev/null' "$BIN/gate"
 check "gate enter: labels the issue" grep -qx "gh issue edit 81 -R acme/widget --add-label awaiting-decision" "$SMOKE_LOG"
 check "gate enter: posts one comment naming the gate" grep -q "gh issue comment 81 -R acme/widget --body \*\*Design decision gate: storage layout\*\*" "$SMOKE_LOG"

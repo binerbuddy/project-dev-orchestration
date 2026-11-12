@@ -83,6 +83,13 @@ def main():
                        capture_output=True, timeout=60)
     st = pdo_config.design_lead_state(cfg)
     if a.action == "status":
+        # its loop's heartbeat: the skill runs status every tick (pdo fleet flags a loop that stops ticking)
+        hb = os.path.join(cfg["state_dir"], "design-lead", f"{cfg['project']}.heartbeat")
+        try:
+            os.makedirs(os.path.dirname(hb), exist_ok=True)
+            open(hb, "w").close()
+        except OSError:
+            pass
         out = {"name": dl["name"], "active": pdo_config.design_lead_active(cfg), "repos": dl["repos"],
                "home_repo": dl["home_repo"], "worktree": os.path.join((cfg.get("worktree_parent") or {}).get(dl["home_repo"], ""), dl["worktree"]),
                "branch": dl["branch"], "intent": dl["intent"], "log": dl["log"], "notes": dl.get("notes") or None,

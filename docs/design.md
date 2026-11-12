@@ -252,8 +252,16 @@ watcher).
   blocked: while a question waits they keep to work every listed option keeps, in their own commits (the brief).
   Gates carry their questions (2026-11-12): `gate enter` requires `--question "<q> | <option> | <option
   (Recommended)>"` per decision and a name that says what is decided, so the digest can be answered on its own
-  (`gate clear --note "Q1=2; Q2=1"`, prefilled with the recommended options); a bare "reviewed it? / Not yet" is
+  (`gate clear --note "Q1=2; Q2=1"`, prefilled with the recommended options; `gate ask` adds questions to an open
+  gate, `--replace` swaps them); a bare "reviewed it? / Not yet" is
   dropped from the digest. Each row names its repo, issue and issue_url, and what its url points at (url_kind).
+- **Loops that are down (2026-11-12).** A standing loop can look healthy (`[done]`) while every tick fails: an
+  expired login makes each /loop wakeup print "Login expired" in 0 s (a QC Agent sat that way for 2 days with 13
+  PRs waiting). `pdo_herdr.loops_down` flags a standing tab (orchestrator, QC Agent, Design Lead, intake, manager,
+  Human Review) whose latest reply is a login or API auth error, or a loop with a tick signal that hasn't ticked
+  for its interval plus an hour while not working (the orchestrator's watcher snapshot, the QC Agent's and Design
+  Lead's heartbeat files, each against the loop's own transcript, whichever is newer). `pdo fleet` puts each first
+  in the waiting list as `loop down: <workspace>: <reason>` with the fix; sysreport prints them. Read-only.
 - **Slots per repo and the memory gate (2026-11-10).** `MAX_ACTIVE_PER_REPO` / `MAX_ACTIVE_BY_REPO` give each
   repo its own agent slots (snapshot `repo_slots`; queue rows of a full repo carry `repo_full`). Slots are no
   longer the memory limit: every agent start (`bin/spawn`, `bin/resume-agent`'s relaunch) passes `bin/mem-gate`,

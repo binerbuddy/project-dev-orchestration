@@ -24,6 +24,7 @@ CLI (bin/herdr-agent wraps it):
                                  typed and hasn't sent, "suggestion: <text>" for Claude Code's dim
                                  prompt suggestion (ghost text, never anyone's). Exit 0: a real draft
                                  is there (don't type into this pane); 1: none; 2: not found
+  loops [--project P]            standing loops that are down (loops_down), as JSON; read-only
 """
 import json
 import os
@@ -229,6 +230,111 @@ def question_pending(slot):
     return any(q in tail for q in QUESTION_MARKERS) or draft_pending(slot)
 
 
+# A loop's session that can't reach the API: its /loop ticks fail at once while the tab looks idle.
+AUTH_FAIL = re.compile(r"Login expired|Please run /login|OAuth token (?:has )?expired|authentication_error|"
+                       r"Invalid API key|API Error: 401|401 Unauthorized|Not logged in|Invalid bearer token", re.I)
+LOOP_MARGIN_MIN = 60  # on top of a loop's longest normal gap between ticks
+
+
+def screen_tail(pane, n=40):
+    if not pane:
+        return ""
+    try:
+        r = subprocess.run(["herdr", "pane", "read", pane], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return "\n".join(r.stdout.splitlines()[-n:])
+
+
+def mtime(path):
+    try:
+        return os.path.getmtime(path) if path else None
+    except OSError:
+        return None
+
+
+def transcript_of(slot):
+    """The Claude Code transcript of a slot's session (CLAUDE_CONFIG_DIR, else ~/.claude), or None."""
+    import glob
+    sid = ((slot.get("agent") or {}).get("agent_session") or {}).get("value")
+    if not sid:
+        return None
+    root = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    files = glob.glob(os.path.join(root, "projects", "*", f"{sid}.jsonl"))
+    return max(files, key=os.path.getmtime) if files else None
+
+
+def last_reply(tail):
+    """The latest response on a Claude Code screen: from its last "●" line to the next prompt or status
+    line. An auth error higher up is old scrollback from before someone ran /login."""
+    lines = tail.splitlines()
+    i = next((k for k in range(len(lines) - 1, -1, -1) if lines[k].lstrip().startswith("●")), None)
+    if i is None:
+        return ""
+    end = next((k for k in range(i + 1, len(lines)) if lines[k].lstrip().startswith(("❯", "✻", "─"))), len(lines))
+    return "\n".join(lines[i:end])
+
+
+def standing_loops(cfg):
+    """A project's standing tabs: {name: (tick file or None, minutes allowed without a tick, how to
+    restart its loop)}. Tick signals: the orchestrator's watcher snapshot (the watcher writes it each
+    poll and ends within its hourly heartbeat, so a loop that stopped re-arming leaves it stale), the
+    QC Agent's heartbeat (`agent-qc next`) and the Design Lead's (`design-lead status`), each taken
+    with the loop's own transcript, whichever is newer. The manager and Human Review tabs have no
+    tick: only their screen is checked."""
+    p, st = cfg["project"], cfg["state_dir"]
+    out = {f"Orchestrator ({p})": (os.path.join(st, f"{p}-watch.json"), 60 + LOOP_MARGIN_MIN,
+                                   f"type `/loop {cfg.get('orchestrate_skill') or 'project-orchestrate'} project={p}` in its tab")}
+    if cfg.get("agent_qc_ports"):
+        busy = os.path.exists(os.path.join(st, "agent-qc", "in-progress.json"))
+        out[f"QC Agent ({p})"] = (os.path.join(st, "agent-qc", "heartbeat"), (120 if busy else 30) + LOOP_MARGIN_MIN,
+                                  f"`pdo start-agent-qc --project {p}` (restarts its /loop)")
+    dl = cfg.get("design_lead")
+    if dl:
+        out[dl["name"]] = (os.path.join(st, "design-lead", f"{p}.heartbeat"), 30 + LOOP_MARGIN_MIN,
+                           f"type `/loop {dl.get('skill') or 'project-design-lead'} project={p}` in its tab")
+    for name in (cfg.get("manager"), f"Human Review ({p})"):
+        if name:
+            out.setdefault(name, (None, None, None))
+    return out
+
+
+def loops_down(cfgs, snap=None, now=None, read=screen_tail):
+    """Standing loops that are down, as [{project, workspace, reason, fix}]. Read-only: screens are
+    read, never typed into. Down: a login or API auth failure in its latest reply (every tick then fails
+    in 0 s while the tab looks idle or done), or, for a loop with a tick signal, no tick for longer
+    than its interval plus LOOP_MARGIN_MIN while it isn't working. A missing tick file (never ticked
+    yet) and a closed tab aren't flagged. The intake tab ("intake") is checked once, on its screen."""
+    now = now or __import__("time").time()
+    snap = slots() if snap is None else snap
+    by_name = {s.get("name"): s for s in snap if s.get("name")}
+    out, seen = [], set()
+    rows = [(c["project"], name, spec) for c in cfgs for name, spec in standing_loops(c).items()]
+    rows.append(("", "intake", (None, None, None)))
+    for project, name, (tick, allowed, restart) in rows:
+        s = by_name.get(name)
+        if not s or name in seen:
+            continue
+        seen.add(name)
+        m = AUTH_FAIL.match(last_reply(read(s.get("pane_id")) or "").lstrip(" ●").strip())
+        if m:
+            out.append({"project": project, "workspace": name, "reason": f"login or API auth failure on screen (\"{m.group(0)}\")",
+                        "fix": "run /login in its tab, then restart its loop" + (f": {restart}" if restart else "")})
+            continue
+        if not tick or s.get("status") == "working":
+            continue
+        # the newest of its tick file and its own transcript (every tick, even one that skips the
+        # tick command, writes to it)
+        stamps = [x for x in (mtime(tick), mtime(transcript_of(s))) if x]
+        if not stamps:
+            continue
+        age = (now - max(stamps)) / 60
+        if age > allowed:
+            out.append({"project": project, "workspace": name, "reason": f"no tick for {age / 60:.1f}h (expected every {allowed - LOOP_MARGIN_MIN} min)",
+                        "fix": f"read its tab; if its /loop has ended, {restart}"})
+    return out
+
+
 def exit_agent(pane, wait=30):
     """/exit a Claude agent in <pane> and wait until herdr no longer lists it. True when it's gone."""
     import time
@@ -288,6 +394,14 @@ def main(argv):
         if got["suggestion"]:
             print("suggestion: " + got["suggestion"])
         return 0 if got["draft"] else 1
+    elif cmd == "loops" and (not rest or (len(rest) == 2 and rest[0] == "--project")):
+        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+        import pdo_config
+        if rest:
+            cfgs = [pdo_config.load(rest[1], "herdr-agent")]
+        else:
+            cfgs = [c for c in (pdo_config.try_load(p)[0] for p in pdo_config.projects()) if c]
+        print(json.dumps(loops_down(cfgs)))
     elif cmd == "close" and len(rest) == 1:
         return 0 if close(find(rest[0])) else 1
     else:

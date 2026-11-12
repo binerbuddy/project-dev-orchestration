@@ -3,7 +3,7 @@
 
 Usage: gate enter <repo> <issue#> --kind ux|decision --name "<what is decided>" --question "<q> | <opt> | <opt (Recommended)>"...
                   [--link URL] [--desk] [--project P]
-       gate ask <repo> <issue#> --question "<q> | <opt> | ..."... [--project P]
+       gate ask <repo> <issue#> --question "<q> | <opt> | ..."... [--replace] [--project P]
        gate desk <repo> <issue#> [--project P]
        gate clear <repo> <issue#> [--note TEXT] [--project P]
 
@@ -23,7 +23,8 @@ stays viewable through the human review tab.
 answer from the digest: `gate clear --note "Q1=2; Q2=1"`. A bare "reviewed it? good to proceed?" is
 not a question; a UX sign-off asks "Approve <what> as shown? | Approve (Recommended) | Changes needed".
 --name says what is being decided (e.g. "storage layout and sync model"); a generic name such as
-"design decisions" is refused. `gate ask` replaces the questions of a gate already open.
+"design decisions" is refused. `gate ask` adds questions to a gate already open (after the ones it
+has; --replace drops those first).
 
 --desk (or `gate desk` on a gate already entered): the gate needs the human live at the agent's tab
 (they say go there and approve each step). It is never paused, and pdo questions shows it as
@@ -89,6 +90,7 @@ def main():
     ap.add_argument("--note")
     ap.add_argument("--desk", action="store_true")
     ap.add_argument("--question", action="append", default=[])
+    ap.add_argument("--replace", action="store_true")
     ap.add_argument("--project")
     a = ap.parse_args()
     cfg = pdo_config.load(a.project, "gate")
@@ -107,9 +109,9 @@ def main():
             die(f"{a.repo}#{a.number} has no open gate (gate enter starts one)")
         if not questions:
             die("ask needs --question")
-        gate["questions"] = questions
+        gate["questions"] = ([] if a.replace else gate.get("questions") or []) + questions
         write_meta(meta_file, meta)
-        print(json.dumps({"gate": "asked", "name": gate.get("name"), "questions": len(questions)}))
+        print(json.dumps({"gate": "asked", "name": gate.get("name"), "added": len(questions), "questions": len(gate["questions"])}))
         return
     if a.action == "desk":
         gate = meta.get("gate") or {}

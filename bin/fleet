@@ -11,7 +11,8 @@ Enumerates every project env along PDO_CONFIG_DIRS and reports, per project: its
 and REPO_MANAGER for SELF_MANAGED_REPOS) and how to reach it; active, hibernated, stalled and
 standing agents (agent metadata in the state dir, herdr's workspace/agent lists, the watcher's last
 saved snapshot); what waits on the human (ready-for-QC and QC-complete PRs, awaiting-ux-gate issues,
-agents with a question pending, the intake inbox); the queue's eligible count; open PRs awaiting
+agents with a question pending, the intake inbox, and standing loops that are down: an auth error in
+the latest reply or no tick past the loop's interval, via pdo_herdr.loops_down); the queue's eligible count; open PRs awaiting
 the human against the PR cap. System constraints: weekly and 5-hour usage (USAGE_CACHE), free memory
 and swap, disk free on the state dir and repo roots, gh GraphQL/core rate limits per GH_USER, the
 overall agent count, and the gh identities shim (active or not, the map's owners). Agents working
@@ -821,10 +822,12 @@ def deps_cmd(argv):
 
 # ---------- main ----------
 
-def waiting_list(views, inboxes):
-    """One list across projects, ranked: merge blockers (QC passed, awaiting review/merge), questions,
-    QC escalations, UX gates and UX reviews, QC (unless the project's QC Agent has it), then the intake inbox."""
-    out = []
+def waiting_list(views, inboxes, loops=()):
+    """One list across projects, ranked: standing loops that are down (nothing moves until they're
+    fixed), merge blockers (QC passed, awaiting review/merge), questions, QC escalations, UX gates and
+    UX reviews, QC (unless the project's QC Agent has it), then the intake inbox."""
+    out = [{"rank": -1, "why": "loop down", "project": x["project"] or "all", "item": f"{x['workspace']}: {x['reason']}",
+            "title": f"fix: {x['fix']}", "url": None, "full": True} for x in loops]
     for v in views:
         p = v["project"]
         for x in v.get("merge_ready", []):
@@ -911,7 +914,7 @@ def text_report(r, only):
     if not r["waiting_on_you"]:
         print("  nothing")
     for w in r["waiting_on_you"]:
-        print(f"  {w['why']}: [{w['project']}] {w['item']}" + (f" {w['title'][:60]}" if w["title"] else "")
+        print(f"  {w['why']}: [{w['project']}] {w['item']}" + (f" {w['title'] if w.get('full') else w['title'][:60]}" if w["title"] else "")
               + (f" {w['url']}" if w.get("url") else ""))
     for v in r["projects"]:
         if only and v["project"] != only:
@@ -1119,10 +1122,12 @@ def main():
             except OSError as e:
                 warn(f"advice: cannot write {sd}: {e}")
 
-    report = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "system": system,
+    # standing loops whose tab looks fine but whose ticks fail (an expired login) or stopped
+    loops = [x for x in pdo_herdr.loops_down(cfgs, places) if not a.project or x["project"] in (a.project, "")] if herdr_ok else []
+    report = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "system": system, "loops_down": loops,
               "projects": [v for v in views if not a.project or v["project"] == a.project],
               "waiting_on_you": waiting_list([v for v in views if not a.project or v["project"] == a.project],
-                                             inboxes),
+                                             inboxes, loops),
               "advice": advice, "deps": deps, "native_deps": native,
               "claims": sorted(claims.values(), key=lambda e: (-e["count"], e["slug"])), "stale_claims": stale,
               "advice_written": written, "warnings": WARN}

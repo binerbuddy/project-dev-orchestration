@@ -93,6 +93,9 @@ unless the human points you at one.
 
 Then give the human **one unified "Waiting on you" list** across all projects, ranked by impact:
 
+0. **Loops down:** `loop down: <workspace>: <reason>` from `pdo fleet` (a standing loop whose latest
+   reply is a login or auth error, or that stopped ticking). Nothing it runs moves until it's fixed:
+   give the human its fix line (e.g. "run /login in its tab"). Never type into that tab yourself.
 1. **Merge blockers:** PRs that passed QC and wait only for review and merge, and anything a
    cross-project dependency says blocks another team.
 2. **Questions:** agents (or managers) with a question pending; name the workspace.

@@ -29,6 +29,7 @@ U="${USAGE_CACHE:-$HOME/.claude/plugins/oh-my-claudecode/.usage-cache-anthropic.
 echo "== herdr agents (workspace > tab | status)"
 "$HERE/bin/herdr-agent" slots 2>/dev/null | jq -r '.[] | select(.name != "")
   | "  \(if .layout == "tab" then "\(.workspace) > \(.name)" else .name end) | \(.status)"'
+echo "== loops down: $("$HERE/bin/herdr-agent" loops --project "$PDO_PROJECT" 2>/dev/null | jq -r 'if length == 0 then "none" else map("\(.workspace): \(.reason); fix: \(.fix)") | join(" | ") end')"
 echo "== named agents: $(herdr agent list 2>/dev/null | jq -r '[.result.agents[] | .name // empty] | join(", ")')"
 
 if pgrep -f '[b]in/watch --project' >/dev/null; then
