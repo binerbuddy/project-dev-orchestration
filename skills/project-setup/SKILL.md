@@ -258,8 +258,9 @@ repo (no issue types), also create the type labels the human names, and record t
   (no judgement, no rename, no delete). They go in the PR body's label check.
 
 Never delete or rename a label. A case-only difference counts as present (GitHub names are case-insensitive); report
-it. Yellow is reserved for "a human acts now" (`references/labels.md`, Colors). A label that breaks that rule (a human
-label that isn't yellow, or another label that looks yellow) is **drifted**: propose `gh label edit --color` (color
+it. Yellow is reserved for "a human acts now" and green for `Ready for Merge` (`references/labels.md`, Colors). A
+label that breaks a color rule (a human label that isn't yellow, another label that looks yellow or green, an area
+label that isn't light teal) is **drifted**: propose `gh label edit --color` (color
 only) and apply it on the human's yes. Other color differences are the repo's choice; report them, change nothing. Without write access, run check-only, list the commands for a maintainer, and carry on.
 
 ## 5. QC fixtures

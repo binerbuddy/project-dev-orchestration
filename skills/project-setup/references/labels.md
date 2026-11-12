@@ -10,39 +10,44 @@ difference; never rename it.
 
 | Label (default name) | Env key | Color | Description | Relied on by |
 |---|---|---|---|---|
-| `route:small` | | `0e8a16` | Route: small feature or bug fix (project-small-feature-or-bug-fix) | spawn, intake, queue |
+| `route:small` | | `f9d0c4` | Route: small feature or bug fix (project-small-feature-or-bug-fix) | spawn, intake, queue |
 | `route:design` | | `5319e7` | Route: needs a design doc (project-feature-design) | spawn, intake, design hand-off |
 | `route:build` | | `1d76db` | Route: build an epic from a READY design doc (project-feature-build) | spawn, watch, design hand-off |
 | `P1-urgent` | `P_LABELS` (1st) | `b60205` | Data loss, an exploited security hole, production down | queue, pr-priority, intake |
 | `P2-high` | `P_LABELS` (2nd) | `d93f0b` | Security flaws, wrong results, things users need soon | queue, pr-priority, intake |
 | `P3-medium` | `P_LABELS` (3rd) | `0969da` | Real but tolerable bugs; normal features | queue, pr-priority, intake |
-| `P4-low` | `P_LABELS` (4th) | `c2e0c6` | Polish, clean-up, ideas | queue, pr-priority, intake |
-| `ready for QC` | `LABEL_QC_READY` | `1b998b` | Automated review+triage done; awaiting QC (agent QC first, where it runs) | lifecycle skills, watch, hibernate, human-review, agent-qc |
+| `P4-low` | `P_LABELS` (4th) | `9fb3c8` | Polish, clean-up, ideas | queue, pr-priority, intake |
+| `ready for QC` | `LABEL_QC_READY` | `8250df` | Automated review+triage done; awaiting QC (agent QC first, where it runs) | lifecycle skills, watch, hibernate, human-review, agent-qc |
 | `QC complete - ready to review` | `LABEL_QC_DONE` | `fbca04` | Agent QC passed; awaiting human UX review | human-review, agent-qc, watch |
 | `Ready for Merge` | `LABEL_MERGE_READY` | `0e8a16` | QC passed (agent, plus human UX review where needed); awaiting code review and a manual merge | human-review, agent-qc, watch, fleet |
 | `UX testing skipped` | `LABEL_UX_SKIPPED` | `c5def5` | Agent QC passed; no visible change, so no human UX review (the agent's comment says why) | agent-qc, watch |
-| `needs UX review` | `LABEL_NEEDS_UX` | `d4c5f9` | Change is visible to users or design-sensitive: a human UX review is required after agent QC | intake, agent-qc, pr-priority (via `CARRY_LABELS`) |
+| `needs UX review` | `LABEL_NEEDS_UX` | `d0d7de` | Change is visible to users or design-sensitive: a human UX review is required after agent QC | intake, agent-qc, pr-priority (via `CARRY_LABELS`) |
 | `QC escalated` | `LABEL_QC_ESCALATED` | `fbca04` | Agent QC failed twice; waiting on the human to decide | agent-qc, watch, hibernate, fleet |
 | `client-requested` | `CARRY_LABELS` (each) | `0052cc` | A client or customer asked for it; carried onto PRs | pr-priority, intake |
-| `needs-triage` | | `fbca04` | Not yet reviewed by a human; the queue skips it | queue, intake, collaborators |
+| `needs-triage` | | `d0d7de` | Not yet reviewed by a human; the queue skips it | queue, intake, collaborators |
 | `epic-phase` | | `c5def5` | A phase of an epic; worked only by the epic's build agent | queue, spawn, feature-design |
 | `awaiting-ux-gate` | | `fbca04` | An agent waits for a human's prototype sign-off (on the issue and its PR) | hibernate, watch, feature-build, dispatch brief |
 | `awaiting-decision` | | `fbca04` | An agent waits for a human's design decision (on the issue and its PR) | gate, hibernate, watch, feature-design |
-| `likely-fixed` | | `fbca04` | An agent thinks the default branch already does this; a human confirms | queue, watch, hibernate, dispatch brief |
+| `likely-fixed` | | `d0d7de` | An agent thinks the default branch already does this; a human confirms | queue, watch, hibernate, dispatch brief |
 | `has-follow-ups` | | `bfd4f2` | The PR body has a "Follow-ups (not filed)" list; `/project-intake follow-ups` harvests them | lifecycle skills, pr-triage, intake |
 | `blocked-by-pr` | | `e99695` | The PR can't merge until another PR lands | small-fix, feature-build |
 | `on-hold` | | `6a737d` | Parked by a human; never started | queue, watch, intake |
 | `needs-design` | | `d4c5f9` | Needs a design doc before work | spawn (routes to design), intake |
 | `Security` | | `ee0701` | Authn/authz, injection, secrets, exposure, unsafe input | queue (ranks first in its P-level), intake |
-| `small-win` | | `7ee787` | Cheap and worthwhile | intake, status |
+| `small-win` | | `e4c1f9` | Cheap and worthwhile | intake, status |
 | `orchestrator-system` | | `5a5a5a` | Work on the orchestration system itself (System Manager) | queue (excluded) |
-| `queue:work` | `QUEUE_LABEL` | `0e8a16` | In the orchestrator's queue (projects without a board) | queue (board-less mode) |
+| `queue:work` | `QUEUE_LABEL` | `0366d6` | In the orchestrator's queue (projects without a board) | queue (board-less mode) |
 
-**Colors.** Yellow means a human must act now, and only those labels are yellow: `needs-triage`,
-`likely-fixed`, `QC complete - ready to review`, `QC escalated`, `awaiting-ux-gate`, `awaiting-decision`, all the
-same `fbca04`, plus any repo-specific label with the same meaning (e.g. a "requires criteria review" label). `Ready for Merge` is the exception: a human merges it,
-but it stays green (`0e8a16`). Every other label avoids yellow: P1 red, P2 orange, P3 blue, P4 pale; agent and
-pipeline states in teal, purple, blue or grey; blocked in pale red.
+**Colors.** A label's color says what it asks of a human, and each label has one color in every repo.
+- **Yellow (`fbca04`) is only "a human must act now":** `QC complete - ready to review`, `QC escalated`,
+  `awaiting-ux-gate`, `awaiting-decision`, plus any repo-specific label with the same meaning (e.g. a "requires
+  criteria review" label). Nothing else is yellow or yellow-ish (gold, olive).
+- **Green (`0e8a16`) is only `Ready for Merge`.** No other label is green or green-ish (pale or teal greens).
+- **Grey is information:** `needs UX review` (a human review comes later, not now), `needs-triage` (intake handles
+  it), `invalid`, `likely-fixed` (a maintainer confirms it when they get to it), `on-hold`, `orchestrator-system`, and the like.
+- **Area labels** (a repo's own, e.g. "API" or "Outputs") are light teal `bfdadc`.
+- **The rest stay readable:** P1 red, P2 orange, P3 blue, P4 grey-blue; the three routes in distinct non-green hues
+  (small peach, design purple, build blue); `question` pink; blocked in pale red.
 
 `queue:work` matters only to a repo+team project without a board (no `PROJECT_NUMBER`); create it there only.
 
@@ -52,7 +57,7 @@ still pass a PR to `Ready for Merge` by hand, and `needs UX review` is set at in
 Not in the set: the `managed-by:<slug>` claim labels. `pdo claim` creates its own manager's label the first time
 it claims an issue in a repo; setup never creates them.
 
-If `P_LABELS` names more or fewer than four labels, give them the P colors in order and reuse `c2e0c6` for any past
+If `P_LABELS` names more or fewer than four labels, give them the P colors in order and reuse `9fb3c8` for any past
 the fourth.
 
 **Type labels.** Issue types (Epic / Feature / Bug / Task) exist only on organization repos. On a repo owned by a user
@@ -100,7 +105,7 @@ check() {  # check <name>: a repo-specific label the profile, AGENTS.md or CI na
   wanted+=("$1")
   grep -qixF -- "$1" <<<"$have" && echo "present  $1 (repo-specific)" || echo "MISSING  $1 (repo-specific: ask the human)"
 }
-want "route:small" 0e8a16 "Route: small feature or bug fix (project-small-feature-or-bug-fix)"
+want "route:small" f9d0c4 "Route: small feature or bug fix (project-small-feature-or-bug-fix)"
 # ...one line per row of the table above, with the project's names
 # check "skip changeset"            # e.g. the changeset skip label from step 1
 # the repo's own labels, listed for information only (no judgement, never renamed or deleted)
@@ -112,8 +117,9 @@ done <<<"$have"
 
 Report each label as present, created, missing (check-only), drifted (present, but its color differs from the
 table) or failed (with gh's error: usually missing write access), and list the `extra` ones as the repo's own labels.
-Drifted means the yellow rule (Colors, above) is broken: a human-acts-now label that isn't yellow, or another label
-that looks yellow. It's fixed only on the human's yes, with the printed `gh label edit … --color` (color only; the
-description and name stay). Any other color difference is the repo's own choice: report it on a `color` line and
-leave it. Also look at the `extra` labels: one that looks yellow but doesn't mean "a human acts now", or one that
-means it but isn't yellow, gets the same proposal (`fbca04` for a human label, a non-yellow color otherwise).
+Drifted means a color rule (Colors, above) is broken: a human-acts-now label that isn't yellow, another label
+that looks yellow, a label other than `Ready for Merge` that looks green, or an area label that isn't `bfdadc`. It's
+fixed only on the human's yes, with the printed `gh label edit … --color` (color only; the description and name
+stay). Any other color difference is the repo's own choice: report it on a `color` line and leave it. Also look at
+the `extra` labels: one that looks yellow or green but doesn't mean what those colors mean, or one that means a human acts now but isn't yellow, gets the same proposal (`fbca04` for a human label, a non-yellow,
+non-green color otherwise).

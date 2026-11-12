@@ -201,7 +201,7 @@ the scratchpad as well as returning it.
    comment and the review exist by id**, add the `ready for QC` label:
    `gh pr ready <number> -R <org>/<repo>` (out of draft: this triggers the one full CI run), then
    `gh pr edit <number> -R <org>/<repo> --add-label "ready for QC"`
-   (create it first with `gh label create "ready for QC" -R <org>/<repo> --color e8b339 --description "Automated
+   (create it first with `gh label create "ready for QC" -R <org>/<repo> --color 8250df --description "Automated
    review+triage done; awaiting human UX QC"` if the repo doesn't have it; GitHub label names cannot contain commas).
    This label signals the automated cycle is finished and the UX QC checklist is the human's to work. The human flips
    the labels when done: removes `ready for QC` and adds `QC complete - ready to review`. The workflow never applies
