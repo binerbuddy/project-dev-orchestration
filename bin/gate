@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """gate — enter or clear a human gate (a UX sign-off or a design decision) for an issue's agent.
 
-Usage: gate enter <repo> <issue#> --kind ux|decision --name "<which gate>" [--link URL] [--project P]
+Usage: gate enter <repo> <issue#> --kind ux|decision --name "<which gate>" [--link URL] [--desk] [--project P]
+       gate desk <repo> <issue#> [--project P]
        gate clear <repo> <issue#> [--note TEXT] [--project P]
 
 enter: the one way an agent stops at a gate, so the state is always set the same way. It adds the
@@ -11,8 +12,12 @@ and how to clear it, records metadata "gate" {kind, name, link, since}, and runs
 set). Its output tells the agent to ask "reviewed it? good to proceed?" with its question UI: that
 prompt is the human's notification (a remote session's push). The
 watcher then shows it (idle_reason "UX gate" / "decision gate", fleet's waiting list) and, after
-PAUSE_GRACE_MIN idle, pauses the agent (bin/hibernate --pause); a pushed prototype stays viewable
-through the human review tab.
+QUESTION_GRACE_MIN (default 60) idle, pauses the agent (bin/hibernate --pause); a pushed prototype
+stays viewable through the human review tab.
+
+--desk (or `gate desk` on a gate already entered): the gate needs the human live at the agent's tab
+(they say go there and approve each step). It is never paused, and pdo questions shows it as
+"answer at the desk". `gate desk` only records the mark: no label or comment changes.
 
 clear: removes the label from the issue and the PR and records cleared_at. A paused agent is
 resumed by the orchestrator (the watcher sees the label go: reply_arrived); --note is passed to
@@ -52,13 +57,14 @@ def write_meta(path, meta):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=("enter", "clear"))
+    ap.add_argument("action", choices=("enter", "desk", "clear"))
     ap.add_argument("repo")
     ap.add_argument("number", type=lambda s: int(s.lstrip("#")))
     ap.add_argument("--kind", choices=tuple(LABELS))
     ap.add_argument("--name")
     ap.add_argument("--link")
     ap.add_argument("--note")
+    ap.add_argument("--desk", action="store_true")
     ap.add_argument("--project")
     a = ap.parse_args()
     cfg = pdo_config.load(a.project, "gate")
@@ -69,6 +75,17 @@ def main():
                        "--json", "number,url", "--limit", "1") or "[]") if meta.get("branch") else []
     targets = [("issue", a.number)] + [("pr", p["number"]) for p in pr]
 
+    grace = cfg.get("question_grace_min", 60)
+    if a.action == "desk":
+        gate = meta.get("gate") or {}
+        if not gate.get("since") or gate.get("cleared_at") or not os.path.exists(meta_file):
+            die(f"{a.repo}#{a.number} has no open gate to mark (gate enter --desk starts one)")
+        gate["desk"] = True
+        write_meta(meta_file, meta)
+        print(json.dumps({"gate": "desk", "name": gate.get("name"), "paused": bool(meta.get("hibernated_at")),
+                          "next": "never paused from now on; pdo questions shows it as answer at the desk"}))
+        return
+
     if a.action == "enter":
         if not a.kind or not a.name:
             die("enter needs --kind ux|decision and --name")
@@ -78,14 +95,15 @@ def main():
             if gh(kind, "edit", str(n), "-R", slug, "--add-label", label) is None:
                 die(f"could not label {kind} #{n} '{label}'")
         what = "UX gate" if a.kind == "ux" else "Design decision gate"
-        body = (f"**{what}: {a.name}**. The agent has stopped and waits for you."
+        body = (f"**{what}: {a.name}**. The agent has stopped and waits for you"
+                + (" at its tab (answer at the desk)." if a.desk else ".")
                 + (f"\n\nLook at: {a.link}" if a.link else "")
                 + f"\n\nTo let it continue: reply here (or in its tab), or remove the `{label}` label."
                 + " A paused agent resumes on its own, ahead of new work.")
         kind, n = targets[-1]
         gh(kind, "comment", str(n), "-R", slug, "--body", body)
         meta["gate"] = {"kind": a.kind, "name": a.name, "link": a.link, "since": int(time.time()),
-                        "notified_at": None, "cleared_at": None}
+                        "notified_at": None, "cleared_at": None, "desk": a.desk}
         if pdo_config.notify(cfg, f"{meta.get('name') or f'{a.repo}#{a.number}'}: {what}", a.name, a.link or (pr[0]["url"] if pr else None)):
             meta["gate"]["notified_at"] = int(time.time())
         if os.path.exists(meta_file):
@@ -96,8 +114,9 @@ def main():
                           "notified": bool(meta["gate"]["notified_at"]),
                           "next": f"ask the human with your question UI (AskUserQuestion): \"{ask}\" "
                                   f"(options: Yes, proceed / Not yet). Yes: pdo gate clear {a.repo} {a.number}, then continue. "
-                                  "No answer: wait; after 10 idle minutes you are paused with the gate kept, and "
-                                  "resumed when the human clears it."}))
+                                  + ("No answer: wait in your tab; a desk gate is never paused." if a.desk else
+                                     f"No answer: wait; after {grace} idle minutes you are paused with the gate kept, and "
+                                     "resumed when the human clears it.")}))
         return
 
     gate = meta.get("gate") or {}

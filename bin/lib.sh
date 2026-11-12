@@ -469,7 +469,7 @@ pdo_config_json() {
     --arg dl_notes "$DESIGN_LEAD_NOTES" --arg dl_hours "$DESIGN_LEAD_ESCALATE_HOURS" --arg dl_live "$DESIGN_LEAD_LIVE_ANSWER" \
     --arg orch "$ORCHESTRATE_SKILL" --arg qc_skill "$QC_SKILL" --arg intake "$INTAKE_SKILL" --arg prefix "$PDO_SKILL_PREFIX" \
     --arg max_active "${MAX_ACTIVE:-}" --arg max_per_repo "${MAX_ACTIVE_PER_REPO:-}" --argjson max_by_repo "$max_by_repo" \
-    --arg mem_floor "${SPAWN_MEM_FLOOR_MB:-3072}" --arg mem_hold "${SPAWN_MEM_RESERVE_MIN:-10}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
+    --arg mem_floor "${SPAWN_MEM_FLOOR_MB:-3072}" --arg mem_hold "${SPAWN_MEM_RESERVE_MIN:-10}" --arg q_grace "${QUESTION_GRACE_MIN:-60}" --arg weekly "${WEEKLY_CEILING:-}" --arg five "${FIVE_HOUR_CEILING:-}" \
     --arg manager "${MANAGER:-}" --arg manager_slug "${MANAGER_SLUG:-}" --arg claim_assigns "${CLAIM_ASSIGNS:-0}" --argjson repo_mgr "$repo_mgr" --arg prio "${PORTFOLIO_PRIORITY:-3}" \
     --arg profile "${RESOURCE_PROFILE:-medium}" --arg agent_mb "${AGENT_MB:-}" --argjson mb_by_repo "$mb_by_repo" --arg weight "${AGENT_USAGE_WEIGHT:-}" \
     --arg fleet "${FLEET_ADVICE:-ignore}" --arg usage_cache "${USAGE_CACHE:-}" \
@@ -511,6 +511,7 @@ pdo_config_json() {
       five_hour_ceiling: ($five | if . == "" then null else tonumber end),
       manager: $manager, manager_slug: $manager_slug, claim_assigns: ($claim_assigns == "1"),
       claim_label: (if $manager_slug == "" then null else "managed-by:" + $manager_slug end), repo_manager: $repo_mgr, portfolio_priority: ($prio | tonumber? // 3),
+      question_grace_min: ($q_grace | tonumber? // 60),
       resource_profile: $profile, agent_mb: ($agent_mb | if . == "" then null else (tonumber? // null) end), agent_mb_by_repo: $mb_by_repo,
       agent_usage_weight: ($weight | if . == "" then null else (tonumber? // null) end),
       fleet_advice: $fleet, usage_cache: $usage_cache,

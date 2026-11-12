@@ -191,11 +191,12 @@ ran still fire once, computed against the last saved snapshot.
   `ready for QC` for 5+ min with no question pending. Never close a parked agent's tab yourself:
   it skips the process cleanup and metadata. Hibernated agents show `hibernated`, stay under QC, hold
   no slot. Reach any parked agent with `pdo resume-agent`, never `herdr agent prompt`.
-- **An agent waiting on the human is paused automatically**, except on a plain question: a question
-  menu stays live in its slot for the human to answer in the tab (`pdo questions` lists them all,
-  with their options). An agent with idle_reason `design lead question` has handed its question to the
-  project's Design Lead by peer message: leave it alone (no nudge); the answer arrives as a message. After 10 min idle at a gate (`awaiting-ux-gate`, `awaiting-decision`),
-  `likely-fixed` / `on-hold`, or open GitHub blockers, the watcher runs `pdo hibernate --pause <reason>`: session and worktree kept, dev stack
+- **An agent waiting on the human is paused automatically.** A question menu or a gate (`awaiting-ux-gate`,
+  `awaiting-decision`) stays live in its slot for `QUESTION_GRACE_MIN` (default 60) so a quick answer lands in the
+  tab; a desk gate (`gate enter --desk`: the human answers live at the tab) never pauses. An agent with idle_reason
+  `design lead question` has handed its question to the project's Design Lead by peer message: leave it alone (no
+  nudge); the answer arrives as a message. After the grace hour at a question or gate, or 10 min idle at
+  `likely-fixed` / `on-hold` or open GitHub blockers, the watcher runs `pdo hibernate --pause <reason>`: session and worktree kept, dev stack
   stopped, slot freed, the human notified (NOTIFY_CMD). It comes back through `reply_arrived` and
   `resume_queue`. A gate waits while the agent has unpushed work. A gated agent first asks the human
   "good to proceed?" in its tab (the human's notification); unanswered, it pauses as the gate, label kept. Never nudge a gated or paused agent

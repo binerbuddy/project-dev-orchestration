@@ -109,8 +109,8 @@ the queue status, the P-labels and the QC labels.
   [--link URL]` (no engine: add `awaiting-ux-gate` / `awaiting-decision` to the issue and its PR by hand), then ask
   with your question UI "Have you reviewed the <kind> gate (<name>, <link>)? Am I good to proceed?"; on yes, `pdo
   gate clear <repo> <n>` and continue. An agent waiting on the human (a gate, a question menu, likely-fixed /
-  on-hold, open blockers) is paused after 10 idle minutes and resumed first when the human replies: in the tab
-  before then, by a comment on the issue or PR, by removing the gate label, or via `pdo answer`.
+  on-hold, open blockers) is paused, after an hour for a question or gate (QUESTION_GRACE_MIN; `gate enter --desk`
+  never pauses) and 10 idle minutes otherwise, and resumed first when the human replies: in the tab before then, by a comment on the issue or PR, by removing the gate label, or via `pdo answer`.
 - **Pin gh and git, never switch the account.** If the project env sets `GH_USER`, use
   `pdo with-gh-user gh …` (or `GH_TOKEN=$(gh auth token -u <user>) gh …`). `git push`/`fetch` over
   HTTPS don't read `GH_TOKEN`: in a person-started session run them as

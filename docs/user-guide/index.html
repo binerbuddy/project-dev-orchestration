@@ -312,7 +312,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
   <div class="sub">
     <h3>Answering agents</h3>
     <p>Agents ask in their own tab, named <code>&lt;Repo&gt;-&lt;issue#&gt; &lt;brief&gt;</code>, in the project's home. herdr marks a waiting agent as blocked, and Remote Control mirrors every session to claude.ai and the phone app, so you can answer from anywhere. A question about business rules that could change results is a blocking gate: the agent waits for your explicit approval.</p>
-    <p>A plain question stays live in its tab: it never pauses the agent. <code>pdo questions</code> lists every question waiting across projects, with its options and how to answer it; the CEO relays them. In a project with a <a href="#design-lead">Design Lead</a>, the list marks the ones it is handling, and shows you only the ones it handed back.</p>
+    <p>A question or gate stays live in its tab for an hour, so a quick answer lands right away. After that the agent is paused and its slot freed; your answer resumes it first. A gate that needs you at the tab (you approve each step there) is never paused, and the list says &ldquo;answer at the desk&rdquo;. While it waits, an agent keeps working on whatever every option would keep, and says what in its question. <code>pdo questions</code> lists every question waiting across projects, with its age, options, the recommended one and how to answer it; the CEO relays them. In a project with a <a href="#design-lead">Design Lead</a>, the list marks the ones it is handling, and shows you only the ones it handed back.</p>
   </div>
 
   <div class="sub">

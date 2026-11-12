@@ -237,14 +237,19 @@ watcher).
 - **Paused for the human.** `bin/hibernate --pause question|ux-gate|decision|blocked|parked` (`--blocked`,
   `--ux-gate`) hibernates an agent that waits on the human: the session and worktree stay, the dev stack
   stops, the slot frees, NOTIFY_CMD runs, and metadata `paused` records the reason, the question text or the
-  gate (`bin/gate enter`) and the blockers. The watcher pauses agents after `PAUSE_GRACE_MIN` (10) idle at a
-  gate label, `likely-fixed` / `on-hold`, or open native blockers (gates wait for a push),
+  gate (`bin/gate enter`) and the blockers. The watcher pauses agents after `QUESTION_GRACE_MIN` (project setting, default 60) at a
+  question menu or a gate label (gates wait for a push), or `PAUSE_GRACE_MIN` (10) idle at `likely-fixed` / `on-hold` or open
+  native blockers,
   then watches for the reply: the gate or parked label removed, the last blocker closed, a trusted comment
   on the issue or PR, or `bin/answer`. That fires `reply_arrived` and lists the agent in `resume_queue`,
   which the orchestrator serves before any queue item; `bin/resume-agent` clears `paused`.
-  A plain question menu never pauses (2026-11-09): it stays live in its slot so the human sees it
-  quickly; `bin/questions` lists every live and paused question across projects with its text and
-  options (the transcript's unanswered AskUserQuestion) and how to answer it.
+  Questions (2026-11-12, replacing 2026-11-09's "a plain question never pauses"): a question menu stays live an
+  hour, so quick answers land in the tab, then pauses like a gate; Remote Control push notifications are the only
+  alert, and a paused agent sends none, so `bin/questions` is where paused questions surface: every live and paused
+  question across projects with its age, text, options and `recommended` option (the transcript's unanswered
+  AskUserQuestion) and how to answer it. A desk gate (`bin/gate enter --desk`, or `gate desk` on an open gate) needs
+  the human live at the tab and never pauses; the list says "answer at the desk". Agents proceed until truly
+  blocked: while a question waits they keep to work every listed option keeps, in their own commits (the brief).
 - **Slots per repo and the memory gate (2026-11-10).** `MAX_ACTIVE_PER_REPO` / `MAX_ACTIVE_BY_REPO` give each
   repo its own agent slots (snapshot `repo_slots`; queue rows of a full repo carry `repo_full`). Slots are no
   longer the memory limit: every agent start (`bin/spawn`, `bin/resume-agent`'s relaunch) passes `bin/mem-gate`,

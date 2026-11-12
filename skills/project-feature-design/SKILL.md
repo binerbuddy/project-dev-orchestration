@@ -19,6 +19,13 @@ tracking-only mode; see phase 0).
 The only human gate is phase 6 (decisions). Everything else is autonomous. Don't manufacture questions; batch the ones
 that change the design.
 
+**While a question waits, proceed until truly blocked.** After you ask the human something, keep working on the
+parts that don't depend on the answer, and stop only when everything left does. Continue only with work that every
+option you listed would keep; if the answer could change the data model, the API or schema, the overall approach,
+or work already planned on top of it, stop rather than build on a guess. Commit work done while waiting on its own,
+so rework stays contained, and say in the question what you are continuing with meanwhile. Under an engine
+install an unanswered question or gate is paused after an hour and comes back as a prompt.
+
 `§Name` below means a `##` section of the project profile. Design-doc sections (§Delivery phases, §Non-goals, §Follow-ups, §Decisions, §Tracking, §Revision log) are the doc contract's, not the profile's. The doc contract is `references/doc-contract.md`.
 
 ## Before you start
@@ -143,8 +150,8 @@ survivors are resolved by the lead with the code as arbiter and recorded as `pro
 
 Under an engine install, push the draft doc first and run `pdo gate enter <repo> <issue#> --kind decision --name
 "design decisions" --link <the doc on its branch>`, so the human sees which gate waits and where (your decision
-questions below are the human's notification); `pdo gate clear` once the answers are in. If the human doesn't answer within 10 minutes you are paused; the answers then come back
-as a prompt (text, not your question UI): fold them in the same way.
+questions below are the human's notification); `pdo gate clear` once the answers are in. If the human doesn't answer within the hour (QUESTION_GRACE_MIN) you are paused; the answers then come back
+as a prompt (text, not your question UI): fold them in the same way. Until then, proceed until truly blocked (see the top of this skill).
 
 Present, batched with your tool's question UI (Claude Code `AskUserQuestion`: ≤4 questions per call, repeat as
 needed): open decisions; provisional decisions that need confirming; the proposed gates (phase + kind); the issue

@@ -75,9 +75,11 @@ closes them out (same finished rule as above, never parking) and marks hibernate
 their PR merges or issue closes, so tmp-sweep and fleet treat them as finished; a long stall is a
 quiet stalled_long event naming the owner (REPO_MANAGER). Spawning, QC and parking stay the owner's.
 
-Pausing: unless --peek, a live agent idle PAUSE_GRACE_MIN on a question menu, a gate label
-(awaiting-ux-gate / awaiting-decision; only once its work is pushed), likely-fixed / on-hold, or
-open native blockers is paused with bin/hibernate --pause (quiet event 'paused'). A paused agent's
+Pausing: unless --peek, a live agent idle QUESTION_GRACE_MIN (project setting, default 60) on a
+question menu or a gate label (awaiting-ux-gate / awaiting-decision; only once its work is pushed),
+or PAUSE_GRACE_MIN on likely-fixed / on-hold or open native blockers, is paused with bin/hibernate
+--pause (quiet event 'paused'). A gate entered with `gate enter --desk` (the human must answer at the
+tab) never pauses. A paused agent's
 reply (gate or parked label removed, last blocker closed, a trusted comment since the pause,
 bin/answer) fires reply_arrived once and puts it in resume_queue, served before the queue.
 
@@ -108,7 +110,8 @@ WEEKLY_CEILING = 90   # keep 10% of the weekly budget for manual / hot work
 FIVE_HOUR_CEILING = 90
 STALL_MIN = 45
 STALL_ESCALATE_MIN = 24 * 60  # idle this long with unpushed work, or with nothing open: stalled_long, to the owning manager
-PAUSE_GRACE_MIN = 10  # an agent waiting on the human this long is paused (bin/hibernate --pause); an answer typed in its tab sooner still works
+PAUSE_GRACE_MIN = 10  # a parked or blocked agent idle this long is paused (bin/hibernate --pause)
+QUESTION_GRACE_MIN = 60  # QUESTION_GRACE_MIN: a question or gate stays live this long, so a quick answer lands in the tab; then it is paused
 GATE_LABELS = {"ux-gate": "awaiting-ux-gate", "decision": "awaiting-decision"}
 HIBERNATE_AFTER_MIN = 5  # grace for the agent's final turn after it labels 'ready for QC'
 QUIET_EVENTS = {"hibernated", "paused", "closed_out", "hibernate_failed", "event_hook_failed", "claim_released", "claim_release_failed"}  # reported on the next wake; never wake by themselves
@@ -140,7 +143,7 @@ def load_repos(project):
     manager owns; this orchestrator never touches them). Also applies the project's state dir,
     labels and limits to this module."""
     global STATE_DIR, MAX_ACTIVE, WEEKLY_CEILING, FIVE_HOUR_CEILING, QC_READY, QC_DONE, PARKED_LABELS, AWAITING_HUMAN
-    global MERGE_READY, QC_ESCALATED, PASSED, AGENT_QC
+    global MERGE_READY, QC_ESCALATED, PASSED, AGENT_QC, QUESTION_GRACE_MIN
     if not CFG or CFG.get("_asked") != project:
         CFG.clear()
         CFG.update(pdo_config.load(project, "watch"), _asked=project)
@@ -154,6 +157,7 @@ def load_repos(project):
     if adv and adv["honoured"] and isinstance(adv.get("suggested_max_active"), int):
         MAX_ACTIVE = max(0, min(MAX_ACTIVE, adv["suggested_max_active"]))
     WEEKLY_CEILING = CFG["weekly_ceiling"] or WEEKLY_CEILING
+    QUESTION_GRACE_MIN = CFG.get("question_grace_min", QUESTION_GRACE_MIN)
     FIVE_HOUR_CEILING = CFG["five_hour_ceiling"] or FIVE_HOUR_CEILING
     QC_READY, QC_DONE = CFG["label_qc_ready"], CFG["label_qc_done"]
     MERGE_READY, QC_ESCALATED = CFG["label_merge_ready"], CFG["label_qc_escalated"]
@@ -449,23 +453,34 @@ def finished_marker(tail):
     return "wrap-up done" in t or "rebase done" in t
 
 
+def at_desk(a):
+    """Its open gate needs the human live at the tab (`gate enter --desk`): it is never paused."""
+    g = a.get("gate") or {}
+    return bool(g.get("desk") and g.get("since") and not g.get("cleared_at"))
+
+
 def pause_reason(a):
-    """The --pause reason for a live agent that has waited on the human PAUSE_GRACE_MIN, or None.
-    A plain question never pauses: it keeps its slot so the human can answer it in the tab
-    (`bin/hibernate --pause question` still parks one by hand). Gates wait while the agent has
-    unpushed work: its prototype must be on the PR branch for the human to see it once its own dev
-    stack is gone."""
+    """The --pause reason for a live agent waiting on the human, or None. A question menu or a gate
+    keeps its slot QUESTION_GRACE_MIN, so a quick answer lands live in the tab; then it is paused
+    with the question kept (pdo questions lists it; an answer resumes it first). A desk gate
+    (at_desk) never pauses, and neither does a question handed to the Design Lead (its answer comes
+    by peer message). Gates wait while the agent has unpushed work: its prototype must be on the PR
+    branch for the human to see it once its own dev stack is gone. Parked and blocked agents pause
+    after PAUSE_GRACE_MIN."""
     if a.get("hibernated") or not a.get("session_id") or a["unchanged_min"] < PAUSE_GRACE_MIN or a.get("pause_refused"):
         return None
+    if at_desk(a):
+        return None
+    waited = a["unchanged_min"] >= QUESTION_GRACE_MIN
     gate = "ux-gate" if a.get("ux_gate") else "decision" if a.get("decision_gate") else None
     if gate and a["status"] in ("idle", "done", "blocked") and not finished(a):
         # an agent at a gate asks "reviewed it? good to proceed?" (that prompt is the human's
         # notification); unanswered, it pauses as the gate, and the label stays for later
-        return None if a.get("git_hold") else gate
-    if a["question_pending"] or a.get("design_lead_held"):
-        # a plain question stays live in its slot, where the human answers it (pdo questions lists it),
-        # and so does one handed to the Design Lead; only gates pause unanswered
+        return gate if waited and not a.get("git_hold") else None
+    if a.get("design_lead_held"):
         return None
+    if a["question_pending"]:
+        return "question" if waited and not a.get("git_hold") and not finished(a) else None
     if a["status"] not in ("idle", "done") or finished(a):
         return None
     if a.get("likely_fixed") or a.get("on_hold"):

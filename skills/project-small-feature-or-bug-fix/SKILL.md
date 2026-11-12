@@ -18,6 +18,13 @@ autonomous (no plan-approval gate, no triage gates), ending with a final report 
 task-list PR comment for the human to tick off. If arguments were given, treat them as the initial feature/bug
 description and skip straight to follow-up questions.
 
+**While a question waits, proceed until truly blocked.** After you ask the human something, keep working on the
+parts that don't depend on the answer, and stop only when everything left does. Continue only with work that every
+option you listed would keep; if the answer could change the data model, the API or schema, the overall approach,
+or work already planned on top of it, stop rather than build on a guess. Commit work done while waiting on its own,
+so rework stays contained, and say in the question what you are continuing with meanwhile. Under an engine
+install an unanswered question or gate is paused after an hour and comes back as a prompt.
+
 `§Name` below means a `##` section of the project profile.
 
 ## Before you start

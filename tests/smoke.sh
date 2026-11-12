@@ -1087,10 +1087,11 @@ def agent(n, state, labels=(), issue="open"):
     return {"repo": "gov", "number": n, "status": "idle", "question_pending": False, "session_id": "s", "unchanged_min": 30,
             "wrapup_done": False, "issue_state": issue, "pr": {"state": state, "labels": list(labels)} if state else None}
 ag = {"m": agent(1, "MERGED"), "q": agent(2, "OPEN", [w.QC_READY]), "c": agent(3, None, issue="closed"),
-      "a": dict(agent(4, None), ux_gate=True), "b": dict(agent(5, None), question_pending=True, status="blocked")}
+      "a": dict(agent(4, None), ux_gate=True, unchanged_min=61), "b": dict(agent(5, None), question_pending=True, status="blocked", unchanged_min=61),
+      "d": dict(agent(6, None), question_pending=True, status="blocked")}
 print(sorted((e["agent"], e["type"], e["owner"]) for e in w.auto_hibernate("acme", ag, closeout_only=True)))
 PY
-)" "[('a', 'paused', 'Repo Manager (gov)'), ('c', 'closed_out', 'Repo Manager (gov)'), ('m', 'closed_out', 'Repo Manager (gov)')]"
+)" "[('a', 'paused', 'Repo Manager (gov)'), ('b', 'paused', 'Repo Manager (gov)'), ('c', 'closed_out', 'Repo Manager (gov)'), ('m', 'closed_out', 'Repo Manager (gov)')]"
 # feedback took the pass labels off; agent QC escalates; then a direct no-UX pass fires once
 mkprs '["QC escalated"]' '[]' >"$T/prs.json"
 out="$(W)"
@@ -1263,7 +1264,7 @@ eq "pause --blocked: open blockers and a clean worktree" "$(jq -c '[.paused.reas
 "${HB8[@]}" "$BIN/hibernate" widget 81 --project acme --pause decision 2>/dev/null; eq "pause: refused without the gate label" "$?" 3
 "${HB8[@]}" "$BIN/hibernate" widget 81 --project acme --blocked 2>/dev/null; eq "pause --blocked: refused with no blockers" "$?" 3
 "${HB8[@]}" "$BIN/hibernate" widget 81 --project acme --pause question 2>/dev/null; eq "pause question: refused without a live tab" "$?" 3
-eq "watch: a reply ends a pause (gate label off, an answer, the last blocker closed)" "$(python3 - "$BIN/watch" <<'PY'
+eq "watch: a reply ends a pause; questions and gates pause after the grace hour, desk gates never" "$(python3 - "$BIN/watch" <<'PY'
 import importlib.machinery, importlib.util, sys
 spec = importlib.util.spec_from_loader("watch", importlib.machinery.SourceFileLoader("watch", sys.argv[1]))
 w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
@@ -1277,10 +1278,17 @@ def ag(**kw):
          "repo": "r", "number": 2, "idle_reason": "idle"}
     a.update(kw); return a
 w.CFG["org"] = "o"
-print([w.pause_reason(a) for a in (ag(question_pending=True, status="blocked"), ag(question_pending=True, unchanged_min=5),
-       ag(ux_gate=True), ag(ux_gate=True, git_hold="1 commit not pushed"), ag(decision_gate=True), ag(likely_fixed=True),
-       ag(), ag(number=3), ag(status="working", ux_gate=True), ag(ux_gate=True, hibernated=True), ag(ux_gate=True, pause_refused="x"),
-       ag(ux_gate=True, question_pending=True, status="blocked"))])
+H = 61  # past QUESTION_GRACE_MIN (60)
+print([w.pause_reason(a) for a in (ag(question_pending=True, status="blocked"), ag(question_pending=True, status="blocked", unchanged_min=H),
+       ag(question_pending=True, unchanged_min=5), ag(ux_gate=True), ag(ux_gate=True, unchanged_min=H),
+       ag(ux_gate=True, unchanged_min=H, git_hold="1 commit not pushed"), ag(decision_gate=True, unchanged_min=H),
+       ag(decision_gate=True, unchanged_min=600, gate={"desk": True, "since": 1}),
+       ag(decision_gate=True, unchanged_min=H, gate={"desk": True, "since": 1, "cleared_at": 2}),
+       ag(question_pending=True, status="blocked", unchanged_min=600, design_lead_held=True), ag(likely_fixed=True),
+       ag(), ag(number=3), ag(status="working", ux_gate=True, unchanged_min=H), ag(ux_gate=True, hibernated=True, unchanged_min=H),
+       ag(ux_gate=True, pause_refused="x", unchanged_min=H), ag(ux_gate=True, question_pending=True, status="blocked", unchanged_min=H))])
+w.QUESTION_GRACE_MIN = 30
+print(w.pause_reason(ag(question_pending=True, status="blocked", unchanged_min=31)))
 prev = {"agents": {"r#1": {"paused": {"reason": "question", "reply": None}}}, "queue": [], "pr_cap": {}}
 cur = {"agents": {"r#1": {"repo": "r", "number": 1, "workspace": "r-1 w", "parked": True, "merged": False, "stalled": False, "pr": None,
                           "paused": {"reason": "question", "reply": {"kind": "answer", "detail": "yes"}}}},
@@ -1288,7 +1296,8 @@ cur = {"agents": {"r#1": {"repo": "r", "number": 1, "workspace": "r-1 w", "parke
 print([(e["type"], e["kind"], e["detail"]) for e in w.events(prev, cur) if e["type"] == "reply_arrived"], [e["type"] for e in w.events(cur, cur) if e["type"] == "reply_arrived"])
 PY
 )" "['gate cleared', None, 'gate cleared', None, 'unparked', None, 'answer', None, 'unblocked']
-[None, None, 'ux-gate', None, 'decision', 'parked', 'blocked', None, None, None, None, 'ux-gate']
+[None, 'question', None, None, 'ux-gate', None, 'decision', None, 'decision', None, 'parked', 'blocked', None, None, None, None, 'ux-gate']
+question
 [('reply_arrived', 'answer', 'yes')] []"
 # the machine-wide memory gate: recent starts count as used; a refusal reserves nothing
 G="$T/gate-test"
@@ -1341,10 +1350,25 @@ slots = [{"name": "widget-5 live one", "status": "blocked", "agent": {}, "pane_i
          {"name": "Orchestrator (acme)", "status": "idle", "agent": {}}]
 rows = q.collect(slots=slots, now=1794139200 + 7200)
 print([(r["agent"], r["state"], r["hours"], r["questions"][0]["question"], r["answer"]) for r in rows])
-print(q.text(rows).splitlines()[:4])
+print([(r["question"], r["recommended"], r["desk"]) for r in rows])
+print(q.text(rows).splitlines()[:5])
 PY
 )" "[('widget#5', 'live', 2.0, 'Which order?', 'in its tab \"widget-5 live one\"'), ('widget#7', 'paused', 2.0, 'Which order?', 'pdo answer widget 7 \"<text>\" --project acme')]
-['widget-5 live one (acme, live, waiting 2h)  https://github.com/o/widget/issues/5', '  Q: Which order?', '     1. Sort both (Recommended): stable', '     2. Accept']"
+[('Which order?', 'Sort both (Recommended)', False), ('Which order?', 'Sort both (Recommended)', False)]
+['widget-5 live one (acme, live, waiting 2h)  https://github.com/o/widget/issues/5', '  recommended: Sort both (Recommended)', '  Q: Which order?', '     1. Sort both (Recommended): stable', '     2. Accept']"
+echo '{"repo":"widget","number":6,"name":"widget-6 desk","session_id":"s-live","hibernated_at":1794139200,"gate":{"kind":"decision","name":"cutover","since":1794139200,"desk":true}}' >"$QS/agents/widget-6.json"
+eq "questions: a desk gate says answer at the desk" "$(CLAUDE_CONFIG_DIR="$CC" python3 - "$BIN" "$QS" <<'PY'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("questions", importlib.machinery.SourceFileLoader("questions", sys.argv[1] + "/questions"))
+q = importlib.util.module_from_spec(spec); spec.loader.exec_module(q)
+q.pdo_config.projects = lambda: ["acme"]
+q.pdo_config.try_load = lambda p: ({"project": p, "org": "o", "repo_root": {"widget": "/x"}, "state_dir": sys.argv[2]}, None)
+q.pdo_config.managed_elsewhere = lambda cfg: set()
+r = [r for r in q.collect(slots=[], now=1794139200 + 3600) if r["agent"] == "widget#6"][0]
+print(r["desk"], r["answer"].startswith("at the desk: pdo resume-agent widget 6"), r["question"])
+PY
+)" "True True Which order?"
+rm -f "$QS/agents/widget-6.json"
 # Design Lead: one per project (DESIGN_LEAD=1); active once its intent doc is on its home repo's origin/main
 DLR="$T/dl-repo"; git init -q "$DLR"; git -C "$DLR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$DLR" update-ref refs/remotes/origin/main HEAD
@@ -1416,7 +1440,10 @@ out="$(NOTIFY_CMD="$T/notify" "$BIN/gate" enter widget 81 --kind decision --name
 check "gate enter: labels the issue" grep -qx "gh issue edit 81 -R acme/widget --add-label awaiting-decision" "$SMOKE_LOG"
 check "gate enter: posts one comment naming the gate" grep -q "gh issue comment 81 -R acme/widget --body \*\*Design decision gate: storage layout\*\*" "$SMOKE_LOG"
 eq "gate enter: records it and notifies" "$(jq -c '[.gate.kind, .gate.name, (.gate.notified_at > 0)]' "$T/state/agents/widget-81.json")" '["decision","storage layout",true]'
+eq "gate enter: not a desk gate by default" "$(jq -c .gate.desk "$T/state/agents/widget-81.json")" false
+eq "gate desk: marks the open gate" "$("$BIN/gate" desk widget 81 --project acme 2>/dev/null | jq -r .gate) $(jq -c .gate.desk "$T/state/agents/widget-81.json")" "desk true"
 "$BIN/gate" clear widget 81 --project acme >/dev/null 2>&1
+check "gate desk: refused once the gate is cleared" bash -c '! "$0" desk widget 81 --project acme 2>/dev/null' "$BIN/gate"
 check "gate clear: removes the label" grep -qx "gh issue edit 81 -R acme/widget --remove-label awaiting-decision" "$SMOKE_LOG"
 rm -f "$T/state/agents/widget-79.json" "$T/state/agents/widget-80.json" "$T/state/agents/widget-81.json"
 bash -c 'exec -a fake/bin/watch sleep 300' & SLP=$!

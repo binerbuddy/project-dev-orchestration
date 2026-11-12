@@ -19,6 +19,13 @@ Autonomous except at three points: (1) confirming drafted acceptance criteria if
 declared in the doc's phase plan; (3) a spike that comes back no-go. There is no plan-approval gate and the
 review-triage gates are waived (as in `/project-small-feature-or-bug-fix`).
 
+**While a question waits, proceed until truly blocked.** After you ask the human something, keep working on the
+parts that don't depend on the answer, and stop only when everything left does. Continue only with work that every
+option you listed would keep; if the answer could change the data model, the API or schema, the overall approach,
+or work already planned on top of it, stop rather than build on a guess. Commit work done while waiting on its own,
+so rework stays contained, and say in the question what you are continuing with meanwhile. Under an engine
+install an unanswered question or gate is paused after an hour and comes back as a prompt.
+
 `§Name` below means a `##` section of the project profile. Design-doc sections (§Delivery phases, §Non-goals, §Follow-ups, §Decisions, §Tracking, §Revision log) are the doc contract's, not the profile's. Sibling-skill references used here:
 `../project-feature-design/references/doc-contract.md`,
 `../project-pr-review/references/review-roles.md`,
@@ -144,8 +151,9 @@ For each phase:
    --link <PR comment URL>` (outside an engine install: add the `awaiting-ux-gate` label to the issue and PR by hand).
    It labels the issue and PR and comments. Then ask with your question UI: "Have you reviewed the UX gate (<name>,
    <link>)? Am I good to proceed?" (Yes, proceed / Not yet); that question is the human's notification. On yes,
-   `pdo gate clear <repo> <issue#>` and go on. Unanswered for 10 idle minutes, the watcher pauses you (dev servers
-   stopped, session kept, label left on) and resumes you when the human clears the gate or replies.
+   `pdo gate clear <repo> <issue#>` and go on. Unanswered for an hour (QUESTION_GRACE_MIN), the watcher pauses you (dev
+   servers stopped, session kept, label left on) and resumes you when the human clears the gate or replies. A gate the
+   human must answer live at your tab (approving each step there) takes `--desk`, and is never paused.
    - `blocking`: push, post, report, STOP. The user resumes with `/project-feature-build <doc> resume`.
    - `async`: post, then continue with phases whose `depends-on` excludes the gated phase. Before starting a dependent
      phase, check for feedback (ticks/notes on the gate comment via `gh api`, a comment on the phase issue, or chat).
