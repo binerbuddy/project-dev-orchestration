@@ -298,7 +298,8 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
         <tr><td>Claude Work This</td><td>A board status that puts an issue first. P1 + Claude Work This starts even when every slot is full.</td></tr>
         <tr><td>Spawn floor</td><td>Nothing below it starts on its own, not even Claude Work This. P4 never starts on its own anyway.</td></tr>
         <tr><td>Slots</td><td>At most 3 agents working at once by default; a project can give each repo 3 of its own instead, so one busy repo never starves another. Agents parked at QC or waiting on a sign-off don't count.</td></tr>
-        <tr><td>Memory gate</td><td>Every agent start, in every project, passes one check for the whole machine: it waits while free memory, less what agents started in the last 10 minutes will grow into, would drop under 3 GB.</td></tr>
+        <tr><td>Memory gate</td><td>Every agent start, in every project, passes one check for the whole machine: it waits while free memory, less what agents started in the last 10 minutes will grow into, would drop under 3 GB. Jobs outside the engine, such as a CI runner on the same machine, can take part, even as another Unix user: <code>pdo-mem-gate reserve --mb &lt;MB&gt; --agent &lt;label&gt; --wait &lt;seconds&gt;</code> when the job starts, <code>release --agent &lt;label&gt;</code> when it ends. Setup steps are in the engine's <code>bin/mem-gate</code>.</td></tr>
+        <tr><td>&ldquo;Blocked by&rdquo;</td><td>An issue GitHub shows as blocked by an open issue isn't started. When a design finishes on an epic that is still blocked, its build waits and starts once the blockers close.</td></tr>
         <tr><td>Lane branches</td><td>A long-lived branch, such as an API branch for one effort, that reaches <code>main</code> later as one PR you approve. Issues labelled <code>base:&lt;branch&gt;</code> are built on it, and count against the effort's own repo's slots and PR cap.</td></tr>
         <tr><td>Usage ceiling</td><td>New work stops at 90% of the weekly allowance and pauses at 90% of the 5-hour window.</td></tr>
         <tr><td>PR cap</td><td>When 10 PRs in one repo wait on people (the default), that repo starts nothing new until you catch up. Other repos carry on.</td></tr>
@@ -312,7 +313,21 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
   <div class="sub">
     <h3>Answering agents</h3>
     <p>Agents ask in their own tab, named <code>&lt;Repo&gt;-&lt;issue#&gt; &lt;brief&gt;</code>, in the project's home. herdr marks a waiting agent as blocked, and Remote Control mirrors every session to claude.ai and the phone app, so you can answer from anywhere. A question about business rules that could change results is a blocking gate: the agent waits for your explicit approval.</p>
-    <p>A question or gate stays live in its tab for an hour, so a quick answer lands right away. After that the agent is paused and its slot freed; your answer resumes it first. A gate that needs you at the tab (you approve each step there) is never paused, and the list says &ldquo;answer at the desk&rdquo;. While it waits, an agent keeps working on whatever every option would keep, and says what in its question. <code>pdo questions</code> lists every question waiting across projects, with its age, options, the recommended one and how to answer it; the CEO relays them. In a project with a <a href="#design-lead">Design Lead</a>, the list marks the ones it is handling, and shows you only the ones it handed back.</p>
+    <p>A question or gate stays live in its tab for an hour, so a quick answer lands right away. After that the agent is paused and its slot freed; your answer resumes it first. While it waits, an agent keeps going on whatever every option would keep, in separate commits, and says so in its question. It stops only when it is truly blocked.</p>
+    <p><code>pdo questions</code> lists every question waiting across projects; the CEO relays it. Each entry shows:</p>
+    <ul class="plain">
+      <li>the project and repo, the issue link, and what the other link points to (a PR, a comment, a doc);</li>
+      <li>how long it has waited, and whether it is live in its tab or paused;</li>
+      <li>each question in full, with its options and one recommended option;</li>
+      <li>the command that answers it. With several questions it comes prefilled with the recommendations, such as <code>--note "Q1=1; Q2=?"</code>: replace each <code>?</code> with an option number or your own words.</li>
+    </ul>
+    <p>A paused agent is answered with <code>pdo answer &lt;repo&gt; &lt;n&gt; "&lt;text&gt;"</code>, a live one in its tab. In a project with a <a href="#design-lead">Design Lead</a>, the list marks the ones it is handling, and shows you only the ones it handed back.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Gates</h3>
+    <p>When an agent needs your sign-off on a prototype or a design decision, it enters a <b>gate</b>. The issue and its PR get <code>awaiting-ux-gate</code> or <code>awaiting-decision</code>, plus one comment. The comment names what is being decided (a vague name like &ldquo;design decisions&rdquo; is refused), links what to look at, and lists every question with its options and a recommendation. An agent can't enter a gate without its questions; <code>pdo gate ask</code> adds more to an open gate, and <code>--replace</code> swaps them.</p>
+    <p>Clear a gate with <code>pdo gate clear &lt;repo&gt; &lt;n&gt; --note "Q1=2; Q2=1"</code>, by removing its label, or by answering in the agent's tab. A gate that needs you at the tab, approving each step there, is a <b>desk gate</b> (<code>gate enter --desk</code>, or <code>pdo gate desk &lt;repo&gt; &lt;n&gt;</code> on an open one). It is never paused, and <code>pdo questions</code> shows it as &ldquo;answer at the desk&rdquo;.</p>
   </div>
 
   <div class="sub">
@@ -345,6 +360,8 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
     <ul class="plain">
       <li>Ask the CEO for <code>status</code>, then describe what you see.</li>
       <li>An agent shown as "blocked" is waiting on you. Open its tab or use Remote Control.</li>
+      <li>A standing agent (an orchestrator, a QC Agent, a Design Lead) that has stopped is listed first in <code>status</code> and <code>pdo fleet</code> as <code>loop down: &lt;name&gt;: &lt;reason&gt;</code>, with the fix. For example, after &ldquo;Login expired&rdquo;, run <code>/login</code> in its tab and restart it.</li>
+      <li>A project whose queue can't be read shows why, its last error or a timeout, instead of a bare &ldquo;queue failed&rdquo;.</li>
       <li>Resuming an agent is always safe; it comes back with the same conversation.</li>
       <li>If the engine itself misbehaves, tell the System Manager. Traps already found are written down in the engine's <code>docs/lessons-learned.md</code>.</li>
     </ul>
@@ -370,7 +387,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
     <h3>How a question travels</h3>
     <ol class="flow">
       <li><div><span class="who">Command agent</span><b>It asks the Design Lead, not you.</b><code>pdo design-lead ask</code> records the question and gives the agent the Design Lead's address. The agent sends it as an agent-to-agent message and waits idle. No question menu waits on a pane, and the agent isn't nudged or paused meanwhile.</div></li>
-      <li><div><span class="who">Design Lead</span><b>It answers, or escalates.</b>It answers from the intent doc, citing the section, and logs the decision with its reasoning in <code>docs/decisions.md</code>. It can also clear decision and UX gates, and, where you allow it, answer a question menu still on an agent's screen.</div></li>
+      <li><div><span class="who">Design Lead</span><b>It answers, or escalates.</b>It answers from the intent doc, citing the section, and logs the decision with its reasoning in <code>docs/decisions.md</code>. It can also clear decision and UX gates, and, where you allow it (<code>DESIGN_LEAD_LIVE_ANSWER=1</code>), answer a question menu still on an agent's screen (<code>pdo answer --design-lead</code>). It closes the menu and types the answer, never over text a person has started typing.</div></li>
       <li class="h"><div><span class="who">You</span><b>Escalated questions come back to you.</b>The agent asks you with its normal question menu, quoting the Design Lead's recommendation. A question it hasn't answered in 2 hours is yours too, and <code>pdo questions</code> shows it. Answer with <code>pdo answer</code> or in the agent's tab.</div></li>
     </ol>
   </div>
@@ -379,13 +396,29 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
     <div class="never">
       <div><b>Permission prompts and tool approvals.</b> The engine refuses to let it answer those.</div>
       <div><b>Anything irreversible, outward-facing or costing money.</b></div>
-      <div><b>Security, credentials, permissions, hosting and compliance.</b></div>
+      <div><b>Hosting and compliance, real credentials and secrets.</b></div>
+      <div><b>Security, by default.</b> Security, delegated agent keys, permissions and audit logging stay yours unless the intent doc you approved hands it part of them, such as the design of those mechanisms. Even then, anything that makes an agent action less auditable or widens what an agent may do comes back to you.</div>
       <div><b>Merging to <code>main</code>.</b> Where you allow it, it merges only into a lane branch, after agent QC passes, through <code>pdo lane-merge</code>, which refuses anything else. You approve the lane's final PR.</div>
     </div>
   </div>
   <div class="sub">
     <h3>What to watch</h3>
     <p>Its decision log keeps three numbers at the top: the questions it answered, the questions that reached you, and how often you overruled it. Your overrules go into the intent doc, so the same call doesn't come back.</p>
+  </div>
+  <div class="sub">
+    <h3>Setting one up</h3>
+    <p>Ask the CEO, or add these to the project's env file:</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>DESIGN_LEAD=1</code></td><td>The project has a Design Lead.</td></tr>
+        <tr><td><code>DESIGN_LEAD_REPOS</code></td><td>The repos in its scope. Default: every repo the project runs.</td></tr>
+        <tr><td><code>DESIGN_LEAD_NAME</code></td><td>Its tab name. Default: &ldquo;Design Lead (&lt;project&gt;)&rdquo;.</td></tr>
+        <tr><td><code>DESIGN_LEAD_MODEL</code></td><td>The model it runs on. Default: the project's model.</td></tr>
+        <tr><td><code>DESIGN_LEAD_NOTES</code></td><td>Its start brief: where to draft the intent doc from, and any escalation items of your own.</td></tr>
+        <tr><td><code>DESIGN_LEAD_LIVE_ANSWER=1</code></td><td>It may also answer a question menu on an agent's screen, once the intent doc is merged. Default: off.</td></tr>
+      </tbody></table></div>
+    <p>Then <code>pdo start-design-lead --project acme</code> opens its tab. It works in its own worktree (<code>design-lead</code>, on the branch <code>docs/design-lead</code>), where it keeps <code>docs/intent.md</code> and <code>docs/decisions.md</code>. <code>pdo design-lead status</code> says whether it is running, whether its intent doc is merged (only then does it answer anything), and whether live answering is on.</p>
   </div>
 </section>
 
@@ -459,7 +492,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
         <tr><td>A bug fix or small feature (<code>route:small</code>)</td><td><code>/project-small-feature-or-bug-fix #123</code></td></tr>
         <tr><td>A big or cross-cutting feature (<code>route:design</code>)</td><td><code>/project-feature-design &lt;feature or issue&gt;</code></td></tr>
         <tr><td>A design doc is ready (<code>route:build</code>)</td><td><code>/project-feature-build &lt;path to the doc&gt;</code></td></tr>
-        <tr><td>You're asked to review a PR</td><td><code>/project-pr-review &lt;PR#&gt;</code></td></tr>
+        <tr><td>You're asked to review a PR</td><td><code>/project-pr-review &lt;PR#&gt;</code> (add <code>extra=codex</code> for a read-only second opinion from Codex, where your setup allows sending the diff to it)</td></tr>
         <tr><td>Review comments on your PR need answering</td><td><code>/project-pr-triage &lt;PR#&gt;</code></td></tr>
         <tr><td>You found a bug or have an idea</td><td><code>/project-intake &lt;what you saw&gt;</code></td></tr>
         <tr><td>"Where are things?"</td><td><code>/project-status</code> (read-only)</td></tr>
@@ -498,7 +531,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
 <section id="labels">
   <span class="eyebrow">Reference</span>
   <h2>Labels you'll see</h2>
-  <p><b>Yellow means it's your move.</b> Only labels that wait on a person now are yellow: <code>QC complete - ready to review</code> and <code>QC escalated</code>, <code>awaiting-ux-gate</code> and <code>awaiting-decision</code>, all the same yellow. <code>Ready for Merge</code> also waits on you, but stays green. Filter GitHub by these to see your queue.</p>
+  <p><b>Yellow means it's your move.</b> Only labels that wait on a person now are yellow: <code>QC complete - ready to review</code> and <code>QC escalated</code>, <code>awaiting-ux-gate</code> and <code>awaiting-decision</code>, all the same yellow. <code>Ready for Merge</code> also waits on you, and is the only green label. Gray is information: <code>needs UX review</code> (a person reviews later), <code>needs-triage</code> (intake handles it), <code>likely-fixed</code>, <code>invalid</code>. Area labels share one color, <i class="sw" style="background:#bfdadc"></i><code>bfdadc</code>. Filter GitHub by the yellow ones to see your queue.</p>
   <div class="tbl"><table>
     <thead><tr><th>Label</th><th>Meaning</th><th>Who sets it</th></tr></thead>
     <tbody>
@@ -523,7 +556,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
       <tr><td><i class="sw" style="background:#0052cc"></i><code>client-requested</code></td><td>A client asked for it. Copied onto PRs.</td><td>Intake, owner</td></tr>
       <tr><td><i class="sw" style="background:#5a5a5a"></i><code>orchestrator-system</code></td><td>Work on the system itself, for the System Manager.</td><td>Owner</td></tr>
     </tbody></table></div>
-  <p class="note" style="font-size:14px;color:var(--muted)">Colours shown are the engine defaults. A project can rename the priority and QC labels, and keep its own colours for labels that don't wait on a person; its <code>docs/agent-workflow.md</code> lists the names it uses.</p>
+  <p class="note" style="font-size:14px;color:var(--muted)">Colors shown are the engine defaults, and each label has one color in every repo. A project can rename the priority and QC labels, and keep its own colors for labels that don't wait on a person, as long as no other label is yellow or green; its <code>docs/agent-workflow.md</code> lists the names it uses.</p>
 </section>
 
 <section id="glossary">
@@ -574,7 +607,7 @@ footer{border-top:1px solid var(--line);padding-top:24px;font-size:13px;color:va
 </section>
 
 <footer>
-  <span>Written for project-dev-orchestration v0.26 (November 2026). Its source is <code>docs/user-guide/</code> in the engine repo, next to the full manual, design notes and lessons learned in <code>docs/</code>.</span>
+  <span>Written for project-dev-orchestration v0.28 (November 2026). Its source is <code>docs/user-guide/</code> in the engine repo, next to the full manual, design notes and lessons learned in <code>docs/</code>.</span>
 </footer>
 </main>
 </div>

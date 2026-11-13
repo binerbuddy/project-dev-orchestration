@@ -38,6 +38,7 @@ shows as blocked.
 | **Orchestrator** | Orchestrator (acme), a tab in `acme` | Picks issues from the board in priority order, starts command agents, watches them, and closes them out. Runs by itself. | Rarely. Its status reports land in its tab. |
 | **Command agents** | `widget-<issue#> <brief>`, a tab in `acme` | Each takes one issue from start to a PR labelled `ready for QC`, asks you its questions directly, then hibernates until QC. | They ask you something (Remote Control and herdr notify you). |
 | **Human review** | Human Review (acme), a tab in `acme` | Serves a PR on your local QC ports for your own hands-on QC or UX review (`/project-human-review`), and relays your feedback. Not the QC Agent, which tests PRs by itself first. | You're QC'ing on your own machine. |
+| **Design Lead** | Design Lead (acme), a tab in `acme` (optional) | Answers the agents' product and design questions for you, from an intent doc you approved by merging it; escalates the rest. See the [pdo User Guide](https://claude.ai/artifact/VRfq3L15X4LTrgKwGHiCZM). | You review its decision log, or it hands a question back. |
 | **Intake** | intake | Turns bug reports and ideas into proper GitHub issues. Other agents queue reports in its inbox. | You have something to file, or the inbox needs a pass. |
 
 ## Everyday things to say to the CEO
@@ -105,6 +106,27 @@ watcher events (see [design.md](design.md#hooks)).
 **A repo with no UI** (an engine, a library): the checklist names fixture inputs and their expected outputs, with
 the command that checks each; you QC by running them or by reading the evidence the agent put in the PR.
 
+## Questions and gates
+
+A question or gate stays live in the agent's tab for an hour (`QUESTION_GRACE_MIN`, default 60). After that
+the agent is paused and its slot freed; your answer resumes it first. While it waits, the agent keeps going
+on whatever every option would keep, in separate commits, and stops only when it is truly blocked.
+
+`pdo questions` lists every waiting question across projects, and the CEO relays it. Each entry shows the
+project and repo, the issue link, what the other link points to (a PR, a comment, a doc), how long it has
+waited, whether it is live or paused, each question in full with its options and one recommended option, and
+the command that answers it. With several questions that command comes prefilled with the recommendations,
+such as `--note "Q1=1; Q2=?"`: replace each `?` with an option number or your own words.
+
+- **A live question:** answer in the agent's tab.
+- **A paused question:** `pdo answer <repo> <n> "<text>"`.
+- **A gate** (`awaiting-ux-gate` or `awaiting-decision`, on the issue and its PR): its comment names what
+  is being decided, links what to look at and lists its questions. Clear it with
+  `pdo gate clear <repo> <n> --note "Q1=2; Q2=1"`, by removing the label, or in the tab. Agents can't open a
+  gate without its questions (`gate enter --question`); `gate ask` adds more, and `--replace` swaps them.
+- **A desk gate** (`gate enter --desk`, or `pdo gate desk <repo> <n>` on an open one) needs you at the tab,
+  approving each step there. It is never paused; `pdo questions` shows "answer at the desk".
+
 ## Filing bugs and ideas
 
 - **Yourself:** in the **intake** workspace, type `/project-intake <what you saw or want>`. It checks for
@@ -135,6 +157,11 @@ the command that checks each; you QC by running them or by reading the evidence 
 | `orchestrator-system` | Work on the system itself, for the System Manager. |
 | `managed-by:<manager>` | Claimed by that manager's agents (set and removed by the engine). Another manager's label means: ask that manager first. |
 
+Colors: yellow (`fbca04`) is only for labels where a person must act now (`QC complete - ready to review`,
+`QC escalated`, `awaiting-ux-gate`, `awaiting-decision`); green (`0e8a16`) is only `Ready for Merge`; gray
+is information (`needs UX review`, `needs-triage`, `likely-fixed`, `invalid`); area labels share `bfdadc`.
+Each label has one color in every repo.
+
 The P-labels, the CWT status and the QC labels can be renamed per project (`P_LABELS`, `CWT_STATUS`,
 `LABEL_QC_READY`, `LABEL_QC_DONE`, `LABEL_MERGE_READY`, `LABEL_UX_SKIPPED`, `LABEL_NEEDS_UX`, `LABEL_QC_ESCALATED`).
 
@@ -154,6 +181,11 @@ start yourself (not dispatched) finds the engine through `pdo` on PATH, else thr
 | `resume-agent <repo> <n> --prompt …` | prompt an agent, bringing it back if hibernated |
 | `hibernate <repo> <n>` | release a parked agent's memory |
 | `watch --peek` | the watcher's snapshot, without consuming events |
+| `questions [--json]` | every question and gate waiting on you, across projects, with the command to answer each |
+| `answer <repo> <n> "<text>"` | answer a paused agent (the orchestrator resumes it first) |
+| `gate clear <repo> <n> --note "Q1=..; Q2=.."` / `gate desk <repo> <n>` | clear a gate / mark it as needing you at the tab |
+| `start-design-lead` / `design-lead status` | open the project's Design Lead tab / whether it runs, is approved, and answers live |
+| `mem-gate status` | the machine-wide memory gate: what is free and reserved (external jobs: `reserve --mb N --agent LABEL --wait S`, then `release --agent LABEL`) |
 | `qc start <pr#>` / `qc stop` / `qc status` | local QC servers |
 | `qc-fixture-push <pr#> <file>` | publish QC test data |
 | `intake-submit [--checked <#n\|none>] "<ws>" "<report>"` | queue a defect report for intake (only what clears the reporting bar) |
@@ -237,5 +269,8 @@ GitHub accounts"; undo with `pdo install --gh-identities --uninstall`.
 
 - Ask the CEO: `status`, then describe what you see. If the engine itself misbehaves, tell the System Manager.
 - If an agent shows "blocked", it's waiting on you: open its tab, or use Remote Control.
+- A standing agent that stopped (a login or API auth error as its latest reply, or no tick for its interval
+  plus an hour) is listed first in `status` and `pdo fleet` as `loop down: <name>: <reason>`, with the fix.
+- A project whose queue can't be read shows the reason (its last error or a timeout).
 - If an agent was closed by accident, resuming it is safe; ask the project's Repo Manager to bring #N back.
 - Design: [design.md](design.md). Traps already found: [lessons-learned.md](lessons-learned.md).
